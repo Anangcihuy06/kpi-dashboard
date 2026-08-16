@@ -95,6 +95,22 @@ export default function App() {
     localStorage.removeItem("kpi_token");
   };
 
+  const handleUsernameChange = (e) => {
+    let val = e.target.value;
+    // Only format if string only contains digits and dots
+    if (/^[\d.]*$/.test(val)) {
+      let raw = val.replace(/\./g, '');
+      let formatted = '';
+      if (raw.length > 0) formatted += raw.substring(0, 2);
+      if (raw.length > 2) formatted += '.' + raw.substring(2, 4);
+      if (raw.length > 4) formatted += '.' + raw.substring(4, 6);
+      if (raw.length > 6) formatted += '.' + raw.substring(6);
+      setUsernameInput(formatted);
+    } else {
+      setUsernameInput(val);
+    }
+  };
+
   if (!user) {
     return (
       <div className="auth-page">
@@ -121,7 +137,7 @@ export default function App() {
                 type="text"
                 className="form-input"
                 value={usernameInput}
-                onChange={(e) => setUsernameInput(e.target.value)}
+                onChange={handleUsernameChange}
                 placeholder="01.05.13.500"
                 required
               />
