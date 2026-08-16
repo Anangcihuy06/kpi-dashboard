@@ -2,7 +2,6 @@ from datetime import datetime, timedelta
 from database import engine, SessionLocal, Base
 from models import Division, User, Sprint, KPIRule, KPIRuleMetric, RawMetricsData, SprintKPIScore, AttendanceRecord, IntegrationSetting
 from engine import DynamicKPIEngine
-from sync_service import get_working_days, generate_attendance_data_for_user
 from encrypt import encrypt_val
 
 def seed_data():
