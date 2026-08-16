@@ -389,7 +389,6 @@ export default function Configurator() {
                   <thead>
                     <tr>
                       <th>Key Indikator</th>
-                      <th>Kategori</th>
                       <th style={{ width: "80px" }}>Bobot</th>
                       <th>Formula Ekspresi</th>
                       <th style={{ width: "80px" }}>Cap</th>
@@ -407,20 +406,6 @@ export default function Configurator() {
                             value={metric.metric_key}
                             onChange={(e) => handleMetricChange(idx, "metric_key", e.target.value)}
                           />
-                        </td>
-                        <td>
-                          <select
-                            className="table-input"
-                            style={{ height: "32px" }}
-                            value={metric.category || "ENGINEERING"}
-                            onChange={(e) => handleMetricChange(idx, "category", e.target.value)}
-                          >
-                            <option value="DELIVERY">DELIVERY</option>
-                            <option value="ENGINEERING">ENGINEERING</option>
-                            <option value="QUALITY">QUALITY</option>
-                            <option value="EFFORT">EFFORT</option>
-                            <option value="DISCIPLINE">DISCIPLINE</option>
-                          </select>
                         </td>
                         <td>
                           <input
