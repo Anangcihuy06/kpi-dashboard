@@ -450,13 +450,45 @@ export default function Configurator() {
                           />
                         </td>
                         <td>
-                          <input
-                            type="text"
-                            className="table-input table-input-formula"
-                            value={typeof metric.variables === 'object' ? JSON.stringify(metric.variables) : metric.variables}
-                            onChange={(e) => handleMetricChange(idx, "variables", e.target.value)}
-                            style={{ fontFamily: "monospace", fontSize: "11px" }}
-                          />
+                          {metric.metric_key === "feature_complexity" ? (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", minWidth: "350px", background: "#f8fafc", padding: "8px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                              {[
+                                { key: 'max_c', label: 'C (Complexity)' },
+                                { key: 'max_i', label: 'I (Impact)' },
+                                { key: 'max_s', label: 'S (Scope)' },
+                                { key: 'max_r', label: 'R (Risk)' },
+                                { key: 'max_o', label: 'O (Ownership)' },
+                                { key: 'target_complexity_pts', label: 'Target Pts' }
+                              ].map(f => {
+                                let varsObj = {};
+                                try {
+                                  varsObj = typeof metric.variables === 'string' ? JSON.parse(metric.variables) : metric.variables;
+                                } catch(e) {}
+                                return (
+                                  <div key={f.key} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                                    <label style={{ fontSize: "10px", fontWeight: "600", width: "90px", color: "#475569" }}>{f.label}:</label>
+                                    <input
+                                      type="number"
+                                      style={{ width: "60px", fontSize: "11px", padding: "4px", border: "1px solid #cbd5e1", borderRadius: "4px" }}
+                                      value={varsObj[f.key] !== undefined ? varsObj[f.key] : ""}
+                                      onChange={(e) => {
+                                        const newVars = { ...varsObj, [f.key]: parseFloat(e.target.value) || 0 };
+                                        handleMetricChange(idx, "variables", JSON.stringify(newVars));
+                                      }}
+                                    />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <input
+                              type="text"
+                              className="table-input table-input-formula"
+                              value={typeof metric.variables === 'object' ? JSON.stringify(metric.variables) : metric.variables}
+                              onChange={(e) => handleMetricChange(idx, "variables", e.target.value)}
+                              style={{ fontFamily: "monospace", fontSize: "11px" }}
+                            />
+                          )}
                         </td>
                         <td>
                           <button
