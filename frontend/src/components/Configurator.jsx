@@ -45,6 +45,16 @@ export default function Configurator() {
     }
   }, [selectedDivisionId]);
 
+  const fetchSprints = async () => {
+    try {
+      const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/sprints");
+      const list = await response.json();
+      setSprints(list);
+    } catch (err) {
+      console.error("Gagal mengambil data sprint:", err);
+    }
+  };
+
   const fetchDivisions = async () => {
     try {
       const divRes = await fetch(import.meta.env.VITE_API_URL + "/api/v1/divisions");
