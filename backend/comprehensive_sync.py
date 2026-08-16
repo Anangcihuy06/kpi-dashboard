@@ -802,14 +802,14 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
         max_results = 100
         
         while True:
-            payload = {
+            params = {
                 "jql": jql,
-                "fields": ["summary", "description", "subtasks", "status", "project", "issuetype", "priority", "story_points", "customfield_10024", "customfield_10016", "customfield_10028", "resolutiondate", "created", "updated"],
+                "fields": "summary,description,subtasks,status,project,issuetype,priority,story_points,customfield_10024,customfield_10016,customfield_10028,resolutiondate,created,updated",
                 "maxResults": max_results,
                 "startAt": start_at
             }
             
-            response = requests.post(search_url, auth=jira_auth, json=payload, timeout=30)
+            response = requests.get(search_url, auth=jira_auth, params=params, timeout=30)
             
             if response.status_code == 200:
                 data = response.json()
@@ -996,13 +996,13 @@ def sync_jira_worklogs(db: Session, user: models.User, settings: models.Integrat
         # JQL to find issues the user has logged work on
         jql = f'worklogAuthor = "{account_id}" AND worklogDate >= "{start_date.date()}" AND worklogDate <= "{end_date.date()}"'
         
-        payload = {
+        params = {
             "jql": jql,
-            "fields": ["worklog", "summary"],
+            "fields": "worklog,summary",
             "maxResults": 100
         }
         
-        response = requests.post(search_url, auth=jira_auth, json=payload, timeout=30)
+        response = requests.get(search_url, auth=jira_auth, params=params, timeout=30)
         
         if response.status_code == 200:
             issues_data = response.json()
