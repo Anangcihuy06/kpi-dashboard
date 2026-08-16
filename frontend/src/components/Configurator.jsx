@@ -559,6 +559,30 @@ export default function Configurator() {
               )}
             </div>
 
+            {/* Guide Card for Target Pts */}
+            <div className="card" style={{ marginTop: "24px", background: "#f0f9ff", border: "1px solid #bae6fd" }}>
+              <h3 style={{ marginBottom: "12px", color: "#0369a1", fontSize: "14px", display: "flex", alignItems: "center", gap: "8px" }}>
+                💡 Panduan Menentukan Target Pts
+              </h3>
+              <div style={{ fontSize: "12px", color: "#334155", lineHeight: "1.6" }}>
+                <p style={{ marginBottom: "8px" }}>
+                  <strong>Target Pts</strong> adalah benchmark ekspektasi poin kumulatif (C+I+R+S+O) yang harus dicapai karyawan dalam 1 tahun.
+                </p>
+                <p style={{ marginBottom: "8px", fontWeight: "bold" }}>Contoh Pendekatan "Kapasitas Sprint" / Common Issue:</p>
+                <ul style={{ paddingLeft: "16px", margin: "0 0 8px 0" }}>
+                  <li><strong>Bug Fix (Kecil)</strong>: C(1)+I(1)+S(1)+R(1)+O(1) = <strong>5 pts</strong></li>
+                  <li><strong>New Feature (Menengah)</strong>: C(3)+I(3)+S(2)+R(2)+O(1) = <strong>11 pts</strong></li>
+                </ul>
+                <p style={{ marginBottom: "8px" }}>
+                  Jika ekspektasi standar 1 developer IT adalah mengerjakan <strong>1 Feature + 2 Bug Fix</strong> per minggu (total 21 pts/minggu), 
+                  maka target tahunan (52 minggu) adalah sekitar <strong>± 1.000 pts</strong>.
+                </p>
+                <p style={{ fontStyle: "italic", color: "#64748b", margin: 0 }}>
+                  *Sesuaikan angka Target Pts pada form di atas dengan beban kerja atau data riil rata-rata dari Top Performer Anda tahun lalu.
+                </p>
+              </div>
+            </div>
+
           </div>
         </>
       ) : (
