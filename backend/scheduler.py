@@ -282,9 +282,8 @@ def sync_and_calculate_all_users_job(year: int = None):
             } for m in metrics_defs
         ]
 
-        # Get all active users in IT division
+        # Get all active users regardless of division
         users = db.query(models.User).filter(
-            models.User.division_id == default_div.id,
             models.User.is_active == True
         ).all()
 
