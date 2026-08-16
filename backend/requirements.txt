@@ -1,0 +1,10 @@
+fastapi==0.141.1
+uvicorn==0.52.2
+SQLAlchemy==2.0.52
+requests==2.34.2
+python-jose==3.5.0
+passlib==1.7.4
+bcrypt==5.0.0
+python-dateutil==2.9.0.post0
+pydantic==2.13.4
+APScheduler==3.10.4
