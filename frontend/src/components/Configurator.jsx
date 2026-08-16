@@ -86,7 +86,7 @@ export default function Configurator() {
             // Auto-upgrade to Pure Complexity config for IT division
             setName("IT Developer KPI Matrix (Pure Complexity)");
             setMetrics([
-              { metric_key: "feature_complexity", category: "ENGINEERING", weight: 0.90, calc_type: "FORMULA", formula_expression: "min((complexity_sp / target_complexity_pts) * 100, 100)", variables: { target_complexity_pts: 300 }, cap_score: 100.0 },
+              { metric_key: "feature_complexity", category: "ENGINEERING", weight: 0.90, calc_type: "FORMULA", formula_expression: "min((complexity_sp / target_complexity_pts) * 100, 100)", variables: { target_complexity_pts: 300, max_c: 5, max_i: 5, max_s: 5, max_r: 3, max_o: 2 }, cap_score: 100.0 },
               { metric_key: "attendance", category: "DISCIPLINE", weight: 0.10, calc_type: "FORMULA", formula_expression: "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)", variables: { target_days: 261, late_percentage: 5 }, cap_score: 100.0 }
             ]);
         } else {
@@ -97,7 +97,7 @@ export default function Configurator() {
         if (selectedDiv.code === "IT") {
             setName("IT Developer KPI Matrix (Pure Complexity)");
             setMetrics([
-              { metric_key: "feature_complexity", category: "ENGINEERING", weight: 0.90, calc_type: "FORMULA", formula_expression: "min((complexity_sp / target_complexity_pts) * 100, 100)", variables: { target_complexity_pts: 300 }, cap_score: 100.0 },
+              { metric_key: "feature_complexity", category: "ENGINEERING", weight: 0.90, calc_type: "FORMULA", formula_expression: "min((complexity_sp / target_complexity_pts) * 100, 100)", variables: { target_complexity_pts: 300, max_c: 5, max_i: 5, max_s: 5, max_r: 3, max_o: 2 }, cap_score: 100.0 },
               { metric_key: "attendance", category: "DISCIPLINE", weight: 0.10, calc_type: "FORMULA", formula_expression: "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)", variables: { target_days: 261, late_percentage: 5 }, cap_score: 100.0 }
             ]);
         } else {
