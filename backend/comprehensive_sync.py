@@ -812,8 +812,11 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
             
             response = requests.get(search_url, auth=jira_auth, params=params, timeout=30)
             
+            logger.info(f"DEBUG JIRA API for {user.full_name}: URL={response.url} STATUS={response.status_code}")
+            
             if response.status_code == 200:
                 data = response.json()
+                logger.info(f"DEBUG JIRA API RESPONSE for {user.full_name}: total={data.get('total')}, len(issues)={len(data.get('issues', []))}, raw={str(data)[:500]}")
                 issues = data.get("issues", [])
                 
                 if issues and len(issues) > 0 and not next_page_token:
