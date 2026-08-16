@@ -166,7 +166,7 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
     user_data = response.json()
     
     # Fetch additional profile data (division, group) using the token
-    token = user_data.get("token")
+    token = user_data.get("id_token")
     if token:
         try:
             profile_url = "https://hris-api.atibusinessgroup.com/api/app/users/profile"
