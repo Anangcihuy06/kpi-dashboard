@@ -756,6 +756,12 @@ export default function Configurator() {
             <div style={{ padding: "24px", fontSize: "14px", color: "#334155", lineHeight: "1.6" }}>
               <p style={{ marginBottom: "16px" }}>Bapak/Ibu dapat menulis formula penilaian menggunakan ekspresi matematika standar. Sistem akan mengevaluasi formula tersebut berdasarkan data historis/otomatis yang ditarik dari Jira, GitLab, dan HRIS.</p>
               
+              <h4 style={{ color: "var(--color-primary)", marginBottom: "8px", fontSize: "15px" }}>Pengaturan Indikator (Bobot & Cap)</h4>
+              <ul style={{ marginBottom: "20px", paddingLeft: "20px", listStyleType: "disc" }}>
+                <li><strong>Bobot (Weight):</strong> Formatnya adalah <strong>Desimal (0.1 sampai 1.0)</strong>. Contoh: Untuk bobot 90%, tulis <code>0.9</code>. Untuk 10%, tulis <code>0.1</code>. Pastikan total keseluruhan bobot dari semua indikator bernilai <code>1.0</code>.</li>
+                <li><strong>Cap Score (Batas Maksimal):</strong> Adalah nilai maksimal yang bisa didapatkan dari indikator ini sebelum dikalikan bobot. Jika diisi <code>100</code>, maka meskipun hasil perhitungan formula mencapai 120, nilai akhir indikator tersebut akan dibatasi (di-cap) hanya sampai 100 saja.</li>
+              </ul>
+
               <h4 style={{ color: "var(--color-primary)", marginBottom: "8px", fontSize: "15px" }}>Variabel yang Tersedia</h4>
               <ul style={{ marginBottom: "20px", paddingLeft: "20px", listStyleType: "disc" }}>
                 <li><code>attendance_days</code>: Total hari kehadiran karyawan.</li>
