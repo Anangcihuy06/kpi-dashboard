@@ -16,7 +16,7 @@ export default function App() {
     if (storedUser && storedToken) {
       const parsedUser = JSON.parse(storedUser);
       // Quick local verify — instant, no HRIS round-trip
-      fetch(`http://localhost:8000/api/v1/auth/verify?user_id=${parsedUser.id}`)
+      fetch(`${import.meta.env.VITE_API_URL}/api/v1/auth/verify?user_id=${parsedUser.id}`)
         .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (data?.status === "valid") {
@@ -51,7 +51,7 @@ export default function App() {
     const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s max
 
     try {
-      const response = await fetch("http://localhost:8000/api/v1/auth/login", {
+      const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

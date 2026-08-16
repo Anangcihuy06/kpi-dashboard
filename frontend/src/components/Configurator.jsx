@@ -39,7 +39,7 @@ export default function Configurator() {
 
   const fetchSprints = async () => {
     try {
-      const response = await fetch("http://localhost:8000/api/v1/sprints");
+      const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/sprints");
       const list = await response.json();
       setSprints(list);
       if (list.length > 0) {
@@ -52,11 +52,11 @@ export default function Configurator() {
 
   const fetchRules = async () => {
     try {
-      const divRes = await fetch("http://localhost:8000/api/v1/divisions");
+      const divRes = await fetch(import.meta.env.VITE_API_URL + "/api/v1/divisions");
       const divisions = await divRes.json();
       if (divisions.length > 0) {
         const itDivId = divisions.find(d => d.code === "IT")?.id || divisions[0].id;
-        const ruleRes = await fetch(`http://localhost:8000/api/v1/kpi-rules?division_id=${itDivId}`);
+        const ruleRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi-rules?division_id=${itDivId}`);
         const data = await ruleRes.json();
         if (data && data.rule_id) {
           setRuleId(data.rule_id);
@@ -78,7 +78,7 @@ export default function Configurator() {
 
   const fetchIntegrations = async () => {
     try {
-      const response = await fetch("http://localhost:8000/api/v1/integrations");
+      const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/integrations");
       if (response.ok) {
         const data = await response.json();
         setJiraUrl(data.jira_url || "");
@@ -124,7 +124,7 @@ export default function Configurator() {
     setSaveLoading(true);
     setMessage(null);
     try {
-      const divRes = await fetch("http://localhost:8000/api/v1/divisions");
+      const divRes = await fetch(import.meta.env.VITE_API_URL + "/api/v1/divisions");
       const divisions = await divRes.json();
       const itDivId = divisions.find(d => d.code === "IT")?.id || divisions[0].id;
 
@@ -133,7 +133,7 @@ export default function Configurator() {
         throw new Error(`Total bobot harus bernilai 100% (1.0). Saat ini: ${(totalWeight * 100).toFixed(0)}%`);
       }
 
-      const response = await fetch("http://localhost:8000/api/v1/kpi-rules", {
+      const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/kpi-rules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -159,7 +159,7 @@ export default function Configurator() {
     setIntegLoading(true);
     setMessage(null);
     try {
-      const response = await fetch("http://localhost:8000/api/v1/integrations", {
+      const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/integrations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -195,7 +195,7 @@ export default function Configurator() {
         throw new Error("Format JSON Test Input tidak valid.");
       }
 
-      const response = await fetch("http://localhost:8000/api/v1/kpi/evaluate-test", {
+      const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/kpi/evaluate-test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -220,7 +220,7 @@ export default function Configurator() {
     setCalcLoading(true);
     setMessage(null);
     try {
-      const response = await fetch(`http://localhost:8000/api/v1/sync/year/${selectedYear}`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/sync/year/${selectedYear}`, {
         method: "POST"
       });
       if (!response.ok) throw new Error("Gagal menjalankan kalkulasi");

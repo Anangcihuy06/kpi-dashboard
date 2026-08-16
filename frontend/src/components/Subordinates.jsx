@@ -35,7 +35,7 @@ export default function Subordinates({ supervisorId }) {
 
   const fetchSyncStatus = async () => {
     try {
-      const response = await fetch("http://localhost:8000/api/v1/sync/status");
+      const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/sync/status");
       const status = await response.json();
       setSyncStatus(status);
     } catch (err) {
@@ -48,7 +48,7 @@ export default function Subordinates({ supervisorId }) {
     setAttendanceSyncing(true);
     try {
       const res = await fetch(
-        `http://localhost:8000/api/v1/attendance/sync-year?supervisor_id=${supervisorId}&year=${year}`,
+        `${import.meta.env.VITE_API_URL}/api/v1/attendance/sync-year?supervisor_id=${supervisorId}&year=${year}`,
         { method: "POST" }
       );
       const data = await res.json();
@@ -72,7 +72,7 @@ export default function Subordinates({ supervisorId }) {
   const fetchTeamScores = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`http://localhost:8000/api/v1/kpi/team-yearly?user_id=${supervisorId}&year=${selectedYear}`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/team-yearly?user_id=${supervisorId}&year=${selectedYear}`, {
         cache: 'no-store'
       });
       if (!response.ok) throw new Error("Gagal mengambil report tim");
@@ -162,7 +162,7 @@ export default function Subordinates({ supervisorId }) {
     const emailVal = editingEmails[userId] !== undefined ? editingEmails[userId] : "";
     setEmailSaving(prev => ({ ...prev, [userId]: true }));
     try {
-      const response = await fetch(`http://localhost:8000/api/v1/users/${userId}/email`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/users/${userId}/email`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json"
