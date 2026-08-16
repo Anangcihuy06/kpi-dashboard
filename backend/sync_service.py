@@ -310,8 +310,7 @@ def sync_attendance_for_year(db: Session, users: list, year: int, token_override
                                 sprint_name="Default Backlog / Untracked",
                                 start_date=date(2020, 1, 1),
                                 end_date=date(2030, 12, 31),
-                                status="active",
-                                working_days=10
+                                status="active"
                             )
                             db.add(dummy)
                             db.commit()
