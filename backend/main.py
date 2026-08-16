@@ -88,6 +88,8 @@ class MetricRuleInput(BaseModel):
 
 class KPIRuleInput(BaseModel):
     division_id: str
+    group_id: Optional[str] = None
+    group_name: Optional[str] = None
     name: str
     metrics: List[MetricRuleInput]
 
@@ -209,6 +211,12 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
     user.roles = roles
     user.has_subordinates = has_subs
     user.supervisor_id = supervisor_id
+    
+    group_info = user_data.get("group")
+    if group_info:
+        user.group_id = str(group_info.get("id")) if group_info.get("id") else None
+        user.group_name = group_info.get("group")
+
     
     # Provide defaults for external mappings if they are empty
     if not user.jira_account_id:
@@ -379,6 +387,24 @@ def sync_attendance_year(
 def get_divisions(db: Session = Depends(get_db)):
     return db.query(models.Division).all()
 
+@app.get("/api/v1/user-groups")
+def get_user_groups(division_id: Optional[str] = None, db: Session = Depends(get_db)):
+    query = db.query(
+        models.User.group_id, 
+        models.User.group_name
+    ).filter(
+        models.User.group_id.isnot(None),
+        models.User.group_id != ""
+    )
+    
+    if division_id:
+        query = query.filter(models.User.division_id == division_id)
+        
+    # Get unique groups
+    groups = query.distinct().all()
+    
+    return [{"id": g.group_id, "name": g.group_name} for g in groups]
+
 @app.get("/api/v1/sprints")
 def get_sprints(db: Session = Depends(get_db)):
     # Sprint sync is now handled smoothly in the background by APScheduler in scheduler.py
@@ -542,11 +568,17 @@ def get_sprint_report(sprint_id: str, supervisor_id: str, db: Session = Depends(
     return results
 
 @app.get("/api/v1/kpi-rules")
-def get_kpi_rules(division_id: str, db: Session = Depends(get_db)):
-    rule = db.query(models.KPIRule).filter(
+def get_kpi_rules(division_id: str, group_id: Optional[str] = None, db: Session = Depends(get_db)):
+    query = db.query(models.KPIRule).filter(
         models.KPIRule.division_id == division_id,
         models.KPIRule.is_active == True
-    ).first()
+    )
+    if group_id:
+        query = query.filter(models.KPIRule.group_id == group_id)
+    else:
+        query = query.filter(models.KPIRule.group_id.is_(None))
+        
+    rule = query.first()
 
     if not rule:
         return []
@@ -574,17 +606,31 @@ def get_kpi_rules(division_id: str, db: Session = Depends(get_db)):
 
 @app.post("/api/v1/kpi-rules")
 def create_or_update_kpi_rule(payload: KPIRuleInput, db: Session = Depends(get_db)):
-    db.query(models.KPIRule).filter(
+    query = db.query(models.KPIRule).filter(
         models.KPIRule.division_id == payload.division_id
-    ).update({"is_active": False})
+    )
+    if payload.group_id:
+        query = query.filter(models.KPIRule.group_id == payload.group_id)
+    else:
+        query = query.filter(models.KPIRule.group_id.is_(None))
+        
+    query.update({"is_active": False})
 
     latest = db.query(models.KPIRule).filter(
         models.KPIRule.division_id == payload.division_id
-    ).order_by(models.KPIRule.version.desc()).first()
+    )
+    if payload.group_id:
+        latest = latest.filter(models.KPIRule.group_id == payload.group_id)
+    else:
+        latest = latest.filter(models.KPIRule.group_id.is_(None))
+        
+    latest = latest.order_by(models.KPIRule.version.desc()).first()
     new_version = (latest.version + 1) if latest else 1
 
     new_rule = models.KPIRule(
         division_id=payload.division_id,
+        group_id=payload.group_id,
+        group_name=payload.group_name,
         name=payload.name,
         version=new_version,
         is_active=True

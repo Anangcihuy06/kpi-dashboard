@@ -59,10 +59,24 @@ class YearlyKPIEngine:
         if not division_id:
             return {"error": "Division not found"}
             
-        rule = db.query(models.KPIRule).filter(
-            models.KPIRule.division_id == division_id,
-            models.KPIRule.is_active == True
-        ).first()
+        rule = None
+        group_id = user.group_id
+        
+        # Try to find rule by group_id first
+        if group_id:
+            rule = db.query(models.KPIRule).filter(
+                models.KPIRule.division_id == division_id,
+                models.KPIRule.group_id == group_id,
+                models.KPIRule.is_active == True
+            ).first()
+            
+        # Fallback to division-level rule if no group rule exists
+        if not rule:
+            rule = db.query(models.KPIRule).filter(
+                models.KPIRule.division_id == division_id,
+                models.KPIRule.group_id.is_(None),
+                models.KPIRule.is_active == True
+            ).first()
         
         if not rule:
             return {"error": "Active KPI Rule not found"}

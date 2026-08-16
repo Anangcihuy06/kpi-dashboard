@@ -11,6 +11,8 @@ export default function Configurator() {
   const [sprints, setSprints] = useState([]);
   const [divisions, setDivisions] = useState([]);
   const [selectedDivisionId, setSelectedDivisionId] = useState("");
+  const [groups, setGroups] = useState([]);
+  const [selectedGroupId, setSelectedGroupId] = useState("");
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
 
   // Integration Settings states
@@ -41,9 +43,20 @@ export default function Configurator() {
 
   useEffect(() => {
     if (selectedDivisionId) {
-      fetchRulesForDivision(selectedDivisionId);
+      fetchGroupsForDivision(selectedDivisionId);
+      fetchRulesForDivision(selectedDivisionId, selectedGroupId);
     }
-  }, [selectedDivisionId]);
+  }, [selectedDivisionId, selectedGroupId]);
+
+  const fetchGroupsForDivision = async (divId) => {
+    try {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/user-groups?division_id=${divId}`);
+      const list = await res.json();
+      setGroups(list);
+    } catch (err) {
+      console.error("Gagal mengambil data group:", err);
+    }
+  };
 
   const fetchSprints = async () => {
     try {
@@ -69,14 +82,19 @@ export default function Configurator() {
     }
   };
 
-  const fetchRulesForDivision = async (divId) => {
+  const fetchRulesForDivision = async (divId, groupId) => {
     try {
       // Fetch current division info first
       const divRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/divisions`);
       const divList = await divRes.json();
       const selectedDiv = divList.find(d => d.id === divId) || { name: "New Division", code: "" };
 
-      const ruleRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi-rules?division_id=${divId}`);
+      let url = `${import.meta.env.VITE_API_URL}/api/v1/kpi-rules?division_id=${divId}`;
+      if (groupId) {
+          url += `&group_id=${groupId}`;
+      }
+      
+      const ruleRes = await fetch(url);
       const data = await ruleRes.json();
       
       if (data && data.rule_id) {
@@ -165,11 +183,15 @@ export default function Configurator() {
         throw new Error(`Total bobot harus bernilai 100% (1.0). Saat ini: ${(totalWeight * 100).toFixed(0)}%`);
       }
 
+      const selectedGroup = groups.find(g => g.id === selectedGroupId);
+      
       const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/kpi-rules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           division_id: selectedDivisionId,
+          group_id: selectedGroupId || null,
+          group_name: selectedGroup ? selectedGroup.name : null,
           name: name,
           metrics: metrics
         })
@@ -356,18 +378,34 @@ export default function Configurator() {
             {/* Main Formula Rules Configurator */}
             <div className="card">
               <div className="flex-between" style={{ marginBottom: "16px" }}>
-                <h3>Aturan Indikator Divisi</h3>
+                <h3>Aturan Indikator Divisi / Group</h3>
                 <div style={{ display: "flex", gap: "12px" }}>
                   <select
                     className="select-control"
                     value={selectedDivisionId}
-                    onChange={(e) => setSelectedDivisionId(e.target.value)}
-                    style={{ padding: "6px 12px", height: "32px", fontSize: "12px", width: "200px" }}
+                    onChange={(e) => {
+                        setSelectedDivisionId(e.target.value);
+                        setSelectedGroupId("");
+                    }}
+                    style={{ padding: "6px 12px", height: "32px", fontSize: "12px", width: "160px" }}
                   >
                     {divisions.map(d => (
                       <option key={d.id} value={d.id}>{d.name}</option>
                     ))}
                   </select>
+                  
+                  <select
+                    className="select-control"
+                    value={selectedGroupId}
+                    onChange={(e) => setSelectedGroupId(e.target.value)}
+                    style={{ padding: "6px 12px", height: "32px", fontSize: "12px", width: "200px" }}
+                  >
+                    <option value="">-- Semua (Default Divisi) --</option>
+                    {groups.map(g => (
+                      <option key={g.id} value={g.id}>{g.name}</option>
+                    ))}
+                  </select>
+
                   <button className="btn-outline" onClick={addMetricRow} style={{ padding: "6px 16px", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px", height: "32px" }}>
                     <Plus size={14} /> Tambah Indikator
                   </button>

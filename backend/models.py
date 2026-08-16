@@ -38,6 +38,8 @@ class User(Base):
     current_active_board = Column(String(50), nullable=True)  # Current active board ID
     
     division_id = Column(String(50), ForeignKey("divisions.id"), nullable=True)
+    group_id = Column(String(50), nullable=True)
+    group_name = Column(String(150), nullable=True)
     supervisor_id = Column(String(50), ForeignKey("users.id"), nullable=True)
 
     division = relationship("Division", back_populates="users")
@@ -407,6 +409,8 @@ class KPIRule(Base):
 
     id = Column(String(50), primary_key=True, default=generate_uuid)
     division_id = Column(String(50), ForeignKey("divisions.id"), nullable=False)
+    group_id = Column(String(50), nullable=True)
+    group_name = Column(String(150), nullable=True)
     name = Column(String(150), nullable=False)
     version = Column(Integer, default=1)
     is_active = Column(Boolean, default=True)
