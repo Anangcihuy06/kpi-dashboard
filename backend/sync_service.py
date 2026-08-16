@@ -284,7 +284,7 @@ def sync_attendance_for_year(db: Session, users: list, year: int, token_override
                 # Check if already exists
                 existing = db.query(models.AttendanceRecord).filter(
                     models.AttendanceRecord.user_id == user.id,
-                    models.AttendanceRecord.date == d_obj
+                    models.AttendanceRecord.date == d_str
                 ).first()
                 
                 remark = (rec.get("remarkText") or "").lower()
@@ -299,7 +299,7 @@ def sync_attendance_for_year(db: Session, users: list, year: int, token_override
                     sprint_id = default_sprint.id if default_sprint else None
                     att = models.AttendanceRecord(
                         user_id=user.id,
-                        date=d_obj,
+                        date=d_str,
                         status="PRESENT",
                         is_late=is_late,
                         sprint_id=sprint_id

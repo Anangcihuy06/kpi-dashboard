@@ -1109,6 +1109,8 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
                         calculate_daily_aggregated_kpi(db, user, datetime.combine(curr, datetime.min.time()))
                         curr += timedelta(days=1)
                     
+                    db.commit() # Added to persist the on-the-fly records
+
                     daily_kpis = db.query(models.KPIEmployeeDaily).filter(
                         models.KPIEmployeeDaily.user_id == user.id,
                         models.KPIEmployeeDaily.date >= from_date,
@@ -1116,6 +1118,7 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
                     ).order_by(models.KPIEmployeeDaily.date).all()
                 except Exception as e:
                     logger.error(f"On-the-fly KPI aggregation error for user {user.id}: {e}")
+                    db.rollback()
             
             if not daily_kpis:
                 daily_kpis = []
