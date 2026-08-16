@@ -798,16 +798,17 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
         # JQL: query all issues assigned to user updated in the period or with completed status
         jql = f'assignee = "{account_id}" AND updated >= "{start_date.date()}" AND updated <= "{end_date.date()}"'
         
-        start_at = 0
+        next_page_token = None
         max_results = 100
         
         while True:
             params = {
                 "jql": jql,
                 "fields": "summary,description,subtasks,status,project,issuetype,priority,story_points,customfield_10024,customfield_10016,customfield_10028,resolutiondate,created,updated",
-                "maxResults": max_results,
-                "startAt": start_at
+                "maxResults": max_results
             }
+            if next_page_token:
+                params["nextPageToken"] = next_page_token
             
             response = requests.get(search_url, auth=jira_auth, params=params, timeout=30)
             
@@ -815,10 +816,11 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                 data = response.json()
                 issues = data.get("issues", [])
                 
-                if issues and len(issues) > 0 and start_at == 0:
-                    logger.info(f"CONSOLE: JIRA ISSUE DISCOVERY for {user.full_name}: total {data.get('total')} issues found.")
+                if issues and len(issues) > 0 and not next_page_token:
+                    logger.info(f"CONSOLE: JIRA ISSUE DISCOVERY for {user.full_name}: first page fetched.")
                 
                 if not issues:
+                    logger.info(f"Synced {issues_synced} new Jira issues (0 processed) for {user.full_name}")
                     break
                 
                 for issue in issues:
@@ -848,26 +850,37 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                         existing_proj = db.query(models.Project).filter(
                             or_(
                                 models.Project.project_name.ilike(f"%{proj_key}%"),
-                                models.Project.project_name.ilike(f"%{proj_name}%")
+                                models.Project.jira_project_key == proj_key
                             )
                         ).first()
                         if existing_proj:
                             project_db_id = existing_proj.id
+                        else:
+                            new_proj = models.Project(
+                                project_name=proj_name or proj_key,
+                                jira_project_key=proj_key
+                            )
+                            db.add(new_proj)
+                            db.commit()
+                            project_db_id = new_proj.id
                 
                     # Store or update raw Jira issue
                     existing_issue = db.query(models.RawJiraIssue).filter(
                         models.RawJiraIssue.issue_key == issue_key
                     ).first()
                 
-                    resolution_date_str = fields.get("resolutiondate") or fields.get("updated")
+                    resolution_date_str = fields.get("resolutiondate")
                     resolved_at = None
                     if resolution_date_str:
                         try:
-                            resolved_at = datetime.fromisoformat(resolution_date_str.replace("Z", "+00:00"))
+                            resolved_at = datetime.strptime(resolution_date_str[:19], "%Y-%m-%dT%H:%M:%S")
                         except Exception:
-                            pass
-                
-                    print(f"PROCESSING ISSUE {issue_key}: existing={existing_issue is not None}")
+                            resolved_at = datetime.now()
+                    elif fields.get("updated"):
+                        try:
+                            resolved_at = datetime.strptime(fields.get("updated")[:19], "%Y-%m-%dT%H:%M:%S")
+                        except Exception:
+                            resolved_at = datetime.now()
                 
                     if not existing_issue:
                         new_issue = models.RawJiraIssue(
@@ -886,7 +899,6 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                             issues_synced += 1
                         except Exception as e:
                             db.rollback()
-                            print(f"Failed to insert Jira Issue {issue_key}: {e}")
                     else:
                         existing_issue.story_points = effective_sp
                         existing_issue.status = fields.get("status", {}).get("name") if fields.get("status") else None
@@ -894,7 +906,6 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                             db.commit()
                         except Exception as e:
                             db.rollback()
-                            print(f"Failed to update Jira Issue {issue_key}: {e}")
                 
                     # Create or update activity for issue
                     existing_activity = db.query(models.Activity).filter(
@@ -909,7 +920,6 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                     status_cat = fields.get("status", {}).get("statusCategory", {}).get("name", "") if fields.get("status") else ""
                     status_name = fields.get("status", {}).get("name", "") if fields.get("status") else ""
                 
-                    # Include issues that are Done or in QA/UAT/Release/Development
                     if not existing_activity:
                         activity = models.Activity(
                             user_id=user.id,
@@ -937,7 +947,6 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                             db.commit()
                         except Exception as e:
                             db.rollback()
-                            print(f"Failed to insert Activity for Jira Issue {issue_key}: {e}")
                     else:
                         existing_activity.story_points = effective_sp
                         if project_db_id and not existing_activity.project_id:
@@ -946,17 +955,16 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                             db.commit()
                         except Exception:
                             db.rollback()
+                
+                logger.info(f"Synced {issues_synced} new Jira issues ({len(issues)} processed) for {user.full_name}")
+                
+                next_page_token = data.get('nextPageToken')
+                if not next_page_token or data.get('isLast') is True:
+                    break
             
             else:
                 logger.error(f"Failed to fetch Jira issues for {user.full_name}: {response.status_code} {response.text}")
                 break
-                
-            logger.info(f"Synced {issues_synced} new Jira issues ({len(issues)} processed) for {user.full_name}")
-            start_at += max_results
-            
-            total_issues = data.get('total')
-            if total_issues is None:
-                total_issues = 0
                 
             if start_at >= total_issues:
                 break
