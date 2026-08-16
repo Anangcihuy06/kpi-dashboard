@@ -33,6 +33,30 @@ async def lifespan(app: FastAPI):
     from database import engine, SessionLocal
     import models
     from seed import seed_data
+    from sqlalchemy import text
+    
+    # Auto-migrate new columns
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN group_id VARCHAR(50);"))
+    except Exception:
+        pass
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN group_name VARCHAR(150);"))
+    except Exception:
+        pass
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE kpi_rules ADD COLUMN group_id VARCHAR(50);"))
+    except Exception:
+        pass
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE kpi_rules ADD COLUMN group_name VARCHAR(150);"))
+    except Exception:
+        pass
+
     models.Base.metadata.create_all(bind=engine)
     
     db = SessionLocal()
