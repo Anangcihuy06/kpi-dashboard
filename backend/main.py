@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     db.close()
 
     FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
-    init_scheduler()
+    # init_scheduler() is removed for standalone worker approach
     yield
 
 app = FastAPI(title="Dynamic KPI Dashboard API", lifespan=lifespan)
