@@ -29,6 +29,7 @@ export default function Configurator() {
   const [testFormula, setTestFormula] = useState("min((complexity_sp / target_complexity_pts) * 100, 100)");
   const [testContextJson, setTestContextJson] = useState('{\n  "complexity_sp": 150,\n  "target_complexity_pts": 300,\n  "attendance_days": 240,\n  "target_days": 261,\n  "late_percentage": 5\n}');
   const [testResult, setTestResult] = useState(null);
+  const [showGuide, setShowGuide] = useState(false);
 
   const [saveLoading, setSaveLoading] = useState(false);
   const [calcLoading, setCalcLoading] = useState(false);
@@ -404,6 +405,9 @@ export default function Configurator() {
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: "12px" }}>
+                  <button className="btn-outline" onClick={() => setShowGuide(true)} style={{ padding: "6px 16px", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px", height: "32px", borderColor: "var(--color-secondary)", color: "var(--color-secondary)" }}>
+                    <AlertCircle size={14} /> Panduan Formula
+                  </button>
                   <button className="btn-outline" onClick={addMetricRow} style={{ padding: "6px 16px", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px", height: "32px" }}>
                     <Plus size={14} /> Tambah Indikator
                   </button>
@@ -737,6 +741,62 @@ export default function Configurator() {
             </button>
           </div>
         </form>
+      )}
+      
+      {/* Panduan Formula Modal */}
+      {showGuide && (
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.5)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+          <div style={{ background: "#fff", borderRadius: "12px", width: "100%", maxWidth: "600px", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)" }}>
+            <div style={{ padding: "20px 24px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, backgroundColor: "#fff", zIndex: 10 }}>
+              <h3 style={{ margin: 0, fontSize: "18px", color: "var(--color-primary)", display: "flex", alignItems: "center", gap: "8px" }}>
+                <AlertCircle size={20} /> Panduan Penulisan Formula
+              </h3>
+              <button onClick={() => setShowGuide(false)} style={{ background: "transparent", border: "none", fontSize: "24px", cursor: "pointer", color: "#64748b" }}>&times;</button>
+            </div>
+            <div style={{ padding: "24px", fontSize: "14px", color: "#334155", lineHeight: "1.6" }}>
+              <p style={{ marginBottom: "16px" }}>Bapak/Ibu dapat menulis formula penilaian menggunakan ekspresi matematika standar. Sistem akan mengevaluasi formula tersebut berdasarkan data historis/otomatis yang ditarik dari Jira, GitLab, dan HRIS.</p>
+              
+              <h4 style={{ color: "var(--color-primary)", marginBottom: "8px", fontSize: "15px" }}>Variabel yang Tersedia</h4>
+              <ul style={{ marginBottom: "20px", paddingLeft: "20px", listStyleType: "disc" }}>
+                <li><code>attendance_days</code>: Total hari kehadiran karyawan.</li>
+                <li><code>target_days</code>: Total target hari kerja dalam periode tersebut (misal: 261).</li>
+                <li><code>late_percentage</code>: Persentase keterlambatan karyawan.</li>
+                <li><code>complexity_sp</code>: Total poin kompleksitas (kalkulasi dari CIRSO).</li>
+                <li><code>target_complexity_pts</code>: Target poin kompleksitas (didefinisikan di kolom Variables JSON).</li>
+                <li><code>gitlab_commits</code>: Total jumlah commit di GitLab.</li>
+                <li><code>gitlab_mr</code>: Total jumlah Merge Request di GitLab.</li>
+                <li><code>jira_sp</code> / <code>raw_jira_sp</code>: Total Story Points dari tiket Jira.</li>
+                <li><code>jira_issues_completed</code>: Total tiket Jira yang diselesaikan.</li>
+                <li><i>Setiap *Key* yang Bapak/Ibu masukkan ke dalam kolom <b>Variables (JSON)</b> juga otomatis menjadi variabel yang bisa digunakan di formula.</i></li>
+              </ul>
+
+              <h4 style={{ color: "var(--color-primary)", marginBottom: "8px", fontSize: "15px" }}>Fungsi Matematika yang Didukung</h4>
+              <ul style={{ marginBottom: "20px", paddingLeft: "20px", listStyleType: "disc" }}>
+                <li><code>min(a, b)</code>: Mengambil nilai terkecil. Sering digunakan untuk membatasi skor maksimal (Cap).</li>
+                <li><code>max(a, b)</code>: Mengambil nilai terbesar. Sering digunakan agar skor tidak minus.</li>
+                <li><code>round(a, digit)</code>: Membulatkan angka (contoh: <code>round(skor, 2)</code>).</li>
+                <li>Operator dasar: <code>+</code>, <code>-</code>, <code>*</code>, <code>/</code></li>
+              </ul>
+
+              <h4 style={{ color: "var(--color-primary)", marginBottom: "8px", fontSize: "15px" }}>Contoh Formula</h4>
+              <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "16px" }}>
+                <strong>Persentase Biasa:</strong><br/>
+                <code>(attendance_days / target_days) * 100</code>
+              </div>
+              <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "16px" }}>
+                <strong>Dibatasi Maksimal 100 (Capped):</strong><br/>
+                <code>min((complexity_sp / target_complexity_pts) * 100, 100)</code>
+              </div>
+              <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                <strong>Dengan Pengurangan (Penalti):</strong><br/>
+                <code>max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)</code>
+              </div>
+            </div>
+            <div style={{ padding: "16px 24px", borderTop: "1px solid #e2e8f0", textAlign: "right", backgroundColor: "#f8fafc", borderRadius: "0 0 12px 12px" }}>
+              <button onClick={() => setShowGuide(false)} className="btn-primary" style={{ padding: "8px 24px", fontSize: "14px" }}>Tutup</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
