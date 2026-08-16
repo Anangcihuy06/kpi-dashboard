@@ -1374,9 +1374,15 @@ class ComprehensiveSyncRequest(BaseModel):
 @app.get("/api/v1/admin/clean-kpi-daily")
 def clean_kpi_daily_2026(db: Session = Depends(get_db)):
     """Temporary endpoint to clean corrupted KPIEmployeeDaily for 2026"""
-    deleted = db.query(models.KPIEmployeeDaily).filter(models.KPIEmployeeDaily.date >= '2026-01-01').delete(synchronize_session=False)
-    db.commit()
-    return {"status": "success", "deleted": deleted, "message": "Corrupted 2026 data cleared"}
+    from datetime import date
+    try:
+        deleted = db.query(models.KPIEmployeeDaily).filter(models.KPIEmployeeDaily.date >= date(2026, 1, 1)).delete(synchronize_session=False)
+        db.commit()
+        return {"status": "success", "deleted": deleted, "message": "Corrupted 2026 data cleared"}
+    except Exception as e:
+        db.rollback()
+        import traceback
+        return {"status": "error", "error": str(e), "trace": traceback.format_exc()}
 
 @app.post("/api/v1/sync/comprehensive")
 def trigger_comprehensive_sync(request: ComprehensiveSyncRequest, background_tasks: BackgroundTasks, user_id: str, db: Session = Depends(get_db)):
