@@ -11,8 +11,6 @@ export default function Configurator() {
   const [sprints, setSprints] = useState([]);
   const [divisions, setDivisions] = useState([]);
   const [selectedDivisionId, setSelectedDivisionId] = useState("");
-  const [divisions, setDivisions] = useState([]);
-  const [selectedDivisionId, setSelectedDivisionId] = useState("");
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   
