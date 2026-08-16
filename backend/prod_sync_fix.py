@@ -20,14 +20,37 @@ def run_prod_sync():
         ).all()
         
         # FIX: Ensure all users have Jira/GitLab placeholders so that the discovery engine doesn't skip them
+        # Also patch known external IDs for proxy users created by HRIS login in prod
+        KNOWN_MAPPINGS = {
+            "01.04.19.1905": {"jira": "5de71ecb8743750d00b7fbf5", "gitlab": "anang"},
+            "18.11.22.3063": {"jira": "63bbbbfa50b9490924dc02d0", "gitlab": "adian.rhamadhan"},
+            "13.04.26.4918": {"jira": "5de480fe3384720d1879bce3", "gitlab": "billy93"},
+            "06.01.23.3097": {"jira": "63bb8aeb2a526608c54f51a7", "gitlab": "ansha.cerbia"},
+            "01.10.19.2239": {"jira": "5de8eafb7eb2280d03ca4f86", "gitlab": "bayu.prasetya"},
+            "10.06.19.1979": {"jira": "5de71eba7eb2280d03ca30d6", "gitlab": "imamul.muttaqin"},
+            "04.01.21.2435": {"jira": "6001479ad36496013924f9da", "gitlab": "azhari"},
+            "05.03.18.1603": {"jira": "5de71ebe4ae7b80d0d1a28c4", "gitlab": "syailendra"}
+        }
+
         for u in users:
             changed = False
+            # Hardcoded patch for known users who failed auto-discovery in prod
+            if u.nik in KNOWN_MAPPINGS:
+                patch = KNOWN_MAPPINGS[u.nik]
+                if not u.jira_account_id or u.jira_account_id.startswith("jira_user_"):
+                    u.jira_account_id = patch["jira"]
+                    changed = True
+                if not u.gitlab_username or u.gitlab_username.startswith("gitlab_user_"):
+                    u.gitlab_username = patch["gitlab"]
+                    changed = True
+                    
             if not u.jira_account_id:
                 u.jira_account_id = f"jira_user_{u.id}"
                 changed = True
             if not u.gitlab_username:
                 u.gitlab_username = f"gitlab_user_{u.id}"
                 changed = True
+                
             if changed:
                 db.commit()
 
