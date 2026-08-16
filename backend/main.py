@@ -29,6 +29,18 @@ from comprehensive_sync import sync_user_comprehensive, calculate_daily_aggregat
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Initialize DB tables and seed data if empty
+    from database import engine, SessionLocal
+    import models
+    from seed import seed_data
+    models.Base.metadata.create_all(bind=engine)
+    
+    db = SessionLocal()
+    if not db.query(models.User).first():
+        print("Database is empty, running seed script...")
+        seed_data()
+    db.close()
+
     FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
     init_scheduler()
     yield

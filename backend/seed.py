@@ -7,7 +7,6 @@ from encrypt import encrypt_val
 
 def seed_data():
     # Re-create tables
-    Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     
     db = SessionLocal()
