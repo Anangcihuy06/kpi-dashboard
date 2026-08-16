@@ -268,30 +268,58 @@ def sync_attendance_for_year(db: Session, users: list, year: int, token_override
         
         results[user.id] = summary
         
-        # Cache to SQLite KPIEmployeeDaily
+        # Insert into AttendanceRecord so comprehensive_sync can pick it up properly
         try:
-            existing = db.query(models.KPIEmployeeDaily).filter(
-                models.KPIEmployeeDaily.user_id == user.id,
-                models.KPIEmployeeDaily.date == cache_date
-            ).first()
+            for rec in user_records:
+                raw_date = rec.get("clockin_time") or rec.get("clockIn") or rec.get("date") or ""
+                if not raw_date:
+                    continue
+                
+                try:
+                    d_str = raw_date[:10]
+                    d_obj = datetime.strptime(d_str, "%Y-%m-%d").date()
+                except:
+                    continue
+                
+                # Check if already exists
+                existing = db.query(models.AttendanceRecord).filter(
+                    models.AttendanceRecord.user_id == user.id,
+                    models.AttendanceRecord.date == d_obj
+                ).first()
+                
+                remark = (rec.get("remarkText") or "").lower()
+                is_late = "late" in remark
+                
+                if existing:
+                    existing.status = "PRESENT"
+                    existing.is_late = is_late
+                else:
+                    # Find any default sprint to attach
+                    default_sprint = db.query(models.Sprint).first()
+                    sprint_id = default_sprint.id if default_sprint else None
+                    att = models.AttendanceRecord(
+                        user_id=user.id,
+                        date=d_obj,
+                        status="PRESENT",
+                        is_late=is_late,
+                        sprint_id=sprint_id
+                    )
+                    db.add(att)
             
-            if existing:
-                existing.attendance_days = int(summary["attendance_days"])
-                existing.late_count = int(summary["late_count"])
-                existing.late_percentage = summary["late_percentage"]
-                existing.normal_percentage = summary["normal_percentage"]
-            else:
-                db.add(models.KPIEmployeeDaily(
-                    user_id=user.id,
-                    date=cache_date,
-                    attendance_days=int(summary["attendance_days"]),
-                    late_count=int(summary["late_count"]),
-                    late_percentage=summary["late_percentage"],
-                    normal_percentage=summary["normal_percentage"]
-                ))
             db.commit()
+            
+            # Clean up the old corrupted yearly cache from KPIEmployeeDaily if exists
+            bad_cache = db.query(models.KPIEmployeeDaily).filter(
+                models.KPIEmployeeDaily.user_id == user.id,
+                models.KPIEmployeeDaily.date == cache_date,
+                models.KPIEmployeeDaily.attendance_days > 1
+            ).first()
+            if bad_cache:
+                bad_cache.attendance_days = 0
+                db.commit()
+                
         except Exception as e:
-            logger.error(f"[Attendance] SQLite cache failed for {user.full_name}: {e}")
+            logger.error(f"[Attendance] DB save failed for {user.full_name}: {e}")
             db.rollback()
     
     logger.info(f"[Attendance Year Sync] Done: {len(results)} karyawan untuk tahun {year}")

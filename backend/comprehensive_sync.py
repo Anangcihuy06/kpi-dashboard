@@ -1271,7 +1271,11 @@ def calculate_daily_aggregated_kpi(db: Session, user: models.User, date: datetim
         late_count = 1 if attendance.is_late else 0
     else:
         # Fallback for years without explicit AttendanceRecord (e.g. 2025): default to 1 on working weekdays (Mon-Fri)
-        attendance_days = 1 if date.weekday() < 5 else 0
+        # For 2026 onwards, we assume no record means absent.
+        if date.year == 2025:
+            attendance_days = 1 if date.weekday() < 5 else 0
+        else:
+            attendance_days = 0
         late_count = 0
 
     late_percentage = (late_count / attendance_days * 100) if attendance_days > 0 else 0.0
