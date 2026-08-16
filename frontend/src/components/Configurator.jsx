@@ -11,9 +11,12 @@ export default function Configurator() {
   const [sprints, setSprints] = useState([]);
   const [divisions, setDivisions] = useState([]);
   const [selectedDivisionId, setSelectedDivisionId] = useState("");
-  const [groups, setGroups] = useState([]);
+  const [divisions, setDivisions] = useState([]);
+  const [selectedDivisionId, setSelectedDivisionId] = useState("");
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  
+  const [currentUser, setCurrentUser] = useState({});
 
   // Integration Settings states
   const [jiraUrl, setJiraUrl] = useState("");
@@ -39,24 +42,22 @@ export default function Configurator() {
     fetchSprints();
     fetchDivisions();
     fetchIntegrations();
+    
+    const storedUser = JSON.parse(localStorage.getItem("kpi_user") || "{}");
+    setCurrentUser(storedUser);
+    if (storedUser.division_id) {
+        setSelectedDivisionId(storedUser.division_id);
+    }
+    if (storedUser.group_id) {
+        setSelectedGroupId(storedUser.group_id);
+    }
   }, []);
 
   useEffect(() => {
     if (selectedDivisionId) {
-      fetchGroupsForDivision(selectedDivisionId);
       fetchRulesForDivision(selectedDivisionId, selectedGroupId);
     }
   }, [selectedDivisionId, selectedGroupId]);
-
-  const fetchGroupsForDivision = async (divId) => {
-    try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/user-groups?division_id=${divId}`);
-      const list = await res.json();
-      setGroups(list);
-    } catch (err) {
-      console.error("Gagal mengambil data group:", err);
-    }
-  };
 
   const fetchSprints = async () => {
     try {
@@ -179,11 +180,9 @@ export default function Configurator() {
     setMessage(null);
     try {
       const totalWeight = metrics.reduce((acc, curr) => acc + parseFloat(curr.weight), 0);
-      if (Math.abs(totalWeight - 1.0) > 0.001) {
+      if (totalWeight < 0.99 || totalWeight > 1.01) {
         throw new Error(`Total bobot harus bernilai 100% (1.0). Saat ini: ${(totalWeight * 100).toFixed(0)}%`);
       }
-
-      const selectedGroup = groups.find(g => g.id === selectedGroupId);
       
       const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/kpi-rules", {
         method: "POST",
@@ -191,7 +190,7 @@ export default function Configurator() {
         body: JSON.stringify({
           division_id: selectedDivisionId,
           group_id: selectedGroupId || null,
-          group_name: selectedGroup ? selectedGroup.name : null,
+          group_name: currentUser.group_name || null,
           name: name,
           metrics: metrics
         })
@@ -378,34 +377,34 @@ export default function Configurator() {
             {/* Main Formula Rules Configurator */}
             <div className="card">
               <div className="flex-between" style={{ marginBottom: "16px" }}>
-                <h3>Aturan Indikator Divisi / Group</h3>
+                <div>
+                  <h3 style={{ marginBottom: "4px" }}>Aturan Indikator Divisi / Group</h3>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "8px" }}>
+                    <div style={{ 
+                      padding: "4px 12px", 
+                      background: "rgba(37, 99, 235, 0.1)", 
+                      color: "var(--color-primary)", 
+                      borderRadius: "16px", 
+                      fontSize: "12px", 
+                      fontWeight: 600,
+                      border: "1px solid rgba(37, 99, 235, 0.2)"
+                    }}>
+                      {currentUser.group_name || "Tidak ada Group"}
+                    </div>
+                    <div style={{ 
+                      padding: "4px 12px", 
+                      background: "#f1f5f9", 
+                      color: "#475569", 
+                      borderRadius: "16px", 
+                      fontSize: "12px", 
+                      fontWeight: 500,
+                      border: "1px solid #e2e8f0"
+                    }}>
+                      {divisions.find(d => d.id === selectedDivisionId)?.name || "Default Divisi"}
+                    </div>
+                  </div>
+                </div>
                 <div style={{ display: "flex", gap: "12px" }}>
-                  <select
-                    className="select-control"
-                    value={selectedDivisionId}
-                    onChange={(e) => {
-                        setSelectedDivisionId(e.target.value);
-                        setSelectedGroupId("");
-                    }}
-                    style={{ padding: "6px 12px", height: "32px", fontSize: "12px", width: "160px" }}
-                  >
-                    {divisions.map(d => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
-                  
-                  <select
-                    className="select-control"
-                    value={selectedGroupId}
-                    onChange={(e) => setSelectedGroupId(e.target.value)}
-                    style={{ padding: "6px 12px", height: "32px", fontSize: "12px", width: "200px" }}
-                  >
-                    <option value="">-- Semua (Default Divisi) --</option>
-                    {groups.map(g => (
-                      <option key={g.id} value={g.id}>{g.name}</option>
-                    ))}
-                  </select>
-
                   <button className="btn-outline" onClick={addMetricRow} style={{ padding: "6px 16px", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px", height: "32px" }}>
                     <Plus size={14} /> Tambah Indikator
                   </button>
