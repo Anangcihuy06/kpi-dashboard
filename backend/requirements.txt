@@ -8,5 +8,5 @@ bcrypt==5.0.0
 python-dateutil==2.9.0.post0
 pydantic==2.13.4
 APScheduler==3.10.4
-psycopg2-binary==2.9.9
+pg8000==1.31.2
 # encoding fix

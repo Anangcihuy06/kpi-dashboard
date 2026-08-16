@@ -7,7 +7,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Fallback to sqlite if DATABASE_URL is not set (e.g. local dev)
 DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{os.path.join(BASE_DIR, 'database.db')}")
 if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+pg8000://", 1)
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+pg8000://", 1)
 
 if DATABASE_URL.startswith("sqlite"):
     engine = create_engine(
