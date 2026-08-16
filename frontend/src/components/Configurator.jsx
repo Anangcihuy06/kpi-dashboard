@@ -78,14 +78,26 @@ export default function Configurator() {
         setName(data.name);
         setMetrics(data.metrics);
       } else {
-        setName("IT Developer KPI Matrix v3");
-        setMetrics([
-          { metric_key: "raw_jira_sp", category: "DELIVERY", weight: 0.30, calc_type: "FORMULA", formula_expression: "min((raw_jira_sp / max_raw_sp) * 100, 100)", variables: { max_raw_sp: 100 }, cap_score: 100.0 },
-          { metric_key: "complexity_sp", category: "ENGINEERING", weight: 0.30, calc_type: "FORMULA", formula_expression: "min((complexity_sp / max_complexity_sp) * 100, 100)", variables: { max_complexity_sp: 100 }, cap_score: 100.0 },
-          { metric_key: "founder_sp_credit", category: "EFFORT", weight: 0.15, calc_type: "FORMULA", formula_expression: "min((founder_sp_credit / max_founder_sp) * 100, 100)", variables: { max_founder_sp: 50 }, cap_score: 100.0 },
-          { metric_key: "jira_issues_completed", category: "QUALITY", weight: 0.15, calc_type: "FORMULA", formula_expression: "min((jira_issues_completed / max_issues_cnt) * 100, 100)", variables: { max_issues_cnt: 30 }, cap_score: 100.0 },
-          { metric_key: "attendance", category: "EFFORT", weight: 0.10, calc_type: "FORMULA", formula_expression: "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)", variables: { target_days: 261, late_percentage: 5 }, cap_score: 100.0 }
-        ]);
+        // Fetch current division info
+        const divRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/divisions`);
+        const divList = await divRes.json();
+        const selectedDiv = divList.find(d => d.id === divId) || { name: "New Division", code: "" };
+        
+        setName(`${selectedDiv.name} KPI Matrix`);
+        
+        if (selectedDiv.code === "IT") {
+            setMetrics([
+              { metric_key: "raw_jira_sp", category: "DELIVERY", weight: 0.30, calc_type: "FORMULA", formula_expression: "min((raw_jira_sp / max_raw_sp) * 100, 100)", variables: { max_raw_sp: 100 }, cap_score: 100.0 },
+              { metric_key: "complexity_sp", category: "ENGINEERING", weight: 0.30, calc_type: "FORMULA", formula_expression: "min((complexity_sp / max_complexity_sp) * 100, 100)", variables: { max_complexity_sp: 100 }, cap_score: 100.0 },
+              { metric_key: "founder_sp_credit", category: "EFFORT", weight: 0.15, calc_type: "FORMULA", formula_expression: "min((founder_sp_credit / max_founder_sp) * 100, 100)", variables: { max_founder_sp: 50 }, cap_score: 100.0 },
+              { metric_key: "jira_issues_completed", category: "QUALITY", weight: 0.15, calc_type: "FORMULA", formula_expression: "min((jira_issues_completed / max_issues_cnt) * 100, 100)", variables: { max_issues_cnt: 30 }, cap_score: 100.0 },
+              { metric_key: "attendance", category: "EFFORT", weight: 0.10, calc_type: "FORMULA", formula_expression: "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)", variables: { target_days: 261, late_percentage: 5 }, cap_score: 100.0 }
+            ]);
+        } else {
+            setMetrics([
+              { metric_key: "attendance", category: "EFFORT", weight: 1.00, calc_type: "FORMULA", formula_expression: "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)", variables: { target_days: 261, late_percentage: 5 }, cap_score: 100.0 }
+            ]);
+        }
       }
     } catch (err) {
       console.error(err);
