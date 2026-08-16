@@ -363,6 +363,24 @@ export default function Configurator() {
                   <button className="btn-outline" onClick={addMetricRow} style={{ padding: "6px 16px", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px", height: "32px" }}>
                     <Plus size={14} /> Tambah Indikator
                   </button>
+                  {divisions.find(d => d.id === selectedDivisionId)?.code === "IT" && (
+                    <button 
+                      className="btn-outline" 
+                      onClick={() => {
+                        setName("IT Developer KPI Matrix v3");
+                        setMetrics([
+                          { metric_key: "raw_jira_sp", category: "DELIVERY", weight: 0.30, calc_type: "FORMULA", formula_expression: "min((raw_jira_sp / max_raw_sp) * 100, 100)", variables: { max_raw_sp: 100 }, cap_score: 100.0 },
+                          { metric_key: "complexity_sp", category: "ENGINEERING", weight: 0.30, calc_type: "FORMULA", formula_expression: "min((complexity_sp / max_complexity_sp) * 100, 100)", variables: { max_complexity_sp: 100 }, cap_score: 100.0 },
+                          { metric_key: "founder_sp_credit", category: "EFFORT", weight: 0.15, calc_type: "FORMULA", formula_expression: "min((founder_sp_credit / max_founder_sp) * 100, 100)", variables: { max_founder_sp: 50 }, cap_score: 100.0 },
+                          { metric_key: "jira_issues_completed", category: "QUALITY", weight: 0.15, calc_type: "FORMULA", formula_expression: "min((jira_issues_completed / max_issues_cnt) * 100, 100)", variables: { max_issues_cnt: 30 }, cap_score: 100.0 },
+                          { metric_key: "attendance", category: "EFFORT", weight: 0.10, calc_type: "FORMULA", formula_expression: "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)", variables: { target_days: 261, late_percentage: 5 }, cap_score: 100.0 }
+                        ]);
+                      }}
+                      style={{ padding: "6px 16px", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px", height: "32px", borderColor: "#4f46e5", color: "#4f46e5" }}
+                    >
+                      <RefreshCw size={14} /> Reset 5-Pillar IT
+                    </button>
+                  )}
                 </div>
               </div>
 
