@@ -1,0 +1,58 @@
+F20M-164 [F20M - ATI-Falcon 2.0-Mobile] (Development / In Progress) | SP: 0 | Summary: remove button like action button on notifications detail
+F20M-163 [F20M - ATI-Falcon 2.0-Mobile] (Development / In Progress) | SP: 0 | Summary: button submit overtime looks disabled, should be not
+F20M-161 [F20M - ATI-Falcon 2.0-Mobile] (Development / In Progress) | SP: 0 | Summary: ati logo not seen properly on login page ios dark theme
+F20M-159 [F20M - ATI-Falcon 2.0-Mobile] (Development / In Progress) | SP: 0 | Summary: create overtime asso, auto selected to asso name
+F20M-155 [F20M - ATI-Falcon 2.0-Mobile] (Needs Clarifications / To Do) | SP: 0 | Summary: no roster alert on leave submission
+F20M-154 [F20M - ATI-Falcon 2.0-Mobile] (Needs Clarifications / To Do) | SP: 0 | Summary: theme option
+F20M-153 [F20M - ATI-Falcon 2.0-Mobile] (Needs Clarifications / To Do) | SP: 0 | Summary: Overtime Order form enhancement
+F20M-148 [F20M - ATI-Falcon 2.0-Mobile] (Needs Clarifications / To Do) | SP: 0 | Summary: If error shows up, should be showing message error from BE
+F20M-147 [F20M - ATI-Falcon 2.0-Mobile] (Needs Clarifications / To Do) | SP: 0 | Summary: Add additional alert on leave request
+F20M-145 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: auto fit banner image
+F20M-141 [F20M - ATI-Falcon 2.0-Mobile] (Ready for QA / In Progress) | SP: 0 | Summary: IOS result
+F20M-139 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: disable limit login
+F20M-138 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: Improve iOS Layout Consistency for Create Request Modals
+F20M-137 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: prebuild ios falcon v2
+F20M-136 [F20M - ATI-Falcon 2.0-Mobile] (Needs Clarifications / To Do) | SP: 0 | Summary: Resignation / Termination module
+F20M-132 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: Menu Event Detail - layout of Check in time and coupent reedemed not aligned with registered on
+F20M-130 [F20M - ATI-Falcon 2.0-Mobile] (Ready To Release / Done) | SP: 0 | Summary: manual overnight roster no need to match master overnight value
+F20M-127 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: edible wording for notif dialog after success register
+F20M-126 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: edible wording for confirm dialog when click register
+F20M-124 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: Confirmation dialog after click button clock in and clock out (after check location)
+F20M-123 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: [Bugs] pada movie night tidak memakai kupon
+F20M-120 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: [Bugs] Checkin event disable 
+F20M-118 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: [Bugs] Notif confrimation no displayed after registed
+F20M-115 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: position on profile page not showing on dark theme
+F20M-114 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: General data layout different than family information
+F20M-112 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: Profile edit
+F20M-86 [F20M - ATI-Falcon 2.0-Mobile] (Ready for UAT / In Progress) | SP: 0 | Summary: Mobile FE
+F20M-81 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: error when removing work location
+F20M-80 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: FM leader view Timesheet member [icon corupt & not view detail]
+F20M-79 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: falcon v2, menu team - member
+F20M-78 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: payroll slip not showing latest period
+F20M-76 [F20M - ATI-Falcon 2.0-Mobile] (Ready for UAT / In Progress) | SP: 0 | Summary: [Bug] Text back Tekan sekali lagi untuk keluar diganti english
+F20M-75 [F20M - ATI-Falcon 2.0-Mobile] (Ready for UAT / In Progress) | SP: 0 | Summary: [Bug] Menu Home Team Timesheet
+F20M-74 [F20M - ATI-Falcon 2.0-Mobile] (Ready for UAT / In Progress) | SP: 0 | Summary: [Bug] Menu Profile Job & Organization
+F20M-73 [F20M - ATI-Falcon 2.0-Mobile] (Ready for UAT / In Progress) | SP: 0 | Summary: [Bug] Android V2 logo android
+F20M-70 [F20M - ATI-Falcon 2.0-Mobile] (Code Review / In Progress) | SP: 0 | Summary: imlement fiture tambahan di Falcon1 dan Falcon2
+F20M-67 [F20M - ATI-Falcon 2.0-Mobile] (Ready for UAT / In Progress) | SP: 0 | Summary: [Bug] Event after checkin apps crash
+F20M-62 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: mobile
+F20M-60 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: mobile
+F20M-56 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: Mobile
+F20M-51 [F20M - ATI-Falcon 2.0-Mobile] (Ready for UAT / In Progress) | SP: 0 | Summary: [SUB-10] - Testing & QA
+F20M-50 [F20M - ATI-Falcon 2.0-Mobile] (Development / In Progress) | SP: 0 | Summary: [SUB-09] - UI/UX Consistency & Styling
+F20M-49 [F20M - ATI-Falcon 2.0-Mobile] (Code Review / In Progress) | SP: 0 | Summary: [SUB-08] - API Integration & Data Sync
+F20M-46 [F20M - ATI-Falcon 2.0-Mobile] (Ready for UAT / In Progress) | SP: 0 | Summary: [SUB-05] - Attendance Module (Clock In/Out)
+F20M-44 [F20M - ATI-Falcon 2.0-Mobile] (Ready for UAT / In Progress) | SP: 0 | Summary: [SUB-03] - Location & MapView Integration
+F20M-43 [F20M - ATI-Falcon 2.0-Mobile] (Ready for UAT / In Progress) | SP: 0 | Summary: [SUB-02] - Core Module & Authentication
+F20M-42 [F20M - ATI-Falcon 2.0-Mobile] (Development / In Progress) | SP: 0 | Summary: [SUB-01] - Setup Project & Environment Baru
+F20M-39 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: Recompile your app with 16 KB native library alignment
+F20M-38 [F20M - ATI-Falcon 2.0-Mobile] (Needs Clarifications / To Do) | SP: 0 | Summary: Remove resizability and orientation restrictions in your app to support large screen devices
+F20M-37 [F20M - ATI-Falcon 2.0-Mobile] (Needs Clarifications / To Do) | SP: 0 | Summary: Your app uses deprecated APIs or parameters for edge-to-edge
+F20M-36 [F20M - ATI-Falcon 2.0-Mobile] (Needs Clarifications / To Do) | SP: 0 | Summary: Edge-to-edge may not display for all users
+F20M-34 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: Mobile UI
+F20M-29 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: error submit attendance correction
+F20M-27 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: Update Playstore Lib - App must support 16 KB memory page sizes
+F20M-23 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: event detail, button check in masih muncul padahal di event date masih jauh
+F20M-22 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: list team attendance load data langsung pindah ke atas lagi, seharusnya tidak
+F20M-19 [F20M - ATI-Falcon 2.0-Mobile] (Blocked / In Progress) | SP: 0 | Summary: Create Sick Leave, Attachment is mandatory
+F20M-12 [F20M - ATI-Falcon 2.0-Mobile] (Done / Done) | SP: 0 | Summary: Mobile
