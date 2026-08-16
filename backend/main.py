@@ -1371,6 +1371,13 @@ class ComprehensiveSyncRequest(BaseModel):
     to_date: str    # YYYY-MM-DD
     user_ids: List[str] = []  # Empty means all active users
 
+@app.get("/api/v1/admin/clean-kpi-daily")
+def clean_kpi_daily_2026(db: Session = Depends(get_db)):
+    """Temporary endpoint to clean corrupted KPIEmployeeDaily for 2026"""
+    deleted = db.query(models.KPIEmployeeDaily).filter(models.KPIEmployeeDaily.date >= '2026-01-01').delete(synchronize_session=False)
+    db.commit()
+    return {"status": "success", "deleted": deleted, "message": "Corrupted 2026 data cleared"}
+
 @app.post("/api/v1/sync/comprehensive")
 def trigger_comprehensive_sync(request: ComprehensiveSyncRequest, background_tasks: BackgroundTasks, user_id: str, db: Session = Depends(get_db)):
     """
@@ -1410,6 +1417,7 @@ def trigger_comprehensive_sync(request: ComprehensiveSyncRequest, background_tas
         try:
             from fastapi_cache import FastAPICache
             
+
             logger.info(f"Starting comprehensive sync for {len(target_user_ids)} users from {from_date} to {to_date}")
             
             results = []
