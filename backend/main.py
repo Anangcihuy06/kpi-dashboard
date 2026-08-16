@@ -340,6 +340,7 @@ def sync_attendance_year(
     Uses the HRIS admin endpoint per-NIK, paginated. Results cached in SQLite.
     """
     from sync_service import sync_attendance_for_year
+    from sync_engine import create_sync_job, update_job_progress, mark_job_completed, mark_job_failed
     
     supervisor = db.query(models.User).filter(models.User.id == supervisor_id).first()
     if not supervisor:
@@ -348,21 +349,28 @@ def sync_attendance_year(
     subordinates = db.query(models.User).filter(models.User.supervisor_id == supervisor_id).all()
     if not subordinates:
         return {"status": "ok", "message": "Tidak ada bawahan untuk disinkronisasi", "count": 0}
+        
+    job_id = create_sync_job(db, supervisor_id, "ATTENDANCE_SYNC_YEAR")
     
-    def _do_sync():
+    def _do_sync(j_id, sub_list, y):
         from database import SessionLocal
         _db = SessionLocal()
         try:
-            sync_attendance_for_year(_db, subordinates, year)
+            update_job_progress(_db, j_id, 10, "RUNNING")
+            sync_attendance_for_year(_db, sub_list, y)
+            mark_job_completed(_db, j_id, {"count": len(sub_list), "year": y})
+        except Exception as e:
+            mark_job_failed(_db, j_id, str(e))
         finally:
             _db.close()
     
-    background_tasks.add_task(_do_sync)
+    background_tasks.add_task(_do_sync, job_id, subordinates, year)
     return {
         "status": "syncing",
         "message": f"Sinkronisasi attendance {year} dimulai untuk {len(subordinates)} karyawan",
         "count": len(subordinates),
-        "year": year
+        "year": year,
+        "job_id": job_id
     }
 
 @app.get("/api/v1/divisions")
@@ -871,23 +879,17 @@ async def sync_year(year: int, background_tasks: BackgroundTasks, db: Session = 
 # ─────────────────────────────────────────────────────────────
 
 @app.get("/api/v1/sync/status")
-def get_sync_status():
-    import time
-    if os.path.exists("last_sync.txt"):
-        with open("last_sync.txt", "r") as f:
-            ts = f.read().strip()
-            if ts.isdigit():
-                timestamp = int(ts)
-                from datetime import datetime
-                sync_time = datetime.fromtimestamp(timestamp)
-                return {
-                    "last_sync_timestamp": timestamp,
-                    "last_sync_time": sync_time.isoformat(),
-                    "last_sync_human": sync_time.strftime("%d %b %Y, %H:%M:%S"),
-                    "is_syncing": False,
-                    "sync_interval_minutes": 60
-                }
-    return {"last_sync_timestamp": None, "is_syncing": False, "sync_interval_minutes": 60}
+def get_sync_status(db: Session = Depends(get_db)):
+    from sync_engine import get_active_sync_status
+    return get_active_sync_status(db)
+
+@app.get("/api/v1/jobs/{job_id}")
+def get_job_status_endpoint(job_id: str, db: Session = Depends(get_db)):
+    from sync_engine import get_job_status
+    status = get_job_status(db, job_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return status
 
 # ─────────────────────────────────────────────────────────────
 # SYNC TRIGGER ENDPOINTS
@@ -1426,48 +1428,72 @@ def trigger_comprehensive_sync(request: ComprehensiveSyncRequest, background_tas
     
     settings = db.query(models.IntegrationSetting).first()
     
-    def run_comprehensive_sync():
-        try:
-            from fastapi_cache import FastAPICache
-            
-
-            logger.info(f"Starting comprehensive sync for {len(target_user_ids)} users from {from_date} to {to_date}")
-            
-            results = []
-            for user_id in target_user_ids:
-                user = db.query(models.User).filter(models.User.id == user_id).first()
-                if not user:
-                    continue
-                
-                # Run comprehensive sync for this user
-                result = sync_user_comprehensive(db, user, settings, from_date, to_date)
-                results.append(result)
-            
-            # Calculate daily aggregated KPI for all synced data
-            logger.info("Calculating daily aggregated KPI...")
-            
-            current_date = from_date
-            while current_date <= to_date:
-                for user_id in target_user_ids:
-                    user = db.query(models.User).filter(models.User.id == user_id).first()
-                    if user:
-                        calculate_daily_aggregated_kpi(db, user, current_date)
-                
-                current_date += timedelta(days=1)
-            
-            # Invalidate cache after comprehensive sync
-            try:
-                FastAPICache.clear()
-                logger.info("Cache invalidated after comprehensive sync")
-            except Exception as e:
-                logger.warning(f"Failed to invalidate cache: {e}")
-            
-            logger.info(f"Comprehensive sync completed for {len(results)} users")
-            
-        except Exception as e:
-            logger.error(f"Error in comprehensive sync: {str(e)}")
+    from sync_engine import create_sync_job, update_job_progress, mark_job_completed, mark_job_failed
+    job_id = create_sync_job(db, user_id, "COMPREHENSIVE_SYNC")
     
-    background_tasks.add_task(run_comprehensive_sync)
+    def run_comprehensive_sync(j_id, t_user_ids, frm_dt, t_dt):
+        from database import SessionLocal
+        _db = SessionLocal()
+        try:
+            update_job_progress(_db, j_id, 10, "RUNNING")
+            try:
+                from fastapi_cache import FastAPICache
+                
+                logger.info(f"Starting comprehensive sync for {len(t_user_ids)} users from {frm_dt} to {t_dt}")
+                
+                results = []
+                for idx, u_id in enumerate(t_user_ids):
+                    u = _db.query(models.User).filter(models.User.id == u_id).first()
+                    if not u:
+                        continue
+                    
+                    # Run comprehensive sync for this user
+                    from comprehensive_sync import sync_user_comprehensive, calculate_daily_aggregated_kpi
+                    result = sync_user_comprehensive(_db, u, settings, frm_dt, t_dt)
+                    results.append(result)
+                    
+                    # Update progress roughly
+                    prog = 10 + int(40 * (idx + 1) / len(t_user_ids))
+                    update_job_progress(_db, j_id, prog, "RUNNING")
+                
+                # Calculate daily aggregated KPI for all synced data
+                logger.info("Calculating daily aggregated KPI...")
+                
+                current_date = frm_dt
+                days_total = (t_dt - frm_dt).days + 1
+                days_done = 0
+                
+                while current_date <= t_dt:
+                    for u_id in t_user_ids:
+                        u = _db.query(models.User).filter(models.User.id == u_id).first()
+                        if u:
+                            from comprehensive_sync import calculate_daily_aggregated_kpi
+                            calculate_daily_aggregated_kpi(_db, u, current_date)
+                    
+                    current_date += timedelta(days=1)
+                    days_done += 1
+                    
+                    # Update progress roughly
+                    prog = 50 + int(40 * days_done / days_total)
+                    update_job_progress(_db, j_id, prog, "RUNNING")
+                
+                # Invalidate cache after comprehensive sync
+                try:
+                    FastAPICache.clear()
+                    logger.info("Cache invalidated after comprehensive sync")
+                except Exception as e:
+                    logger.warning(f"Failed to invalidate cache: {e}")
+                
+                logger.info(f"Comprehensive sync completed for {len(results)} users")
+                mark_job_completed(_db, j_id, {"users_synced": len(results)})
+                
+            except Exception as e:
+                logger.error(f"Error in comprehensive sync: {str(e)}")
+                mark_job_failed(_db, j_id, str(e))
+        finally:
+            _db.close()
+    
+    background_tasks.add_task(run_comprehensive_sync, job_id, target_user_ids, from_date, to_date)
     
     return {
         "status": "success",
@@ -1476,7 +1502,8 @@ def trigger_comprehensive_sync(request: ComprehensiveSyncRequest, background_tas
             "from_date": from_date.strftime("%Y-%m-%d"),
             "to_date": to_date.strftime("%Y-%m-%d")
         },
-        "users_count": len(target_user_ids)
+        "users_count": len(target_user_ids),
+        "job_id": job_id
     }
 
 @app.get("/api/v1/users/{user_id}/identities")

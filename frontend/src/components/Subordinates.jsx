@@ -53,16 +53,31 @@ export default function Subordinates({ supervisorId }) {
       );
       const data = await res.json();
       console.log("[Attendance Sync]", data.message);
-      // Poll every 3s up to 5 times (15s max), stop as soon as data updates
-      let attempts = 0;
-      const poll = setInterval(async () => {
-        attempts++;
-        await fetchTeamScores();
-        if (attempts >= 5) {
-          clearInterval(poll);
+      
+      if (data.job_id) {
+        // Poll job status every 3s
+        const poll = setInterval(async () => {
+          try {
+            const statusRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/jobs/${data.job_id}`);
+            if (statusRes.ok) {
+              const statusData = await statusRes.json();
+              if (statusData.status === "COMPLETED" || statusData.status === "FAILED") {
+                clearInterval(poll);
+                await fetchTeamScores();
+                setAttendanceSyncing(false);
+              }
+            }
+          } catch (e) {
+            console.error("Error polling job status:", e);
+          }
+        }, 3000);
+      } else {
+        // Fallback
+        setTimeout(async () => {
+          await fetchTeamScores();
           setAttendanceSyncing(false);
-        }
-      }, 3000);
+        }, 3000);
+      }
     } catch (err) {
       console.error("[Attendance Sync] Gagal:", err);
       setAttendanceSyncing(false);

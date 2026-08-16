@@ -146,6 +146,22 @@ class SyncState(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
+class SyncJob(Base):
+    """Track background sync jobs for frontend polling"""
+    __tablename__ = "sync_jobs"
+
+    id = Column(String(50), primary_key=True, default=generate_uuid)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    job_type = Column(String(50), nullable=False) # e.g., "KPI_SYNC", "ATTENDANCE_SYNC"
+    status = Column(String(20), default="PENDING") # PENDING, RUNNING, COMPLETED, FAILED
+    progress = Column(Integer, default=0) # 0 to 100
+    result = Column(JSON, nullable=True)
+    error_message = Column(Text, nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
 class SyncLog(Base):
     """Detailed sync operation logs"""
     __tablename__ = "sync_logs"
