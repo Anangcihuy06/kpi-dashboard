@@ -45,6 +45,8 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://127.0.0.1:5174",
         "http://127.0.0.1:3000",
+        "https://kpi-dashboard-xi-murex.vercel.app",
+        os.environ.get("FRONTEND_URL", "https://kpi-dashboard-xi-murex.vercel.app"),
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
