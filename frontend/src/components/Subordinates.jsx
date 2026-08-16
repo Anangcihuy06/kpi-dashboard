@@ -408,7 +408,14 @@ export default function Subordinates({ supervisorId }) {
                           </button>
                         </td>
                         <td style={{ fontWeight: 700, color: "var(--color-primary)" }}>
-                          {sub.full_name}
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            {sub.full_name}
+                            {!sub.email && (
+                              <span className="badge" style={{ background: "#fef08a", color: "#a16207", display: "flex", alignItems: "center", gap: "4px", fontSize: "10px", padding: "2px 6px" }}>
+                                <AlertTriangle size={10} /> Email Required
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td>{sub.nik}</td>
                         <td>
@@ -447,16 +454,29 @@ export default function Subordinates({ supervisorId }) {
                           {scoreInfo.overall !== undefined ? scoreInfo.overall : "N/A"}
                         </td>
                         <td>
-                          <button
-                            className="btn-outline"
-                            onClick={() => {
-                              setSelectedSubId(sub.user_id);
-                              setSelectedSubName(sub.full_name);
-                            }}
-                            style={{ padding: "6px 16px", fontSize: "12px" }}
-                          >
-                            Lihat Dashboard Detail
-                          </button>
+                          {!sub.email ? (
+                            <button
+                              className="btn-primary"
+                              onClick={() => {
+                                setExpandedRows(prev => ({ ...prev, [sub.user_id]: true }));
+                              }}
+                              style={{ padding: "6px 16px", fontSize: "12px", background: "#f59e0b", borderColor: "#f59e0b", color: "#fff", display: "flex", alignItems: "center", gap: "4px" }}
+                            >
+                              <AlertTriangle size={14} />
+                              Lengkapi Email
+                            </button>
+                          ) : (
+                            <button
+                              className="btn-outline"
+                              onClick={() => {
+                                setSelectedSubId(sub.user_id);
+                                setSelectedSubName(sub.full_name);
+                              }}
+                              style={{ padding: "6px 16px", fontSize: "12px" }}
+                            >
+                              Lihat Dashboard Detail
+                            </button>
+                          )}
                         </td>
                       </tr>
 
@@ -482,6 +502,7 @@ export default function Subordinates({ supervisorId }) {
                                       type="email"
                                       placeholder="nama.karyawan@atibusinessgroup.com"
                                       className="form-input"
+                                      required
                                       value={editingEmails[sub.user_id] !== undefined ? editingEmails[sub.user_id] : (sub.email || "")}
                                       onChange={(e) => handleEmailChange(sub.user_id, e.target.value)}
                                       style={{ 
@@ -490,8 +511,8 @@ export default function Subordinates({ supervisorId }) {
                                         width: "100%",
                                         paddingLeft: "36px", 
                                         borderRadius: "6px", 
-                                        border: "1px solid #cbd5e1",
-                                        backgroundColor: "#f8fafc",
+                                        border: !sub.email ? "2px solid #f59e0b" : "1px solid #cbd5e1",
+                                        backgroundColor: !sub.email ? "#fefce8" : "#f8fafc",
                                         transition: "all 0.2s"
                                       }}
                                     />
