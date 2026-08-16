@@ -1105,17 +1105,64 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
                 models.KPIEmployeeDaily.date <= to_date
             ).order_by(models.KPIEmployeeDaily.date).all()
             
-            if not daily_kpis:
-                # Attempt on-the-fly daily KPI aggregation for requested year
+            # Check if daily KPIs are stale/incomplete — rebuild if so
+            # We compare against AttendanceRecord count to detect staleness
+            att_source_count = db.query(models.AttendanceRecord).filter(
+                models.AttendanceRecord.user_id == user.id,
+                models.AttendanceRecord.date >= from_date.date().isoformat(),
+                models.AttendanceRecord.date <= to_date.date().isoformat()
+            ).count()
+            
+            daily_kpi_with_att = sum(1 for d in daily_kpis if d.attendance_days > 0) if daily_kpis else 0
+            needs_rebuild = (not daily_kpis) or (att_source_count > 0 and daily_kpi_with_att == 0)
+            
+            if needs_rebuild:
+                # Attempt on-the-fly daily KPI aggregation for requested period
                 try:
-                    from comprehensive_sync import calculate_daily_aggregated_kpi, sync_user_comprehensive
-                    curr = from_date.date()
-                    end_d = to_date.date()
-                    while curr <= end_d:
-                        calculate_daily_aggregated_kpi(db, user, datetime.combine(curr, datetime.min.time()))
-                        curr += timedelta(days=1)
+                    from comprehensive_sync import calculate_daily_aggregated_kpi
                     
-                    db.commit() # Added to persist the on-the-fly records
+                    # Collect all dates that have activities or attendance
+                    from sqlalchemy import and_
+                    rebuild_dates = set()
+                    
+                    act_dates = db.query(models.Activity.activity_date).filter(
+                        and_(
+                            models.Activity.user_id == user.id,
+                            models.Activity.activity_date >= from_date,
+                            models.Activity.activity_date <= to_date
+                        )
+                    ).distinct().all()
+                    for r in act_dates:
+                        if r[0]:
+                            if isinstance(r[0], datetime):
+                                rebuild_dates.add(r[0].date())
+                            elif hasattr(r[0], 'year'):
+                                rebuild_dates.add(r[0])
+                    
+                    att_dates = db.query(models.AttendanceRecord.date).filter(
+                        and_(
+                            models.AttendanceRecord.user_id == user.id,
+                            models.AttendanceRecord.date >= from_date.date().isoformat(),
+                            models.AttendanceRecord.date <= to_date.date().isoformat()
+                        )
+                    ).distinct().all()
+                    for r in att_dates:
+                        if r[0]:
+                            if isinstance(r[0], str):
+                                try:
+                                    rebuild_dates.add(datetime.strptime(r[0][:10], "%Y-%m-%d").date())
+                                except Exception:
+                                    pass
+                            elif isinstance(r[0], datetime):
+                                rebuild_dates.add(r[0].date())
+                            elif hasattr(r[0], 'year'):
+                                rebuild_dates.add(r[0])
+                    
+                    logger.info(f"Rebuilding KPIEmployeeDaily for user {user.id}: {len(rebuild_dates)} dates found")
+                    for d in sorted(rebuild_dates):
+                        calculate_daily_aggregated_kpi(db, user, datetime.combine(d, datetime.min.time()))
+                    
+                    db.commit()
 
                     daily_kpis = db.query(models.KPIEmployeeDaily).filter(
                         models.KPIEmployeeDaily.user_id == user.id,
@@ -1129,31 +1176,57 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
             if not daily_kpis:
                 daily_kpis = []
             
-            # Aggregate daily data for actuals
-            day_count = len(daily_kpis)
+            # ── SOURCE-OF-TRUTH: Query attendance directly from AttendanceRecord ──
+            attendance_records = db.query(models.AttendanceRecord).filter(
+                models.AttendanceRecord.user_id == user.id,
+                models.AttendanceRecord.date >= from_date.date().isoformat(),
+                models.AttendanceRecord.date <= to_date.date().isoformat()
+            ).all()
             
-            total_commits = 0
-            total_mrs_merged = 0
-            total_worklog_hours = 0
             total_attendance_days = 0
             total_late_count = 0
+            for att in attendance_records:
+                if att.status in ["PRESENT", "LATE"]:
+                    total_attendance_days += 1
+                if att.is_late:
+                    total_late_count += 1
+            
+            # Fallback: if no AttendanceRecord exists (e.g. 2025 historical data),
+            # aggregate from KPIEmployeeDaily instead
+            if not attendance_records and daily_kpis:
+                unique_att_dates = set()
+                for daily in daily_kpis:
+                    date_key = daily.date.strftime('%Y-%m-%d') if hasattr(daily.date, 'strftime') else str(daily.date).split()[0]
+                    if date_key not in unique_att_dates:
+                        unique_att_dates.add(date_key)
+                        total_attendance_days += daily.attendance_days
+                        total_late_count += daily.late_count
+            
+            # ── SOURCE-OF-TRUTH: Query commits/MR from Activity table as fallback ──
+            activities_in_range = db.query(models.Activity).filter(
+                models.Activity.user_id == user.id,
+                models.Activity.activity_date >= from_date,
+                models.Activity.activity_date <= to_date
+            ).all()
+            
+            direct_commits = sum(1 for a in activities_in_range if a.source == "gitlab" and a.activity_type == "commit")
+            direct_mrs = sum(1 for a in activities_in_range if a.source == "gitlab" and a.activity_type in ["mr_merged", "merge_request"])
+            
+            # Aggregate from KPIEmployeeDaily for supplementary data
+            day_count = len(daily_kpis)
+            
+            kpi_commits = sum(d.commit_count for d in daily_kpis)
+            kpi_mrs = sum(d.mr_merged for d in daily_kpis)
+            total_worklog_hours = sum(d.worklog_minutes / 60 for d in daily_kpis)
+            
+            # Use whichever source has more data
+            total_commits = max(kpi_commits, direct_commits)
+            total_mrs_merged = max(kpi_mrs, direct_mrs)
             
             unique_projects = set()
             unique_sprints = set()
-            unique_attendance_dates = set()
             
             for daily in daily_kpis:
-                total_commits += daily.commit_count
-                total_mrs_merged += daily.mr_merged
-                total_worklog_hours += (daily.worklog_minutes / 60)
-                
-                # Deduplicate attendance by date to avoid double counting
-                date_key = daily.date.strftime('%Y-%m-%d') if hasattr(daily.date, 'strftime') else str(daily.date).split()[0]
-                if date_key not in unique_attendance_dates:
-                    unique_attendance_dates.add(date_key)
-                    total_attendance_days += daily.attendance_days
-                    total_late_count += daily.late_count
-                
                 if daily.project_id:
                     unique_projects.add(daily.project_id)
                 if daily.sprint_id:
@@ -1321,12 +1394,12 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
                 "period": {
                     "from_date": from_date.strftime("%Y-%m-%d"),
                     "to_date": to_date.strftime("%Y-%m-%d"),
-                    "day_count": day_count
+                    "day_count": max(day_count, total_attendance_days)
                 },
                 "summary": {
                     "projects_count": len(unique_projects),
                     "sprints_count": len(unique_sprints),
-                    "total_activities": sum(d.raw_activity_count for d in daily_kpis),
+                    "total_activities": max(sum(d.raw_activity_count for d in daily_kpis), len(activities_in_range)),
                     "total_commits": total_commits,
                     "total_mrs_merged": total_mrs_merged,
                     "total_worklog_hours": round(total_worklog_hours, 2),
