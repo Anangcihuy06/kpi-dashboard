@@ -347,6 +347,8 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
             "roles": user.roles,
             "hasSubordinates": user.has_subordinates,
             "division_id": user.division_id,
+            "group_id": user.group_id,
+            "group_name": user.group_name,
             "supervisor_id": user.supervisor_id
         }
     }
