@@ -3,7 +3,7 @@ import { Settings, Play, CheckCircle, RefreshCw, AlertCircle, Plus, Trash2, Glob
 
 export default function Configurator() {
   const [activeSubTab, setActiveSubTab] = useState("rules"); // "rules" or "integrations"
-  
+
   // Matrix Rules states
   const [ruleId, setRuleId] = useState("");
   const [name, setName] = useState("");
@@ -12,7 +12,7 @@ export default function Configurator() {
   const [divisions, setDivisions] = useState([]);
   const [selectedDivisionId, setSelectedDivisionId] = useState("");
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  
+
   // Integration Settings states
   const [jiraUrl, setJiraUrl] = useState("");
   const [jiraEmail, setJiraEmail] = useState("");
@@ -26,7 +26,7 @@ export default function Configurator() {
   const [testFormula, setTestFormula] = useState("min((complexity_sp / max_complexity_sp) * 100, 100)");
   const [testContextJson, setTestContextJson] = useState('{\n  "complexity_sp": 150,\n  "max_complexity_sp": 300,\n  "raw_jira_sp": 200,\n  "max_raw_sp": 400,\n  "attendance_days": 240,\n  "target_days": 261,\n  "late_percentage": 5\n}');
   const [testResult, setTestResult] = useState(null);
-  
+
   const [saveLoading, setSaveLoading] = useState(false);
   const [calcLoading, setCalcLoading] = useState(false);
   const [testLoading, setTestLoading] = useState(false);
@@ -82,19 +82,21 @@ export default function Configurator() {
         const divRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/divisions`);
         const divList = await divRes.json();
         const selectedDiv = divList.find(d => d.id === divId) || { name: "New Division", code: "" };
-        
+
         if (selectedDiv.code === "IT") {
-            setName("IT Developer KPI Matrix v2");
+            setName("IT Developer KPI Matrix v3");
             setMetrics([
-              { metric_key: "jira_sp", category: "ENGINEERING", weight: 0.40, calc_type: "FORMULA", formula_expression: "min((jira_sp / target_sp) * 100, 120)", variables: { target_sp: 20 }, cap_score: 120.0 },
-              { metric_key: "gitlab_mr", category: "ENGINEERING", weight: 0.40, calc_type: "FORMULA", formula_expression: "(gitlab_mr_merged / target_mr) * 100", variables: { target_mr: 5 }, cap_score: 100.0 },
-              { metric_key: "attendance", category: "ENGINEERING", weight: 0.20, calc_type: "FORMULA", formula_expression: "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)", variables: { target_days: 10 }, cap_score: 100.0 }
+              { metric_key: "raw_jira_sp", category: "DELIVERY", weight: 0.30, calc_type: "FORMULA", formula_expression: "min((raw_jira_sp / max_raw_sp) * 100, 100)", variables: { max_raw_sp: 100 }, cap_score: 100.0 },
+              { metric_key: "complexity_sp", category: "ENGINEERING", weight: 0.30, calc_type: "FORMULA", formula_expression: "min((complexity_sp / max_complexity_sp) * 100, 100)", variables: { max_complexity_sp: 100 }, cap_score: 100.0 },
+              { metric_key: "founder_sp_credit", category: "EFFORT", weight: 0.15, calc_type: "FORMULA", formula_expression: "min((founder_sp_credit / max_founder_sp) * 100, 100)", variables: { max_founder_sp: 50 }, cap_score: 100.0 },
+              { metric_key: "jira_issues_completed", category: "QUALITY", weight: 0.15, calc_type: "FORMULA", formula_expression: "min((jira_issues_completed / max_issues_cnt) * 100, 100)", variables: { max_issues_cnt: 30 }, cap_score: 100.0 },
+              { metric_key: "attendance", category: "EFFORT", weight: 0.10, calc_type: "FORMULA", formula_expression: "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)", variables: { target_days: 261, late_percentage: 5 }, cap_score: 100.0 }
             ]);
         } else {
-            setName(`${selectedDiv.name} KPI Matrix`);
-            setMetrics([
-              { metric_key: "attendance", category: "EFFORT", weight: 1.00, calc_type: "FORMULA", formula_expression: "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)", variables: { target_days: 261, late_percentage: 5 }, cap_score: 100.0 }
-            ]);
+          setName(`${selectedDiv.name} KPI Matrix`);
+          setMetrics([
+            { metric_key: "attendance", category: "EFFORT", weight: 1.00, calc_type: "FORMULA", formula_expression: "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)", variables: { target_days: 261, late_percentage: 5 }, cap_score: 100.0 }
+          ]);
         }
       }
     } catch (err) {
@@ -247,9 +249,9 @@ export default function Configurator() {
       });
       if (!response.ok) throw new Error("Gagal menjalankan kalkulasi");
       const data = await response.json();
-      setMessage({ 
-        type: "success", 
-        text: `Kalkulasi & Sinkronisasi selesai! Berhasil memperbarui data dari Jira/GitLab untuk tahun ${selectedYear}.` 
+      setMessage({
+        type: "success",
+        text: `Kalkulasi & Sinkronisasi selesai! Berhasil memperbarui data dari Jira/GitLab untuk tahun ${selectedYear}.`
       });
     } catch (err) {
       setMessage({ type: "error", text: err.message });
@@ -270,10 +272,10 @@ export default function Configurator() {
       </div>
 
       {message && (
-        <div 
-          className="card" 
-          style={{ 
-            borderColor: message.type === "success" ? "#bbf7d0" : "#fecaca", 
+        <div
+          className="card"
+          style={{
+            borderColor: message.type === "success" ? "#bbf7d0" : "#fecaca",
             backgroundColor: message.type === "success" ? "#f0fdf4" : "#fef2f2",
             color: message.type === "success" ? "#15803d" : "#b91c1c",
             display: "flex",
@@ -290,7 +292,7 @@ export default function Configurator() {
 
       {/* Sub Tabs Toggle */}
       <div style={{ display: "flex", gap: "12px", borderBottom: "1px solid #cbd5e1", marginBottom: "28px", paddingBottom: "2px" }}>
-        <button 
+        <button
           className={`switcher-btn ${activeSubTab === "rules" ? "active" : ""}`}
           onClick={() => { setActiveSubTab("rules"); setMessage(null); }}
           style={{ backgroundColor: activeSubTab === "rules" ? "var(--color-secondary)" : "transparent", color: activeSubTab === "rules" ? "#fff" : "var(--color-primary)", padding: "8px 24px", borderRadius: "16px 16px 0 0", fontSize: "14px" }}
@@ -298,7 +300,7 @@ export default function Configurator() {
           <Settings size={14} style={{ display: "inline", marginRight: "6px" }} />
           KPI Matrix Rules
         </button>
-        <button 
+        <button
           className={`switcher-btn ${activeSubTab === "integrations" ? "active" : ""}`}
           onClick={() => { setActiveSubTab("integrations"); setMessage(null); }}
           style={{ backgroundColor: activeSubTab === "integrations" ? "var(--color-secondary)" : "transparent", color: activeSubTab === "integrations" ? "#fff" : "var(--color-primary)", padding: "8px 24px", borderRadius: "16px 16px 0 0", fontSize: "14px" }}
@@ -319,7 +321,7 @@ export default function Configurator() {
             <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                 <label className="form-label" style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>Pilih Tahun</label>
-                <select 
+                <select
                   className="select-control"
                   value={selectedYear}
                   onChange={(e) => setSelectedYear(Number(e.target.value))}
@@ -329,8 +331,8 @@ export default function Configurator() {
                   ))}
                 </select>
               </div>
-              <button 
-                className="btn-primary" 
+              <button
+                className="btn-primary"
                 onClick={handleCalculateYear}
                 disabled={calcLoading}
                 style={{ width: "auto", padding: "0 24px", height: "44px", marginTop: "16px" }}
@@ -342,7 +344,7 @@ export default function Configurator() {
           </div>
 
           <div className="configurator-grid">
-            
+
             {/* Main Formula Rules Configurator */}
             <div className="card">
               <div className="flex-between" style={{ marginBottom: "16px" }}>
@@ -366,11 +368,11 @@ export default function Configurator() {
 
               <div style={{ marginBottom: "20px" }}>
                 <label className="form-label">Nama Matriks</label>
-                <input 
-                  type="text" 
-                  className="form-input" 
-                  value={name} 
-                  onChange={(e) => setName(e.target.value)} 
+                <input
+                  type="text"
+                  className="form-input"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
                 />
               </div>
 
@@ -391,15 +393,15 @@ export default function Configurator() {
                     {metrics.map((metric, idx) => (
                       <tr key={idx}>
                         <td>
-                          <input 
-                            type="text" 
-                            className="table-input" 
+                          <input
+                            type="text"
+                            className="table-input"
                             value={metric.metric_key}
                             onChange={(e) => handleMetricChange(idx, "metric_key", e.target.value)}
                           />
                         </td>
                         <td>
-                          <select 
+                          <select
                             className="table-input"
                             style={{ height: "32px" }}
                             value={metric.category || "ENGINEERING"}
@@ -412,43 +414,43 @@ export default function Configurator() {
                           </select>
                         </td>
                         <td>
-                          <input 
-                            type="number" 
+                          <input
+                            type="number"
                             step="0.05"
                             min="0"
                             max="1"
-                            className="table-input" 
+                            className="table-input"
                             value={metric.weight}
                             onChange={(e) => handleMetricChange(idx, "weight", e.target.value)}
                           />
                         </td>
                         <td>
-                          <input 
-                            type="text" 
-                            className="table-input table-input-formula" 
+                          <input
+                            type="text"
+                            className="table-input table-input-formula"
                             value={metric.formula_expression}
                             onChange={(e) => handleMetricChange(idx, "formula_expression", e.target.value)}
                           />
                         </td>
                         <td>
-                          <input 
-                            type="number" 
-                            className="table-input" 
+                          <input
+                            type="number"
+                            className="table-input"
                             value={metric.cap_score}
                             onChange={(e) => handleMetricChange(idx, "cap_score", e.target.value)}
                           />
                         </td>
                         <td>
-                          <input 
-                            type="text" 
-                            className="table-input table-input-formula" 
+                          <input
+                            type="text"
+                            className="table-input table-input-formula"
                             value={typeof metric.variables === 'object' ? JSON.stringify(metric.variables) : metric.variables}
                             onChange={(e) => handleMetricChange(idx, "variables", e.target.value)}
                             style={{ fontFamily: "monospace", fontSize: "11px" }}
                           />
                         </td>
                         <td>
-                          <button 
+                          <button
                             onClick={() => removeMetricRow(idx)}
                             style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444", padding: "6px" }}
                           >
@@ -461,8 +463,8 @@ export default function Configurator() {
                 </table>
               </div>
 
-              <button 
-                className="btn-primary" 
+              <button
+                className="btn-primary"
                 onClick={handleSaveRules}
                 disabled={saveLoading}
                 style={{ marginTop: "24px" }}
@@ -481,9 +483,9 @@ export default function Configurator() {
 
               <div className="form-group">
                 <label className="form-label">Formula Uji</label>
-                <input 
-                  type="text" 
-                  className="form-input" 
+                <input
+                  type="text"
+                  className="form-input"
                   value={testFormula}
                   onChange={(e) => setTestFormula(e.target.value)}
                   style={{ fontFamily: "monospace" }}
@@ -492,16 +494,16 @@ export default function Configurator() {
 
               <div className="form-group">
                 <label className="form-label">Input Context (JSON)</label>
-                <textarea 
-                  className="form-input" 
+                <textarea
+                  className="form-input"
                   value={testContextJson}
                   onChange={(e) => setTestContextJson(e.target.value)}
                   style={{ height: "140px", fontFamily: "monospace", padding: "12px", borderRadius: "16px", resize: "none" }}
                 />
               </div>
 
-              <button 
-                className="btn-primary" 
+              <button
+                className="btn-primary"
                 onClick={handleTestFormula}
                 disabled={testLoading}
                 style={{ marginBottom: "20px" }}
@@ -542,13 +544,13 @@ export default function Configurator() {
               <Server size={20} style={{ color: "var(--color-secondary)" }} />
               Jira Server Credentials
             </h3>
-            
+
             <div className="form-group">
               <label className="form-label">Jira Host URL</label>
-              <input 
-                type="url" 
-                className="form-input" 
-                value={jiraUrl} 
+              <input
+                type="url"
+                className="form-input"
+                value={jiraUrl}
                 onChange={(e) => setJiraUrl(e.target.value)}
                 placeholder="https://atibusinessgroup.atlassian.net"
                 required
@@ -557,10 +559,10 @@ export default function Configurator() {
 
             <div className="form-group">
               <label className="form-label">Jira Admin Email</label>
-              <input 
-                type="email" 
-                className="form-input" 
-                value={jiraEmail} 
+              <input
+                type="email"
+                className="form-input"
+                value={jiraEmail}
                 onChange={(e) => setJiraEmail(e.target.value)}
                 placeholder="email@atibusinessgroup.com"
                 required
@@ -569,10 +571,10 @@ export default function Configurator() {
 
             <div className="form-group">
               <label className="form-label">Jira API Token (Enkripsi AES)</label>
-              <input 
-                type="password" 
-                className="form-input" 
-                value={jiraToken} 
+              <input
+                type="password"
+                className="form-input"
+                value={jiraToken}
                 onChange={(e) => setJiraToken(e.target.value)}
                 placeholder={jiraToken ? "••••••••••••••••" : "Masukkan API Token Jira Baru"}
               />
@@ -580,10 +582,10 @@ export default function Configurator() {
 
             <div className="form-group">
               <label className="form-label">Jira Board ID</label>
-              <input 
-                type="text" 
-                className="form-input" 
-                value={jiraBoardId} 
+              <input
+                type="text"
+                className="form-input"
+                value={jiraBoardId}
                 onChange={(e) => setJiraBoardId(e.target.value)}
                 placeholder="Misal: 12"
                 required
@@ -592,10 +594,10 @@ export default function Configurator() {
 
             <div className="form-group">
               <label className="form-label">Custom Field Story Points</label>
-              <input 
-                type="text" 
-                className="form-input" 
-                value={jiraSpField} 
+              <input
+                type="text"
+                className="form-input"
+                value={jiraSpField}
                 onChange={(e) => setJiraSpField(e.target.value)}
                 placeholder="customfield_10016"
                 required
@@ -610,13 +612,13 @@ export default function Configurator() {
                 <Globe size={20} style={{ color: "var(--color-secondary)" }} />
                 GitLab Server Credentials
               </h3>
-              
+
               <div className="form-group">
                 <label className="form-label">GitLab Host URL</label>
-                <input 
-                  type="url" 
-                  className="form-input" 
-                  value={gitlabUrl} 
+                <input
+                  type="url"
+                  className="form-input"
+                  value={gitlabUrl}
                   onChange={(e) => setGitlabUrl(e.target.value)}
                   placeholder="https://gitlab.com atau domain gitlab kantor"
                   required
@@ -625,10 +627,10 @@ export default function Configurator() {
 
               <div className="form-group">
                 <label className="form-label">Personal Access Token (Enkripsi AES)</label>
-                <input 
-                  type="password" 
-                  className="form-input" 
-                  value={gitlabToken} 
+                <input
+                  type="password"
+                  className="form-input"
+                  value={gitlabToken}
                   onChange={(e) => setGitlabToken(e.target.value)}
                   placeholder={gitlabToken ? "••••••••••••••••" : "Masukkan Personal Access Token Baru"}
                 />
@@ -638,9 +640,9 @@ export default function Configurator() {
               </div>
             </div>
 
-            <button 
-              type="submit" 
-              className="btn-primary" 
+            <button
+              type="submit"
+              className="btn-primary"
               disabled={integLoading}
               style={{ marginTop: "40px" }}
             >
