@@ -297,7 +297,25 @@ def sync_attendance_for_year(db: Session, users: list, year: int, token_override
                 else:
                     # Find any default sprint to attach
                     default_sprint = db.query(models.Sprint).first()
-                    sprint_id = default_sprint.id if default_sprint else None
+                    sprint_id = default_sprint.id if default_sprint else "cd7c558a-dfb9-49b9-8438-5b7f58aae49f"
+                    
+                    # If the hardcoded sprint doesn't exist, we must create a dummy one to satisfy foreign key constraints
+                    if not default_sprint:
+                        dummy = db.query(models.Sprint).filter(models.Sprint.id == sprint_id).first()
+                        if not dummy:
+                            # Create dummy sprint
+                            from datetime import date
+                            dummy = models.Sprint(
+                                id=sprint_id,
+                                name="Default Backlog / Untracked",
+                                start_date=date(2020, 1, 1),
+                                end_date=date(2030, 12, 31),
+                                status="active",
+                                working_days=10
+                            )
+                            db.add(dummy)
+                            db.commit()
+
                     att = models.AttendanceRecord(
                         user_id=user.id,
                         date=d_str,
