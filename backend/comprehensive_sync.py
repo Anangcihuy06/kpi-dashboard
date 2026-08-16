@@ -967,8 +967,7 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                 logger.error(f"Failed to fetch Jira issues for {user.full_name}: {response.status_code} {response.text}")
                 break
                 
-            if start_at >= total_issues:
-                break
+
     except Exception as e:
         logger.error(f"Error syncing Jira issues for {user.full_name}: {str(e)}")
         db.rollback()
