@@ -23,8 +23,8 @@ export default function Configurator() {
   const [gitlabToken, setGitlabToken] = useState("");
 
   // Live Tester states
-  const [testFormula, setTestFormula] = useState("min((complexity_sp / max_complexity_sp) * 100, 100)");
-  const [testContextJson, setTestContextJson] = useState('{\n  "complexity_sp": 150,\n  "max_complexity_sp": 300,\n  "raw_jira_sp": 200,\n  "max_raw_sp": 400,\n  "attendance_days": 240,\n  "target_days": 261,\n  "late_percentage": 5\n}');
+  const [testFormula, setTestFormula] = useState("min((complexity_sp / target_complexity_pts) * 100, 100)");
+  const [testContextJson, setTestContextJson] = useState('{\n  "complexity_sp": 150,\n  "target_complexity_pts": 300,\n  "attendance_days": 240,\n  "target_days": 261,\n  "late_percentage": 5\n}');
   const [testResult, setTestResult] = useState(null);
 
   const [saveLoading, setSaveLoading] = useState(false);
