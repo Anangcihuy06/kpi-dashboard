@@ -100,8 +100,19 @@ class YearlyKPIEngine:
                 except Exception as e:
                     logger.error(f"Error parsing variables for metric {m_def.metric_key}: {e}")
 
+                # Merge variables from database into context
+                eval_context = dict(aggregated_metrics)
+                try:
+                    if m_def.variables:
+                        import json
+                        vars_dict = m_def.variables if isinstance(m_def.variables, dict) else json.loads(m_def.variables)
+                        for k, v in vars_dict.items():
+                            eval_context[k] = v
+                except Exception as e:
+                    logger.error(f"Failed to merge variables for {m_def.metric_key}: {e}")
+
                 # Calculate score using formula engine
-                score = evaluate_kpi_formula(m_def.formula_expression, aggregated_metrics)
+                score = evaluate_kpi_formula(m_def.formula_expression, eval_context)
                 
                 # Apply cap score if defined
                 if m_def.cap_score and score > float(m_def.cap_score):
