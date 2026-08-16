@@ -878,6 +878,25 @@ async def sync_year(year: int, background_tasks: BackgroundTasks, db: Session = 
 # SYNC TRIGGER ENDPOINTS
 # ─────────────────────────────────────────────────────────────
 
+@app.get("/api/v1/sync/force-prod-fix")
+async def force_prod_fix(background_tasks: BackgroundTasks):
+    """
+    Temporary endpoint to run the prod_sync_fix.py logic safely in the background
+    """
+    def run_prod_fix_bg():
+        try:
+            import prod_sync_fix
+            prod_sync_fix.run_prod_sync()
+        except Exception as e:
+            print(f"Error in prod fix: {e}")
+            
+    background_tasks.add_task(run_prod_fix_bg)
+    return {
+        "status": "success", 
+        "message": "Script sinkronisasi paksa (prod_sync_fix) sedang dijalankan di latar belakang. Silakan tunggu 1-2 menit lalu cek dashboard."
+    }
+
+
 @app.get("/api/v1/sync/status")
 def get_sync_status(db: Session = Depends(get_db)):
     from sync_engine import get_active_sync_status
