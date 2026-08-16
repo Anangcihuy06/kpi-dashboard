@@ -850,7 +850,7 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                         existing_proj = db.query(models.Project).filter(
                             or_(
                                 models.Project.project_name.ilike(f"%{proj_key}%"),
-                                models.Project.jira_project_key == proj_key
+                                models.Project.project_key == proj_key
                             )
                         ).first()
                         if existing_proj:
@@ -858,7 +858,8 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                         else:
                             new_proj = models.Project(
                                 project_name=proj_name or proj_key,
-                                jira_project_key=proj_key
+                                project_key=proj_key,
+                                source="jira"
                             )
                             db.add(new_proj)
                             db.commit()
