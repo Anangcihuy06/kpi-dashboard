@@ -14,18 +14,12 @@ logger = logging.getLogger(__name__)
 def run_prod_sync():
     db = SessionLocal()
     try:
-        # Get active users in IT division
-        it_div = db.query(models.Division).filter(models.Division.code == "IT").first()
-        if not it_div:
-            logger.error("IT division not found!")
-            return
-
+        # Get all active users in the database
         users = db.query(models.User).filter(
-            models.User.division_id == it_div.id,
             models.User.is_active == True
         ).all()
         
-        logger.info(f"Found {len(users)} active IT users to sync.")
+        logger.info(f"Found {len(users)} active users to sync.")
         
         # 1. Sync Attendance for 2026 for all these users
         logger.info("--- 1. SYNCING ATTENDANCE FOR 2026 ---")
