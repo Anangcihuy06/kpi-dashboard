@@ -2,7 +2,7 @@
 python = {}
 
 [phases.setup]
-nixPkgs = ["python311", "gcc"]
+nixPkgs = ["python311", "gcc", "postgresql", "libpq"]
 
 [phases.install]
 cmds = ["python -m venv /opt/venv", ". /opt/venv/bin/activate", "cd backend && pip install -r requirements.txt"]
