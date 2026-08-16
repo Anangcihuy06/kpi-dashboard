@@ -1131,13 +1131,19 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
             
             unique_projects = set()
             unique_sprints = set()
+            unique_attendance_dates = set()
             
             for daily in daily_kpis:
                 total_commits += daily.commit_count
                 total_mrs_merged += daily.mr_merged
                 total_worklog_hours += (daily.worklog_minutes / 60)
-                total_attendance_days += daily.attendance_days
-                total_late_count += daily.late_count
+                
+                # Deduplicate attendance by date to avoid double counting
+                date_key = daily.date.strftime('%Y-%m-%d') if hasattr(daily.date, 'strftime') else str(daily.date).split()[0]
+                if date_key not in unique_attendance_dates:
+                    unique_attendance_dates.add(date_key)
+                    total_attendance_days += daily.attendance_days
+                    total_late_count += daily.late_count
                 
                 if daily.project_id:
                     unique_projects.add(daily.project_id)
