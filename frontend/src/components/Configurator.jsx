@@ -38,9 +38,6 @@ export default function Configurator() {
 
   useEffect(() => {
     fetchSprints();
-    fetchDivisions();
-    fetchIntegrations();
-    
     const storedUser = JSON.parse(localStorage.getItem("kpi_user") || "{}");
     setCurrentUser(storedUser);
     if (storedUser.division_id) {
@@ -49,6 +46,8 @@ export default function Configurator() {
     if (storedUser.group_id) {
         setSelectedGroupId(storedUser.group_id);
     }
+    fetchDivisions(storedUser.division_id);
+    fetchIntegrations();
   }, []);
 
   useEffect(() => {
@@ -67,12 +66,12 @@ export default function Configurator() {
     }
   };
 
-  const fetchDivisions = async () => {
+  const fetchDivisions = async (userDivId) => {
     try {
       const divRes = await fetch(import.meta.env.VITE_API_URL + "/api/v1/divisions");
       const list = await divRes.json();
       setDivisions(list);
-      if (list.length > 0) {
+      if (list.length > 0 && !userDivId) {
         const initialDiv = list.find(d => d.code === "IT")?.id || list[0].id;
         setSelectedDivisionId(initialDiv);
       }
