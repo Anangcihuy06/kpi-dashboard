@@ -83,17 +83,15 @@ export default function Configurator() {
         const divList = await divRes.json();
         const selectedDiv = divList.find(d => d.id === divId) || { name: "New Division", code: "" };
         
-        setName(`${selectedDiv.name} KPI Matrix`);
-        
         if (selectedDiv.code === "IT") {
+            setName("IT Developer KPI Matrix v2");
             setMetrics([
-              { metric_key: "raw_jira_sp", category: "DELIVERY", weight: 0.30, calc_type: "FORMULA", formula_expression: "min((raw_jira_sp / max_raw_sp) * 100, 100)", variables: { max_raw_sp: 100 }, cap_score: 100.0 },
-              { metric_key: "complexity_sp", category: "ENGINEERING", weight: 0.30, calc_type: "FORMULA", formula_expression: "min((complexity_sp / max_complexity_sp) * 100, 100)", variables: { max_complexity_sp: 100 }, cap_score: 100.0 },
-              { metric_key: "founder_sp_credit", category: "EFFORT", weight: 0.15, calc_type: "FORMULA", formula_expression: "min((founder_sp_credit / max_founder_sp) * 100, 100)", variables: { max_founder_sp: 50 }, cap_score: 100.0 },
-              { metric_key: "jira_issues_completed", category: "QUALITY", weight: 0.15, calc_type: "FORMULA", formula_expression: "min((jira_issues_completed / max_issues_cnt) * 100, 100)", variables: { max_issues_cnt: 30 }, cap_score: 100.0 },
-              { metric_key: "attendance", category: "EFFORT", weight: 0.10, calc_type: "FORMULA", formula_expression: "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)", variables: { target_days: 261, late_percentage: 5 }, cap_score: 100.0 }
+              { metric_key: "jira_sp", category: "ENGINEERING", weight: 0.40, calc_type: "FORMULA", formula_expression: "min((jira_sp / target_sp) * 100, 120)", variables: { target_sp: 20 }, cap_score: 120.0 },
+              { metric_key: "gitlab_mr", category: "ENGINEERING", weight: 0.40, calc_type: "FORMULA", formula_expression: "(gitlab_mr_merged / target_mr) * 100", variables: { target_mr: 5 }, cap_score: 100.0 },
+              { metric_key: "attendance", category: "ENGINEERING", weight: 0.20, calc_type: "FORMULA", formula_expression: "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)", variables: { target_days: 10 }, cap_score: 100.0 }
             ]);
         } else {
+            setName(`${selectedDiv.name} KPI Matrix`);
             setMetrics([
               { metric_key: "attendance", category: "EFFORT", weight: 1.00, calc_type: "FORMULA", formula_expression: "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)", variables: { target_days: 261, late_percentage: 5 }, cap_score: 100.0 }
             ]);
