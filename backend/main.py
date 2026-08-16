@@ -262,7 +262,9 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
                             supervisor_id=supervisor_user_id,
                             employee_id=str(emp_id),
                             roles=["ROLE_USER"],
-                            is_active=True
+                            is_active=True,
+                            jira_account_id=f"jira_user_api_{emp_id}",
+                            gitlab_username=f"gitlab_user_api_{emp_id}"
                         )
                         _db.add(new_sub)
                         _db.commit()

@@ -19,6 +19,18 @@ def run_prod_sync():
             models.User.is_active == True
         ).all()
         
+        # FIX: Ensure all users have Jira/GitLab placeholders so that the discovery engine doesn't skip them
+        for u in users:
+            changed = False
+            if not u.jira_account_id:
+                u.jira_account_id = f"jira_user_{u.id}"
+                changed = True
+            if not u.gitlab_username:
+                u.gitlab_username = f"gitlab_user_{u.id}"
+                changed = True
+            if changed:
+                db.commit()
+
         logger.info(f"Found {len(users)} active users to sync.")
         
         # 1. Sync Attendance for 2026 for all these users

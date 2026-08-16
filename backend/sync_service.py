@@ -122,7 +122,7 @@ def fetch_all_subordinates_attendance(token: str, year: int) -> dict:
     
     records_by_nik = {}
     page = 0
-    page_size = 200  # Balanced: not too small (too many calls), not too large (timeout risk)
+    page_size = 2000  # Increased to 2000 to fetch all in one go and bypass HRIS API pagination bugs
     total_fetched = 0
     
     start_str = f"{year}-01-01"
