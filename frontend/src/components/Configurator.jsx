@@ -97,11 +97,11 @@ export default function Configurator() {
       
       if (data && data.rule_id) {
         setRuleId(data.rule_id);
-        const isTechGroup = selectedDiv.code === "IT" || selectedDiv.code === "Technology" || (currentUser && currentUser.group_name === "Digital Solution Development");
+        const isDigitalSolutionGroup = currentUser && currentUser.group_name === "Digital Solution Development";
         
-        if (isTechGroup && data.metrics && (!data.metrics.some(m => m.metric_key === "feature_complexity"))) {
-            // Auto-upgrade to Pure Complexity config for IT division
-            setName("Digital Solution / IT Developer KPI Matrix");
+        if (isDigitalSolutionGroup && data.metrics && (!data.metrics.some(m => m.metric_key === "feature_complexity"))) {
+            // Auto-upgrade to Pure Complexity config for Digital Solution Development
+            setName("Digital Solution Developer KPI Matrix");
             setMetrics([
               { metric_key: "feature_complexity", category: "ENGINEERING", weight: 0.90, calc_type: "FORMULA", formula_expression: "min((complexity_sp / target_complexity_pts) * 100, 100)", variables: { target_complexity_pts: 300, max_c: 5, max_i: 5, max_s: 5, max_r: 3, max_o: 2 }, cap_score: 100.0 },
               { metric_key: "attendance", category: "DISCIPLINE", weight: 0.10, calc_type: "FORMULA", formula_expression: "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)", variables: { target_days: 261, late_percentage: 5 }, cap_score: 100.0 }
@@ -111,9 +111,9 @@ export default function Configurator() {
             setMetrics(data.metrics);
         }
       } else {
-        const isTechGroup = selectedDiv.code === "IT" || selectedDiv.code === "Technology" || (currentUser && currentUser.group_name === "Digital Solution Development");
-        if (isTechGroup) {
-            setName("Digital Solution / IT Developer KPI Matrix");
+        const isDigitalSolutionGroup = currentUser && currentUser.group_name === "Digital Solution Development";
+        if (isDigitalSolutionGroup) {
+            setName("Digital Solution Developer KPI Matrix");
             setMetrics([
               { metric_key: "feature_complexity", category: "ENGINEERING", weight: 0.90, calc_type: "FORMULA", formula_expression: "min((complexity_sp / target_complexity_pts) * 100, 100)", variables: { target_complexity_pts: 300, max_c: 5, max_i: 5, max_s: 5, max_r: 3, max_o: 2 }, cap_score: 100.0 },
               { metric_key: "attendance", category: "DISCIPLINE", weight: 0.10, calc_type: "FORMULA", formula_expression: "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)", variables: { target_days: 261, late_percentage: 5 }, cap_score: 100.0 }
