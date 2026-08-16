@@ -193,6 +193,10 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
         if user.id != user_id:
             old_id = user.id
             db.execute(text("UPDATE users SET supervisor_id = :new_id WHERE supervisor_id = :old_id"), {"new_id": user_id, "old_id": old_id})
+            db.execute(text("UPDATE employee_identity SET user_id = :new_id WHERE user_id = :old_id"), {"new_id": user_id, "old_id": old_id})
+            db.execute(text("UPDATE activities SET user_id = :new_id WHERE user_id = :old_id"), {"new_id": user_id, "old_id": old_id})
+            db.execute(text("UPDATE kpi_employee_daily SET user_id = :new_id WHERE user_id = :old_id"), {"new_id": user_id, "old_id": old_id})
+            db.execute(text("UPDATE attendance_records SET user_id = :new_id WHERE user_id = :old_id"), {"new_id": user_id, "old_id": old_id})
             db.execute(text("UPDATE raw_metrics_data SET user_id = :new_id WHERE user_id = :old_id"), {"new_id": user_id, "old_id": old_id})
             db.execute(text("UPDATE sprint_kpi_scores SET user_id = :new_id WHERE user_id = :old_id"), {"new_id": user_id, "old_id": old_id})
             db.execute(text("UPDATE users SET id = :new_id WHERE id = :old_id"), {"new_id": user_id, "old_id": old_id})
