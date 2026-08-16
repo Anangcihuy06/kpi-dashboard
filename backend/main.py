@@ -165,6 +165,18 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
 
     user_data = response.json()
     
+    # Fetch additional profile data (division, group) using the token
+    token = user_data.get("token")
+    if token:
+        try:
+            profile_url = "https://hris-api.atibusinessgroup.com/api/app/users/profile"
+            profile_resp = requests.get(profile_url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
+            if profile_resp.status_code == 200:
+                profile_data = profile_resp.json()
+                user_data.update(profile_data)
+        except Exception as e:
+            print(f"Warning: Failed to fetch profile data: {e}")
+    
     # Check if division exists, if not create a default one
     default_div = db.query(models.Division).filter(models.Division.code == "IT").first()
     if not default_div:
@@ -241,15 +253,29 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
         user.group_id = str(group_info.get("id")) if group_info.get("id") else None
         user.group_name = group_info.get("group")
 
-    
+    div_info = user_data.get("division")
+    if div_info and div_info.get("id"):
+        div_id = str(div_info.get("id"))
+        # Pastikan divisi ada di database
+        div_db = db.query(models.Division).filter(models.Division.id == div_id).first()
+        if not div_db:
+            div_db = models.Division(
+                id=div_id,
+                code=div_info.get("divCode", "UNKNOWN"),
+                name=div_info.get("division", "Unknown Division")
+            )
+            db.add(div_db)
+            db.commit()
+            db.refresh(div_db)
+        user.division_id = div_id
+    elif not user.division_id:
+        user.division_id = default_div.id
+
     # Provide defaults for external mappings if they are empty
     if not user.jira_account_id:
         user.jira_account_id = f"jira_user_{user_id}"
     if not user.gitlab_username:
         user.gitlab_username = f"gitlab_user_{user_id}"
-        
-    if not user.division_id:
-        user.division_id = default_div.id
 
     db.commit()
     db.refresh(user)
@@ -358,6 +384,8 @@ def verify_local_session(user_id: str, db: Session = Depends(get_db)):
             "roles": user.roles,
             "hasSubordinates": user.has_subordinates,
             "division_id": user.division_id,
+            "group_id": user.group_id,
+            "group_name": user.group_name,
             "supervisor_id": user.supervisor_id
         }
     }
