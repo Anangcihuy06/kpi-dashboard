@@ -270,6 +270,7 @@ def sync_attendance_for_year(db: Session, users: list, year: int, token_override
         
         # Insert into AttendanceRecord so comprehensive_sync can pick it up properly
         try:
+            affected_dates = set()
             for rec in user_records:
                 raw_date = rec.get("clockin_time") or rec.get("clockIn") or rec.get("date") or ""
                 if not raw_date:
@@ -305,6 +306,8 @@ def sync_attendance_for_year(db: Session, users: list, year: int, token_override
                         sprint_id=sprint_id
                     )
                     db.add(att)
+                
+                affected_dates.add(d_obj)
             
             db.commit()
             
@@ -317,6 +320,12 @@ def sync_attendance_for_year(db: Session, users: list, year: int, token_override
             if bad_cache:
                 bad_cache.attendance_days = 0
                 db.commit()
+            
+            # Repopulate daily KPI records so the API returns the correct total_attendance_days
+            from comprehensive_sync import calculate_daily_aggregated_kpi
+            for d_obj in affected_dates:
+                dt_midnight = datetime.combine(d_obj, datetime.min.time())
+                calculate_daily_aggregated_kpi(db, user, dt_midnight)
                 
         except Exception as e:
             logger.error(f"[Attendance] DB save failed for {user.full_name}: {e}")
