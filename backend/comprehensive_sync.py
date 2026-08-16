@@ -75,6 +75,41 @@ def discover_user_identities(db: Session, user: models.User, settings: models.In
         
     if changed:
         db.commit()
+        
+    # Also ensure EmployeeIdentity records exist for the known mappings
+    if user.nik in KNOWN_MAPPINGS:
+        patch = KNOWN_MAPPINGS[user.nik]
+        # Check and create Jira identity
+        existing_jira = db.query(models.EmployeeIdentity).filter(
+            and_(models.EmployeeIdentity.user_id == user.id, models.EmployeeIdentity.source == "jira")
+        ).first()
+        if not existing_jira:
+            new_jira = models.EmployeeIdentity(
+                user_id=user.id,
+                source="jira",
+                external_user_id=patch["jira"],
+                username=user.email or user.full_name,
+                full_name=user.full_name,
+                is_verified=True
+            )
+            db.add(new_jira)
+            
+        # Check and create GitLab identity
+        existing_gitlab = db.query(models.EmployeeIdentity).filter(
+            and_(models.EmployeeIdentity.user_id == user.id, models.EmployeeIdentity.source == "gitlab")
+        ).first()
+        if not existing_gitlab:
+            new_gitlab = models.EmployeeIdentity(
+                user_id=user.id,
+                source="gitlab",
+                external_user_id=patch["gitlab"], # GitLab uses external_user_id as user id, but for now we put username
+                username=patch["gitlab"],
+                full_name=user.full_name,
+                is_verified=True
+            )
+            db.add(new_gitlab)
+            
+        db.commit()
     # ------------------------------------------------
     
     # Get existing identities
@@ -758,7 +793,7 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
     issues_synced = 0
     
     try:
-        search_url = f"{jira_url}/rest/api/3/search/jql"
+        search_url = f"{jira_url}/rest/api/3/search"
         
         # JQL: query all issues assigned to user updated in the period or with completed status
         jql = f'assignee = "{account_id}" AND updated >= "{start_date.date()}" AND updated <= "{end_date.date()}"'
