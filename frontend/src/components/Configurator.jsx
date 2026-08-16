@@ -9,6 +9,8 @@ export default function Configurator() {
   const [name, setName] = useState("");
   const [metrics, setMetrics] = useState([]);
   const [sprints, setSprints] = useState([]);
+  const [divisions, setDivisions] = useState([]);
+  const [selectedDivisionId, setSelectedDivisionId] = useState("");
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   
   // Integration Settings states
@@ -21,8 +23,8 @@ export default function Configurator() {
   const [gitlabToken, setGitlabToken] = useState("");
 
   // Live Tester states
-  const [testFormula, setTestFormula] = useState("min((jira_sp / target_sp) * 100, 120)");
-  const [testContextJson, setTestContextJson] = useState('{\n  "jira_sp": 22,\n  "target_sp": 20\n}');
+  const [testFormula, setTestFormula] = useState("min((complexity_sp / max_complexity_sp) * 100, 100)");
+  const [testContextJson, setTestContextJson] = useState('{\n  "complexity_sp": 150,\n  "max_complexity_sp": 300,\n  "raw_jira_sp": 200,\n  "max_raw_sp": 400,\n  "attendance_days": 240,\n  "target_days": 261,\n  "late_percentage": 5\n}');
   const [testResult, setTestResult] = useState(null);
   
   const [saveLoading, setSaveLoading] = useState(false);
@@ -33,43 +35,43 @@ export default function Configurator() {
 
   useEffect(() => {
     fetchSprints();
-    fetchRules();
+    fetchDivisions();
     fetchIntegrations();
   }, []);
 
-  const fetchSprints = async () => {
+  useEffect(() => {
+    if (selectedDivisionId) {
+      fetchRulesForDivision(selectedDivisionId);
+    }
+  }, [selectedDivisionId]);
+
+  const fetchDivisions = async () => {
     try {
-      const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/sprints");
-      const list = await response.json();
-      setSprints(list);
+      const divRes = await fetch(import.meta.env.VITE_API_URL + "/api/v1/divisions");
+      const list = await divRes.json();
+      setDivisions(list);
       if (list.length > 0) {
-        // Year handles its own default
+        const initialDiv = list.find(d => d.code === "IT")?.id || list[0].id;
+        setSelectedDivisionId(initialDiv);
       }
     } catch (err) {
-      console.error("Gagal mengambil data sprint:", err);
+      console.error(err);
     }
   };
 
-  const fetchRules = async () => {
+  const fetchRulesForDivision = async (divId) => {
     try {
-      const divRes = await fetch(import.meta.env.VITE_API_URL + "/api/v1/divisions");
-      const divisions = await divRes.json();
-      if (divisions.length > 0) {
-        const itDivId = divisions.find(d => d.code === "IT")?.id || divisions[0].id;
-        const ruleRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi-rules?division_id=${itDivId}`);
-        const data = await ruleRes.json();
-        if (data && data.rule_id) {
-          setRuleId(data.rule_id);
-          setName(data.name);
-          setMetrics(data.metrics);
-        } else {
-          setName("IT Developer KPI Matrix");
-          setMetrics([
-            { metric_key: "jira_sp", weight: 0.40, calc_type: "FORMULA", formula_expression: "min((jira_sp / target_sp) * 100, 120)", variables: { target_sp: 20 }, cap_score: 120.0 },
-            { metric_key: "gitlab_mr", weight: 0.40, calc_type: "FORMULA", formula_expression: "(gitlab_mr_merged / target_mr) * 100", variables: { target_mr: 5 }, cap_score: 100.0 },
-            { metric_key: "attendance", weight: 0.20, calc_type: "FORMULA", formula_expression: "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)", variables: { target_days: 10 }, cap_score: 100.0 }
-          ]);
-        }
+      const ruleRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi-rules?division_id=${divId}`);
+      const data = await ruleRes.json();
+      if (data && data.rule_id) {
+        setRuleId(data.rule_id);
+        setName(data.name);
+        setMetrics(data.metrics);
+      } else {
+        setName("New KPI Matrix");
+        setMetrics([
+          { metric_key: "attendance", category: "DELIVERY", weight: 1.00, calc_type: "FORMULA", formula_expression: "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)", variables: { target_days: 261, late_percentage: 5 }, cap_score: 100.0 }
+        ]);
       }
     } catch (err) {
       console.error(err);
@@ -112,7 +114,7 @@ export default function Configurator() {
   const addMetricRow = () => {
     setMetrics([
       ...metrics,
-      { metric_key: "new_metric", weight: 0.10, calc_type: "FORMULA", formula_expression: "input * 10", variables: {}, cap_score: 100.0 }
+      { metric_key: "new_metric", category: "ENGINEERING", weight: 0.10, calc_type: "FORMULA", formula_expression: "input * 10", variables: {}, cap_score: 100.0 }
     ]);
   };
 
@@ -124,10 +126,6 @@ export default function Configurator() {
     setSaveLoading(true);
     setMessage(null);
     try {
-      const divRes = await fetch(import.meta.env.VITE_API_URL + "/api/v1/divisions");
-      const divisions = await divRes.json();
-      const itDivId = divisions.find(d => d.code === "IT")?.id || divisions[0].id;
-
       const totalWeight = metrics.reduce((acc, curr) => acc + parseFloat(curr.weight), 0);
       if (Math.abs(totalWeight - 1.0) > 0.001) {
         throw new Error(`Total bobot harus bernilai 100% (1.0). Saat ini: ${(totalWeight * 100).toFixed(0)}%`);
@@ -137,7 +135,7 @@ export default function Configurator() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          division_id: itDivId,
+          division_id: selectedDivisionId,
           name: name,
           metrics: metrics
         })
@@ -146,7 +144,7 @@ export default function Configurator() {
       if (!response.ok) throw new Error("Gagal menyimpan aturan");
       const data = await response.json();
       setMessage({ type: "success", text: `Aturan berhasil diperbarui ke Versi ${data.version}!` });
-      fetchRules();
+      fetchRulesForDivision(selectedDivisionId);
     } catch (err) {
       setMessage({ type: "error", text: err.message });
     } finally {
@@ -323,11 +321,23 @@ export default function Configurator() {
             
             {/* Main Formula Rules Configurator */}
             <div className="card">
-              <div className="flex-between">
+              <div className="flex-between" style={{ marginBottom: "16px" }}>
                 <h3>Aturan Indikator Divisi</h3>
-                <button className="btn-outline" onClick={addMetricRow} style={{ padding: "6px 16px", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px" }}>
-                  <Plus size={14} /> Tambah Indikator
-                </button>
+                <div style={{ display: "flex", gap: "12px" }}>
+                  <select
+                    className="select-control"
+                    value={selectedDivisionId}
+                    onChange={(e) => setSelectedDivisionId(e.target.value)}
+                    style={{ padding: "6px 12px", height: "32px", fontSize: "12px", width: "200px" }}
+                  >
+                    {divisions.map(d => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
+                  <button className="btn-outline" onClick={addMetricRow} style={{ padding: "6px 16px", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px", height: "32px" }}>
+                    <Plus size={14} /> Tambah Indikator
+                  </button>
+                </div>
               </div>
 
               <div style={{ marginBottom: "20px" }}>
@@ -345,6 +355,7 @@ export default function Configurator() {
                   <thead>
                     <tr>
                       <th>Key Indikator</th>
+                      <th>Kategori</th>
                       <th style={{ width: "80px" }}>Bobot</th>
                       <th>Formula Ekspresi</th>
                       <th style={{ width: "80px" }}>Cap</th>
@@ -362,6 +373,19 @@ export default function Configurator() {
                             value={metric.metric_key}
                             onChange={(e) => handleMetricChange(idx, "metric_key", e.target.value)}
                           />
+                        </td>
+                        <td>
+                          <select 
+                            className="table-input"
+                            style={{ height: "32px" }}
+                            value={metric.category || "ENGINEERING"}
+                            onChange={(e) => handleMetricChange(idx, "category", e.target.value)}
+                          >
+                            <option value="DELIVERY">DELIVERY</option>
+                            <option value="ENGINEERING">ENGINEERING</option>
+                            <option value="QUALITY">QUALITY</option>
+                            <option value="EFFORT">EFFORT</option>
+                          </select>
                         </td>
                         <td>
                           <input 

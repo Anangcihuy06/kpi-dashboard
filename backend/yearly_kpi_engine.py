@@ -74,61 +74,63 @@ class YearlyKPIEngine:
         # Calculate working days in period
         working_days = YearlyKPIEngine.calculate_working_days(start_date, end_date)
         
-        # Define the Pure Feature & Architectural Weight KPI Matrix Configuration (Story Points Excluded)
-        four_pillars_config = [
-            {
-                "metric_key": "feature_complexity",
-                "category": "ENGINEERING",
-                "label": "Feature & Module Architectural Weight",
-                "weight": 0.90,
-                "formula_display": "min((complexity_pts / 300.0) * 100, 100.0)",
-                "get_actual": lambda m: m.get("complexity_sp", 0.0),
-                "calc_score": lambda act, m: min((float(act) / 300.0) * 100.0, 100.0),
-                "get_vars": lambda m: {"target_complexity_pts": 300.0}
-            },
-            {
-                "metric_key": "attendance",
-                "category": "DISCIPLINE",
-                "label": "Attendance & Punctuality",
-                "weight": 0.10,
-                "formula_display": "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)",
-                "get_actual": lambda m: m.get("attendance_days", m.get("attendance", 0)),
-                "calc_score": lambda act, m: max((float(act) / 261.0) * 100 - (float(m.get("late_percentage", 0.0)) * 0.5), 0.0),
-                "get_vars": lambda m: {"target_days": 261.0, "late_percentage": round(m.get("late_percentage", 0.0), 2)}
-            }
-        ]
-
+        # Calculate dynamic metrics based on KPIRuleMetric definitions
         breakdown = []
         total_score = 0.0
         total_weight = 0.0
 
-        for p_cfg in four_pillars_config:
-            actual_val = p_cfg["get_actual"](aggregated_metrics)
-            score = p_cfg["calc_score"](actual_val, aggregated_metrics)
-            
-            # Apply cap at 100
-            if score > 100.0:
-                score = 100.0
-            if score < 0.0:
-                score = 0.0
+        for m_def in metrics_defs:
+            try:
+                # Retrieve all required variables from aggregated_metrics
+                # We pass the entire aggregated_metrics dict as context to the evaluator
                 
-            weight = p_cfg["weight"]
-            weighted_score = score * weight
-            
-            total_score += weighted_score
-            total_weight += weight
-            
-            breakdown.append({
-                "metric_key": p_cfg["metric_key"],
-                "category": p_cfg["category"],
-                "label": p_cfg["label"],
-                "actual_value": actual_val,
-                "formula": p_cfg["formula_display"],
-                "variables": p_cfg["get_vars"](aggregated_metrics),
-                "calculated_score": round(score, 2),
-                "weight": weight,
-                "weighted_score": round(weighted_score, 2)
-            })
+                # Special variable extraction for display/variables JSON based on rule
+                variables_used = {}
+                try:
+                    if m_def.variables and isinstance(m_def.variables, dict):
+                        for k in m_def.variables.keys():
+                            if k in aggregated_metrics:
+                                variables_used[k] = aggregated_metrics[k]
+                    elif m_def.variables and isinstance(m_def.variables, str):
+                        import json
+                        var_keys = json.loads(m_def.variables).keys()
+                        for k in var_keys:
+                            if k in aggregated_metrics:
+                                variables_used[k] = aggregated_metrics[k]
+                except Exception as e:
+                    logger.error(f"Error parsing variables for metric {m_def.metric_key}: {e}")
+
+                # Calculate score using formula engine
+                score = evaluate_kpi_formula(m_def.formula_expression, aggregated_metrics)
+                
+                # Apply cap score if defined
+                if m_def.cap_score and score > float(m_def.cap_score):
+                    score = float(m_def.cap_score)
+                if score < 0.0:
+                    score = 0.0
+                    
+                weight = float(m_def.weight)
+                weighted_score = score * weight
+                
+                total_score += weighted_score
+                total_weight += weight
+                
+                # Fetch actual_value generically if exists
+                actual_val = aggregated_metrics.get(m_def.metric_key, 0.0)
+                
+                breakdown.append({
+                    "metric_key": m_def.metric_key,
+                    "category": m_def.category or "ENGINEERING",
+                    "label": m_def.metric_key.replace('_', ' ').title(),
+                    "actual_value": actual_val,
+                    "formula": m_def.formula_expression,
+                    "variables": variables_used,
+                    "calculated_score": round(score, 2),
+                    "weight": weight,
+                    "weighted_score": round(weighted_score, 2)
+                })
+            except Exception as e:
+                logger.error(f"Error calculating metric {m_def.metric_key}: {e}")
                 
         # Normalize score if weights don't add up to 1.0 (though they should)
         final_score = total_score / total_weight if total_weight > 0 else 0.0
