@@ -35,35 +35,39 @@ async def lifespan(app: FastAPI):
     from seed import seed_data
     from sqlalchemy import text
     
-    # Auto-migrate new columns
+    # Auto-migrate new columns - wrapped in try/except so app starts even if DB is full
     try:
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE users ADD COLUMN group_id VARCHAR(50);"))
-    except Exception:
-        pass
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE users ADD COLUMN group_name VARCHAR(150);"))
-    except Exception:
-        pass
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE kpi_rules ADD COLUMN group_id VARCHAR(50);"))
-    except Exception:
-        pass
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE kpi_rules ADD COLUMN group_name VARCHAR(150);"))
-    except Exception:
-        pass
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE users ADD COLUMN group_id VARCHAR(50);"))
+        except Exception:
+            pass
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE users ADD COLUMN group_name VARCHAR(150);"))
+        except Exception:
+            pass
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE kpi_rules ADD COLUMN group_id VARCHAR(50);"))
+        except Exception:
+            pass
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE kpi_rules ADD COLUMN group_name VARCHAR(150);"))
+        except Exception:
+            pass
 
-    models.Base.metadata.create_all(bind=engine)
-    
-    db = SessionLocal()
-    if not db.query(models.User).first():
-        print("Database is empty, running seed script...")
-        seed_data()
-    db.close()
+        models.Base.metadata.create_all(bind=engine)
+        
+        db = SessionLocal()
+        if not db.query(models.User).first():
+            print("Database is empty, running seed script...")
+            seed_data()
+        db.close()
+    except Exception as e:
+        print(f"WARNING: DB initialization failed (DB may be full): {e}")
+        print("App will start anyway - use /api/v1/db/cleanup to fix DB issues")
 
     FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
     # init_scheduler() is removed for standalone worker approach
