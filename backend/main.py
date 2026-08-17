@@ -981,13 +981,13 @@ def add_manual_attendance(payload: ManualAttendanceInput, db: Session = Depends(
 @app.post("/api/v1/sync/year/{year}")
 async def sync_year(year: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     from sync_engine import create_sync_job, update_job_progress, mark_job_completed, mark_job_failed
-    job_id = create_sync_job(db, "SYSTEM", "YEARLY_KPI_CALC")
+    job_id = create_sync_job(db, None, "YEARLY_KPI_CALC")
 
     def run_calculation(jid):
         from fastapi_cache import FastAPICache
         from scheduler import sync_and_calculate_all_users_job
-        db_gen = get_db()
-        bg_db = next(db_gen)
+        from database import SessionLocal
+        bg_db = SessionLocal()
         try:
             update_job_progress(bg_db, jid, 10, "RUNNING")
             sync_and_calculate_all_users_job(year)
