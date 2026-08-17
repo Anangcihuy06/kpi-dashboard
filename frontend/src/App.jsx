@@ -5,6 +5,32 @@ import Dashboard from "./components/Dashboard";
 import Subordinates from "./components/Subordinates";
 import Configurator from "./components/Configurator";
 
+const AVATAR_GRADIENTS = [
+  "linear-gradient(135deg, #5c73d9 0%, #121854 100%)",
+  "linear-gradient(135deg, #7c3aed 0%, #2e1065 100%)",
+  "linear-gradient(135deg, #0ea5e9 0%, #0c1f5a 100%)",
+  "linear-gradient(135deg, #10b981 0%, #064e3b 100%)",
+  "linear-gradient(135deg, #f59e0b 0%, #78350f 100%)",
+  "linear-gradient(135deg, #ec4899 0%, #500724 100%)",
+  "linear-gradient(135deg, #14b8a6 0%, #134e4a 100%)",
+  "linear-gradient(135deg, #6366f1 0%, #1e1b4b 100%)",
+];
+
+function getInitials(name = "") {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function getAvatarGradient(name = "") {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  }
+  return AVATAR_GRADIENTS[hash % AVATAR_GRADIENTS.length];
+}
+
 export default function App() {
   const [user, setUser] = useState(null); // Logged in user profile
   const [token, setToken] = useState("");
@@ -223,8 +249,42 @@ export default function App() {
         {/* User Profile Summary at bottom of sidebar */}
         <div className="sidebar-footer">
           <div className="user-profile-header">
-            <div className="user-avatar">
-              {user.fullName.charAt(0)}
+            <div
+              style={{
+                position: "relative",
+                width: 52,
+                height: 52,
+                borderRadius: "50%",
+                background: getAvatarGradient(user.fullName),
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#ffffff",
+                fontWeight: 700,
+                fontSize: getInitials(user.fullName).length > 1 ? 15 : 19,
+                letterSpacing: "0.5px",
+                fontFamily: "var(--font-headings, 'Poppins', sans-serif)",
+                flexShrink: 0,
+                boxShadow:
+                  "0 6px 16px rgba(18, 24, 84, 0.28), inset 0 1px 0 rgba(255,255,255,0.35)",
+                border: "2.5px solid rgba(255,255,255,0.9)",
+              }}
+              title={user.fullName}
+            >
+              {getInitials(user.fullName)}
+              <span
+                style={{
+                  position: "absolute",
+                  bottom: 0,
+                  right: 0,
+                  width: 13,
+                  height: 13,
+                  borderRadius: "50%",
+                  background: "#10b981",
+                  border: "2.5px solid #ffffff",
+                  boxShadow: "0 2px 6px rgba(16, 185, 129, 0.55)",
+                }}
+              />
             </div>
             <div className="user-details">
               <h5>{user.fullName}</h5>
