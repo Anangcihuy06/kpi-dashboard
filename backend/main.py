@@ -906,6 +906,191 @@ def evaluate_test(payload: TestFormulaRequest):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+# Enhanced debugging endpoint for checking employee calculations
+@app.get("/api/v1/kpi/user-calculation-details")
+def get_user_calculation_details(user_id: str, year: int, db: Session = Depends(get_db)):
+    """Get detailed calculation breakdown for a user for debugging"""
+    try:
+        from_date = datetime(year, 1, 1)
+        to_date = datetime(year, 12, 31)
+        
+        user = db.query(models.User).filter(models.User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Get rules for user
+        rule = db.query(models.KPIRule).filter(
+            models.KPIRule.division_id == user.division_id,
+            models.KPIRule.group_id == user.group_id,
+            models.KPIRule.is_active == True
+        ).first()
+        
+        if not rule:
+            rule = db.query(models.KPIRule).filter(
+                models.KPIRule.division_id == user.division_id,
+                models.KPIRule.group_id.is_(None),
+                models.KPIRule.is_active == True
+            ).first()
+        
+        if not rule:
+            return {"error": "No active KPI rule found for user"}
+        
+        metrics = db.query(models.KPIRuleMetric).filter(
+            models.KPIRuleMetric.kpi_rule_id == rule.id
+        ).all()
+        
+        # Get actual metrics for user for this year
+        from yearly_kpi_engine import YearlyKPIEngine
+        
+        working_days = YearlyKPIEngine.calculate_working_days(from_date, to_date)
+        
+        # Get user's actual metrics from database
+        user_metrics = {}
+        
+        # Get daily KPI data
+        daily_kpis = db.query(models.KPIEmployeeDaily).filter(
+            models.KPIEmployeeDaily.user_id == user.id,
+            models.KPIEmployeeDaily.date >= from_date,
+            models.KPIEmployeeDaily.date <= to_date
+        ).all()
+        
+        # Aggregate metrics
+        user_metrics["attendance_days"] = sum(d.attendance_days for d in daily_kpis)
+        user_metrics["target_days"] = working_days
+        user_metrics["late_percentage"] = (sum(d.late_count for d in daily_kpis) / working_days * 100) if working_days > 0 else 0
+        
+        # Get Jira data
+        jira_ident = db.query(models.EmployeeIdentity).filter(
+            models.EmployeeIdentity.user_id == user.id,
+            models.EmployeeIdentity.source == 'jira'
+        ).first()
+        
+        if jira_ident and jira_ident.external_user_id:
+            raw_jira_issues = db.query(models.RawJiraIssue).filter(
+                models.RawJiraIssue.assignee_account_id == jira_ident.external_user_id
+            ).all()
+            
+            from feature_analyzer import calculate_feature_weight, analyze_multi_factor
+            
+            raw_jira_sp = 0.0
+            complexity_sp = 0.0
+            issues_completed = 0
+            
+            for ji in raw_jira_issues:
+                # Extract date and check if within range
+                r_dt_naive = None
+                if ji.resolved_date:
+                    r_dt = ji.resolved_date
+                    r_dt_naive = r_dt.replace(tzinfo=None) if hasattr(r_dt, 'replace') else r_dt
+                elif ji.raw_data and 'fields' in ji.raw_data:
+                    fields = ji.raw_data['fields']
+                    r_date_str = fields.get('resolutiondate') or fields.get('updated') or fields.get('created')
+                    if r_date_str:
+                        try:
+                            clean_date = r_date_str.split('.')[0]
+                            if 'T' in clean_date:
+                                r_dt_naive = datetime.strptime(clean_date, "%Y-%m-%dT%H:%M:%S")
+                            else:
+                                r_dt = datetime.fromisoformat(clean_date.replace('Z', '+00:00'))
+                                r_dt_naive = r_dt.replace(tzinfo=None)
+                        except Exception:
+                            pass
+                
+                if r_dt_naive and from_date <= r_dt_naive <= to_date:
+                    status_lower = (ji.status or "").lower()
+                    if status_lower in ["done", "resolved", "ready to release", "ready for uat", "uat (user)", "ready for qa", "in qa"]:
+                        issues_completed += 1
+                        sp = float(ji.story_points or 0.0)
+                        cw = calculate_feature_weight(ji.raw_data or {})
+                        raw_jira_sp += sp
+                        complexity_sp += cw
+            
+            user_metrics["raw_jira_sp"] = raw_jira_sp
+            user_metrics["complexity_sp"] = complexity_sp
+            user_metrics["jira_issues_completed"] = issues_completed
+            
+            # Get founder credits
+            from founder_engine import get_founder_credits_for_user
+            user_metrics["founder_sp_credit"] = get_founder_credits_for_user(user.id, year)
+            
+            # Get company maxima for relative scoring
+            all_users = db.query(models.User).filter(models.User.is_active == True).all()
+            max_raw_sp = 0.0
+            max_complexity_sp = 0.0
+            max_issues_cnt = 0
+            max_founder_sp = 0.0
+            
+            for u in all_users:
+                max_raw_sp = max(max_raw_sp, (db.query(models.RawJiraIssue).count() * 10))  # Fallback estimate
+                max_complexity_sp = max(max_complexity_sp, 100)  # Fallback estimate
+                max_issues_cnt = max(max_issues_cnt, db.query(models.RawJiraIssue).count())
+                max_founder_sp = max(max_founder_sp, 100)
+            
+            user_metrics["max_raw_sp"] = max_raw_sp
+            user_metrics["max_complexity_sp"] = max_complexity_sp
+            user_metrics["max_issues_cnt"] = max_issues_cnt
+            user_metrics["max_founder_sp"] = max_founder_sp
+        
+        # Calculate each metric with detailed breakdown
+        breakdown_details = []
+        for m_def in metrics:
+            try:
+                # Build eval context
+                eval_context = dict(user_metrics)
+                
+                # Add variables from rule
+                try:
+                    if m_def.variables:
+                        import json
+                        vars_dict = m_def.variables if isinstance(m_def.variables, dict) else json.loads(m_def.variables)
+                        for k, v in vars_dict.items():
+                            eval_context[k] = v
+                except Exception as e:
+                    print(f"Error parsing variables for {m_def.metric_key}: {e}")
+                
+                # Calculate score
+                from engine import evaluate_kpi_formula
+                score = evaluate_kpi_formula(m_def.formula_expression, eval_context)
+                capped_score = min(max(score, 0.0), float(m_def.cap_score))
+                weighted_score = capped_score * float(m_def.weight)
+                
+                breakdown_details.append({
+                    "metric_key": m_def.metric_key,
+                    "formula": m_def.formula_expression,
+                    "variables_used": eval_context,
+                    "raw_score": round(score, 2),
+                    "capped_score": round(capped_score, 2),
+                    "weight": float(m_def.weight),
+                    "weighted_score": round(weighted_score, 2),
+                    "category": m_def.category or "ENGINEERING",
+                    "actual_value": user_metrics.get(m_def.metric_key, 0.0)
+                })
+            except Exception as e:
+                breakdown_details.append({
+                    "metric_key": m_def.metric_key,
+                    "error": str(e),
+                    "raw_score": 0,
+                    "capped_score": 0,
+                    "weighted_score": 0,
+                    "weight": float(m_def.weight)
+                })
+        
+        total_score = sum(b["weighted_score"] for b in breakdown_details)
+        
+        return {
+            "user_id": user.id,
+            "full_name": user.full_name,
+            "year": year,
+            "rule_name": rule.name,
+            "total_score": round(total_score, 2),
+            "working_days": working_days,
+            "user_metrics": user_metrics,
+            "breakdown": breakdown_details
+        }
+        
+    except Exception as e:
+        return {"error": str(e)}, 500
+
 # Integration Settings Endpoints (Opsi 2: Secure Decrypted Views)
 @app.get("/api/v1/integrations")
 def get_integrations(db: Session = Depends(get_db)):

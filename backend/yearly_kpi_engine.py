@@ -124,18 +124,48 @@ class YearlyKPIEngine:
                             eval_context[k] = v
                 except Exception as e:
                     logger.error(f"Failed to merge variables for {m_def.metric_key}: {e}")
-
-                # Calculate score using formula engine
-                score = evaluate_kpi_formula(m_def.formula_expression, eval_context)
                 
-                # Apply cap score if defined
-                if m_def.cap_score and score > float(m_def.cap_score):
-                    score = float(m_def.cap_score)
-                if score < 0.0:
-                    score = 0.0
+                # CRITICAL FIX: Ensure formula variables exist in context
+                missing_vars = []
+                try:
+                    import ast
+                    tree = ast.parse(m_def.formula_expression, mode='eval')
+                    for node in ast.walk(tree):
+                        if isinstance(node, ast.Name) and node.id not in eval_context:
+                            missing_vars.append(node.id)
                     
+                    if missing_vars:
+                        logger.warning(f"Formula '{m_def.formula_expression}' missing variables: {missing_vars}")
+                        
+                        # Try to get missing variables from context if they match pattern
+                        for var in missing_vars:
+                            if var in aggregated_metrics:
+                                eval_context[var] = aggregated_metrics[var]
+                            elif "max_raw_sp" in aggregated_metrics and var in ["max_raw_sp", "max_jira_sp"]:
+                                eval_context[var] = aggregated_metrics["max_raw_sp"]
+                            elif "max_complexity_sp" in aggregated_metrics and var in ["max_complexity_sp", "max_complexity_pts"]:
+                                eval_context[var] = aggregated_metrics["max_complexity_sp"]
+                            elif "max_issues_cnt" in aggregated_metrics and var in ["max_issues_cnt", "max_jira_issues"]:
+                                eval_context[var] = aggregated_metrics["max_issues_cnt"]
+                            elif "max_founder_sp" in aggregated_metrics and var in ["max_founder_sp", "max_founder_pts"]:
+                                eval_context[var] = aggregated_metrics["max_founder_sp"]
+                            elif "max_" in var and "max_" in aggregated_metrics:
+                                # Try to match based on pattern
+                                for context_key, context_val in aggregated_metrics.items():
+                                    if f"max_{var.replace('max_', '')}" == context_key or f"max_{var}" == context_key:
+                                        eval_context[var] = context_val
+                except Exception as e:
+                    logger.error(f"Error parsing formula for missing variables: {e}")
+                
+                # Calculate score using formula engine
+                raw_calculated_score = evaluate_kpi_formula(m_def.formula_expression, eval_context)
+                
+                # Apply cap score if defined - consistent with sprint engine
+                cap_score = float(m_def.cap_score or 120.0)
+                capped_score = min(max(raw_calculated_score, 0.0), cap_score)
+                
                 weight = float(m_def.weight)
-                weighted_score = score * weight
+                weighted_score = capped_score * weight
                 
                 total_score += weighted_score
                 total_weight += weight
@@ -145,20 +175,19 @@ class YearlyKPIEngine:
                 
                 breakdown.append({
                     "metric_key": m_def.metric_key,
-                    "category": m_def.category or "ENGINEERING",
-                    "label": m_def.metric_key.replace('_', ' ').title(),
-                    "actual_value": actual_val,
-                    "formula": m_def.formula_expression,
-                    "variables": variables_used,
-                    "calculated_score": round(score, 2),
+                    "formula_used": m_def.formula_expression,
+                    "input_variables": eval_context,
+                    "raw_score": round(raw_calculated_score, 2),
+                    "capped_score": round(capped_score, 2),
                     "weight": weight,
                     "weighted_score": round(weighted_score, 2)
                 })
             except Exception as e:
                 logger.error(f"Error calculating metric {m_def.metric_key}: {e}")
                 
-        # Normalize score if weights don't add up to 1.0 (though they should)
-        final_score = total_score / total_weight if total_weight > 0 else 0.0
+        # Return raw weighted sum (no normalization) to match sprint engine behavior
+        # Matrix configurator expects weights to sum to 1.0, so this gives the correct final score
+        final_score = total_score
         
         return {
             "period": {
