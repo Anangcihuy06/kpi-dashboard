@@ -257,7 +257,7 @@ export default function Subordinates({ supervisorId }) {
           </div>
         </div>
 
-        <div className="filter-group" style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+        <div className="filter-group" style={{ display: "flex", gap: "10px", alignItems: "center", justifyContent: "flex-end" }}>
           <select
             className="select-control"
             value={selectedYear}
