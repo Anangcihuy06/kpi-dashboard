@@ -376,52 +376,73 @@ export default function Configurator() {
 
             {/* Main Formula Rules Configurator */}
             <div className="card">
-              <div className="flex-between" style={{ marginBottom: "16px" }}>
-                <div>
-                  <h3 style={{ marginBottom: "4px" }}>Aturan Indikator Divisi / Group</h3>
-                  <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "8px" }}>
-                    <div style={{ 
-                      padding: "4px 12px", 
-                      background: "rgba(37, 99, 235, 0.1)", 
-                      color: "var(--color-primary)", 
-                      borderRadius: "16px", 
-                      fontSize: "12px", 
-                      fontWeight: 600,
-                      border: "1px solid rgba(37, 99, 235, 0.2)"
-                    }}>
-                      {currentUser.group_name || "Tidak ada Group"}
+              <div style={{ marginBottom: "24px", paddingBottom: "20px", borderBottom: "1px solid #e2e8f0" }}>
+                <div className="flex-between" style={{ alignItems: "flex-start" }}>
+                  <div style={{ flex: 1, paddingRight: "20px" }}>
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "12px" }}>
+                      <div style={{ 
+                        padding: "4px 12px", 
+                        background: "rgba(37, 99, 235, 0.1)", 
+                        color: "var(--color-primary)", 
+                        borderRadius: "20px", 
+                        fontSize: "11px", 
+                        fontWeight: 600,
+                        letterSpacing: "0.5px",
+                        textTransform: "uppercase",
+                        border: "1px solid rgba(37, 99, 235, 0.2)"
+                      }}>
+                        {currentUser.group_name || "Tidak ada Group"}
+                      </div>
+                      <div style={{ 
+                        padding: "4px 12px", 
+                        background: "#f1f5f9", 
+                        color: "#64748b", 
+                        borderRadius: "20px", 
+                        fontSize: "11px", 
+                        fontWeight: 600,
+                        letterSpacing: "0.5px",
+                        textTransform: "uppercase",
+                        border: "1px solid #e2e8f0"
+                      }}>
+                        {divisions.find(d => d.id === selectedDivisionId)?.name || "Default Divisi"}
+                      </div>
                     </div>
-                    <div style={{ 
-                      padding: "4px 12px", 
-                      background: "#f1f5f9", 
-                      color: "#475569", 
-                      borderRadius: "16px", 
-                      fontSize: "12px", 
-                      fontWeight: 500,
-                      border: "1px solid #e2e8f0"
-                    }}>
-                      {divisions.find(d => d.id === selectedDivisionId)?.name || "Default Divisi"}
+                    
+                    <input
+                      type="text"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      style={{
+                        width: "100%",
+                        fontSize: "22px",
+                        fontWeight: 700,
+                        color: "#0f172a",
+                        border: "1px solid transparent",
+                        background: "transparent",
+                        padding: "4px 8px",
+                        marginLeft: "-8px",
+                        borderRadius: "6px",
+                        transition: "all 0.2s",
+                        outline: "none"
+                      }}
+                      onFocus={(e) => { e.target.style.border = "1px solid #cbd5e1"; e.target.style.background = "#fff"; }}
+                      onBlur={(e) => { e.target.style.border = "1px solid transparent"; e.target.style.background = "transparent"; }}
+                      placeholder="Masukkan Nama Matriks KPI..."
+                    />
+                    <div style={{ fontSize: "13px", color: "#64748b", marginTop: "4px", paddingLeft: "2px" }}>
+                      Atur indikator, formula, dan bobot KPI untuk karyawan di grup ini.
                     </div>
                   </div>
-                </div>
-                <div style={{ display: "flex", gap: "12px" }}>
-                  <button className="btn-outline" onClick={() => setShowGuide(true)} style={{ padding: "6px 16px", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px", height: "32px", borderColor: "var(--color-secondary)", color: "var(--color-secondary)" }}>
-                    <AlertCircle size={14} /> Panduan Formula
-                  </button>
-                  <button className="btn-outline" onClick={addMetricRow} style={{ padding: "6px 16px", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px", height: "32px" }}>
-                    <Plus size={14} /> Tambah Indikator
-                  </button>
-                </div>
-              </div>
 
-              <div style={{ marginBottom: "20px" }}>
-                <label className="form-label">Nama Matriks</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
+                  <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
+                    <button className="btn-outline" onClick={() => setShowGuide(true)} style={{ padding: "8px 16px", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px", borderRadius: "8px", borderColor: "#cbd5e1", color: "#475569", background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
+                      <AlertCircle size={16} /> Panduan Formula
+                    </button>
+                    <button className="btn-primary" onClick={addMetricRow} style={{ padding: "8px 16px", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px", borderRadius: "8px", boxShadow: "0 1px 3px rgba(37,99,235,0.2)" }}>
+                      <Plus size={16} /> Tambah Indikator
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <div className="table-container">
