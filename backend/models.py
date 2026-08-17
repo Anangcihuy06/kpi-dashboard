@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Boolean, ForeignKey, Numeric, DateTime, JSON, Integer, Text, Float
+from sqlalchemy import Column, String, Boolean, ForeignKey, Numeric, DateTime, JSON, Integer, Text, Float, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -256,6 +256,10 @@ class RawJiraIssue(Base):
     created_date = Column(DateTime, nullable=True)
     updated_date = Column(DateTime, nullable=True)
     resolved_date = Column(DateTime, nullable=True)
+    # Precomputed multi-factor feature score (complexity_sp contribution).
+    # Computed once at sync time by the FeatureScorer so request paths never re-scan.
+    complexity_score = Column(Float, nullable=True)
+    complexity_detail = Column(JSON, nullable=True)
     raw_data = Column(JSON, default={})
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now())
@@ -520,4 +524,48 @@ class AttendanceRecord(Base):
 
     user = relationship("User", backref="attendance_records")
     sprint = relationship("Sprint", backref="attendance_records")
+
+class CompanyMaxima(Base):
+    """Company/group-wide 5-pillar maxima per period (computed once at sync time).
+
+    Replaces the request-time company scan so /yearly-performance is a cheap DB read.
+    A row with group_id = NULL is the company-wide (global) benchmark; rows with a
+    group_id hold the benchmark of the indicator matrix for that specific group.
+    """
+    __tablename__ = "company_maxima"
+
+    id = Column(String(50), primary_key=True, default=generate_uuid)
+    year = Column(Integer, nullable=False, index=True)
+    period = Column(String(20), nullable=False, default="YEARLY")  # YEARLY / SPRINT
+    group_id = Column(String(50), nullable=True, index=True)  # NULL = company-wide
+    division_id = Column(String(50), nullable=True)
+    max_raw_sp = Column(Float, nullable=False, default=0.0)
+    max_complexity_sp = Column(Float, nullable=False, default=0.0)
+    max_issues_cnt = Column(Integer, nullable=False, default=0)
+    max_founder_sp = Column(Float, nullable=False, default=0.0)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("year", "period", "group_id", name="uq_company_maxima_scope"),
+    )
+
+class UserYearlyMetrics(Base):
+    """Precomputed per-user, per-year delivery aggregates.
+
+    Computed once at sync time so request paths never scan raw tables.
+    """
+    __tablename__ = "user_yearly_metrics"
+
+    id = Column(String(50), primary_key=True, default=generate_uuid)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    year = Column(Integer, nullable=False, index=True)
+    period = Column(String(20), nullable=False, default="YEARLY")
+    raw_sp = Column(Float, nullable=False, default=0.0)
+    complexity_sp = Column(Float, nullable=False, default=0.0)
+    issues_completed = Column(Integer, nullable=False, default=0)
+    founder_credit = Column(Float, nullable=False, default=0.0)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    user = relationship("User")
+    __table_args__ = (UniqueConstraint("user_id", "year", "period", name="uq_user_yearly_metrics"),)
 

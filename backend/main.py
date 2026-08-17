@@ -132,7 +132,30 @@ async def lifespan(app: FastAPI):
         print("Creating database tables...")
         models.Base.metadata.create_all(bind=engine)
         print("Database tables created successfully")
-        
+
+        # Auto-migrate columns added to existing tables (create_all only adds new tables)
+        try:
+            with engine.begin() as conn:
+                table_cols = {}
+                for table_name in ("raw_jira_issues", "company_maxima"):
+                    rows = conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
+                    table_cols[table_name] = {r[1] for r in rows}
+                if "complexity_score" not in table_cols["raw_jira_issues"]:
+                    conn.execute(text("ALTER TABLE raw_jira_issues ADD COLUMN complexity_score FLOAT"))
+                    print("Migrated: raw_jira_issues.complexity_score")
+                if "complexity_detail" not in table_cols["raw_jira_issues"]:
+                    conn.execute(text("ALTER TABLE raw_jira_issues ADD COLUMN complexity_detail JSON"))
+                    print("Migrated: raw_jira_issues.complexity_detail")
+                cm_cols = table_cols.get("company_maxima", set())
+                if cm_cols and "group_id" not in cm_cols:
+                    conn.execute(text("ALTER TABLE company_maxima ADD COLUMN group_id VARCHAR(50)"))
+                    print("Migrated: company_maxima.group_id")
+                if cm_cols and "division_id" not in cm_cols:
+                    conn.execute(text("ALTER TABLE company_maxima ADD COLUMN division_id VARCHAR(50)"))
+                    print("Migrated: company_maxima.division_id")
+        except Exception as mig_e:
+            print(f"Warning: auto-migration skipped: {mig_e}")
+
         db = SessionLocal()
         
         # Check if database is empty and needs seeding
@@ -973,9 +996,9 @@ def get_user_calculation_details(user_id: str, year: int, db: Session = Depends(
             raw_jira_issues = db.query(models.RawJiraIssue).filter(
                 models.RawJiraIssue.assignee_account_id == jira_ident.external_user_id
             ).all()
-            
-            from feature_analyzer import calculate_feature_weight, analyze_multi_factor
-            
+
+            from feature_analyzer import stored_feature_weight
+
             raw_jira_sp = 0.0
             complexity_sp = 0.0
             issues_completed = 0
@@ -1005,7 +1028,7 @@ def get_user_calculation_details(user_id: str, year: int, db: Session = Depends(
                     if status_lower in ["done", "resolved", "ready to release", "ready for uat", "uat (user)", "ready for qa", "in qa"]:
                         issues_completed += 1
                         sp = float(ji.story_points or 0.0)
-                        cw = calculate_feature_weight(ji.raw_data or {})
+                        cw = stored_feature_weight(ji)
                         raw_jira_sp += sp
                         complexity_sp += cw
             
@@ -1017,18 +1040,14 @@ def get_user_calculation_details(user_id: str, year: int, db: Session = Depends(
             from founder_engine import get_founder_credits_for_user
             user_metrics["founder_sp_credit"] = get_founder_credits_for_user(user.id, year)
             
-            # Get company maxima for relative scoring
-            all_users = db.query(models.User).filter(models.User.is_active == True).all()
-            max_raw_sp = 0.0
-            max_complexity_sp = 0.0
-            max_issues_cnt = 0
-            max_founder_sp = 0.0
-            
-            for u in all_users:
-                max_raw_sp = max(max_raw_sp, (db.query(models.RawJiraIssue).count() * 10))  # Fallback estimate
-                max_complexity_sp = max(max_complexity_sp, 100)  # Fallback estimate
-                max_issues_cnt = max(max_issues_cnt, db.query(models.RawJiraIssue).count())
-                max_founder_sp = max(max_founder_sp, 100)
+            # Get company maxima for relative scoring (scoped to the user's group)
+            from_date = datetime(year, 1, 1)
+            to_date = datetime(year, 12, 31, 23, 59, 59)
+            cmax = _get_company_maxima(db, from_date, to_date, group_id=user.group_id)
+            max_raw_sp = cmax["max_raw_sp"]
+            max_complexity_sp = cmax["max_complexity_sp"]
+            max_issues_cnt = cmax["max_issues_cnt"]
+            max_founder_sp = cmax["max_founder_sp"]
             
             user_metrics["max_raw_sp"] = max_raw_sp
             user_metrics["max_complexity_sp"] = max_complexity_sp
@@ -1400,6 +1419,81 @@ def get_sync_status(db: Session = Depends(get_db)):
     from sync_engine import get_active_sync_status
     return get_active_sync_status(db)
 
+class RescoreRequest(BaseModel):
+    year: Optional[int] = None
+    user_id: Optional[str] = None
+    force: bool = False
+
+@app.post("/api/v1/kpi/rescore")
+def rescore_features(payload: RescoreRequest, background_tasks: BackgroundTasks):
+    """Re-score stored Jira issues with the configured FeatureScorer (rules or LLM)
+    and refresh the precomputed maxima/metrics. Runs in the background."""
+    def _run_rescore():
+        from database import SessionLocal
+        from feature_analyzer import FeatureScorer, resolve_feature_config, stored_feature_weight
+        bg_db = SessionLocal()
+        try:
+            cfg = resolve_feature_config(bg_db)
+            scorer = FeatureScorer(config=cfg)
+            target_year = payload.year or datetime.now().year
+
+            query = bg_db.query(models.RawJiraIssue)
+            if payload.user_id:
+                jira_ident = bg_db.query(models.EmployeeIdentity).filter(
+                    models.EmployeeIdentity.user_id == payload.user_id,
+                    models.EmployeeIdentity.source == 'jira'
+                ).first()
+                if not jira_ident or not jira_ident.external_user_id:
+                    return
+                query = query.filter(models.RawJiraIssue.assignee_account_id == jira_ident.external_user_id)
+            issues = query.all()
+
+            updated = 0
+            for ji in issues:
+                if not payload.force and ji.complexity_score is not None:
+                    continue
+                res = scorer.score(ji.raw_data or {})
+                ji.complexity_score = float(res["kpi_points"])
+                ji.complexity_detail = {
+                    "technical_complexity": res["technical_complexity"],
+                    "business_impact": res["business_impact"],
+                    "system_scope": res["system_scope"],
+                    "delivery_risk": res["delivery_risk"],
+                    "ownership_level": res["ownership_level"],
+                    "total_score": res["total_score"],
+                    "kpi_points": float(res["kpi_points"]),
+                    "score_type": res.get("score_type", "rules"),
+                    "model": res.get("model"),
+                    "prompt_version": res.get("prompt_version"),
+                }
+                updated += 1
+                if updated % 20 == 0:
+                    bg_db.commit()
+            bg_db.commit()
+            logger.info(f"Rescore completed: {updated} issues scored ({scorer.mode} mode)")
+
+            # Refresh precomputed aggregates for the target year
+            try:
+                from precompute_metrics import compute_all_year_metrics
+                compute_all_year_metrics(bg_db, target_year)
+            except Exception as e:
+                logger.error(f"Precompute after rescore failed: {e}")
+
+            try:
+                from fastapi_cache import FastAPICache
+                FastAPICache.clear()
+            except Exception:
+                pass
+            _company_maxima_cache.clear()
+        except Exception as e:
+            logger.error(f"Rescore failed: {e}")
+            bg_db.rollback()
+        finally:
+            bg_db.close()
+
+    background_tasks.add_task(_run_rescore)
+    return {"status": "success", "message": "Re-scoring dijalankan di background", "mode": "llm" if os.getenv("OPENROUTER_API_KEY") else "rules"}
+
 @app.get("/api/v1/jobs/{job_id}")
 def get_job_status_endpoint(job_id: str, db: Session = Depends(get_db)):
     from sync_engine import get_job_status
@@ -1505,20 +1599,22 @@ def get_team_yearly_performance(year: int, user_id: str, db: Session = Depends(g
 # TIME RANGE BASED KPI ENDPOINTS (NEW ARCHITECTURE)
 # ─────────────────────────────────────────────────────────────
 
-def _compute_company_maxima(db: Session, from_date: datetime, to_date: datetime) -> Dict[str, float]:
+def _compute_company_maxima(db: Session, from_date: datetime, to_date: datetime, users=None) -> Dict[str, float]:
     """
     Calculate 5-pillar company maxima (raw SP, complexity SP, issues, founder credits)
-    for the given period by scanning the raw Jira data of all active users.
-    Expensive — result is cached in _company_maxima_cache.
+    for the given period by scanning the raw Jira data. When `users` is provided the
+    benchmark is scoped to that group's indicator matrix; otherwise it is company-wide.
+    Used only as a fallback when the precomputed CompanyMaxima row is missing.
     """
     req_year = from_date.year
-    all_active_users = db.query(models.User).filter(models.User.is_active == True).all()
+    if users is None:
+        users = db.query(models.User).filter(models.User.is_active == True).all()
 
     from founder_engine import get_founder_credits_for_user
-    from feature_analyzer import calculate_feature_weight
+    from feature_analyzer import stored_feature_weight
 
     user_metrics = {}
-    for u in all_active_users:
+    for u in users:
         raw_sp = 0.0
         complexity_sp = 0.0
         issues_cnt = 0
@@ -1560,7 +1656,7 @@ def _compute_company_maxima(db: Session, from_date: datetime, to_date: datetime)
                         if status_lower in ["done", "resolved", "ready to release", "ready for uat", "uat (user)", "ready for qa", "in qa"]:
                             issues_cnt += 1
                             sp = float(ji.story_points or 0.0)
-                            cw = calculate_feature_weight(ji.raw_data or {})
+                            cw = stored_feature_weight(ji)
                             raw_sp += sp
                             complexity_sp += cw
                     except Exception:
@@ -1589,15 +1685,37 @@ def _compute_company_maxima(db: Session, from_date: datetime, to_date: datetime)
     return maxima
 
 
-def _get_company_maxima(db: Session, from_date: datetime, to_date: datetime) -> Dict[str, float]:
-    """Cached wrapper around _compute_company_maxima — keyed by year, TTL 30 min."""
+def _get_company_maxima(db: Session, from_date: datetime, to_date: datetime, group_id: Optional[str] = None) -> Dict[str, float]:
+    """Read persisted company maxima at the given scope (fast DB lookup),
+    falling back to a scan. group_id=None -> company-wide benchmark; a group_id
+    -> that group's own indicator-matrix benchmark.
+
+    The precompute job (scheduler / sync completion) keeps CompanyMaxima fresh,
+    so the expensive scan is only used as a safety net on cold data.
+    """
     year = from_date.year
+    cache_key = f"{year}:{group_id or 'GLOBAL'}"
     now = time.time()
-    hit = _company_maxima_cache.get(year)
+    hit = _company_maxima_cache.get(cache_key)
     if hit and now - hit[0] < _COMPANY_MAXIMA_TTL:
         return hit[1]
-    maxima = _compute_company_maxima(db, from_date, to_date)
-    _company_maxima_cache[year] = (now, maxima)
+
+    try:
+        from precompute_metrics import get_company_maxima
+        maxima = get_company_maxima(db, year, group_id=group_id)
+        if maxima:
+            return maxima
+    except Exception as e:
+        logger.warning(f"CompanyMaxima lookup failed, falling back to scan: {e}")
+
+    scope_users = None
+    if group_id:
+        scope_users = db.query(models.User).filter(
+            models.User.is_active == True,
+            models.User.group_id == group_id
+        ).all()
+    maxima = _compute_company_maxima(db, from_date, to_date, users=scope_users)
+    _company_maxima_cache[cache_key] = (now, maxima)
     return maxima
 
 
@@ -1649,6 +1767,14 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
             user = db.query(models.User).filter(models.User.id == target_user_id).first()
             if not user:
                 continue
+
+            # Dynamic indicator matrix: resolve the benchmark from the user's own
+            # group maxima (group-level relative scoring), falling back to company-wide.
+            user_maxima = _get_company_maxima(db, from_date, to_date, group_id=user.group_id) if user.group_id else maxima
+            umax_raw_sp = user_maxima["max_raw_sp"]
+            umax_complexity_sp = user_maxima["max_complexity_sp"]
+            umax_issues_cnt = user_maxima["max_issues_cnt"]
+            umax_founder_sp = user_maxima["max_founder_sp"]
             
             # Get daily KPI for the time range
             daily_kpis = db.query(models.KPIEmployeeDaily).filter(
@@ -1794,13 +1920,13 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
             raw_jira_sp_sum = 0.0
             complexity_sp_sum = 0.0
             completed_tasks_list = []
-            from feature_analyzer import calculate_feature_weight, analyze_multi_factor
-            
+            from feature_analyzer import stored_feature_weight, stored_feature_detail
+
             if jira_ident and jira_ident.external_user_id:
                 all_raw_jiras = db.query(models.RawJiraIssue).filter(
                     models.RawJiraIssue.assignee_account_id == jira_ident.external_user_id
                 ).all()
-                
+
                 for ji in all_raw_jiras:
                     r_dt_naive = None
                     if ji.resolved_date:
@@ -1822,18 +1948,18 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
                     if not r_dt_naive and (ji.updated_date or ji.created_date):
                         r_dt = ji.updated_date or ji.created_date
                         r_dt_naive = r_dt.replace(tzinfo=None) if hasattr(r_dt, 'replace') else r_dt
-                        
+
                     if r_dt_naive and from_date <= r_dt_naive <= to_date:
                         try:
                             status_lower = (ji.status or "").lower()
                             if status_lower in ["done", "resolved", "ready to release", "ready for uat", "uat (user)", "ready for qa", "in qa"]:
                                 raw_jira_issues_count += 1
                                 sp = float(ji.story_points or 0.0)
-                                cw = calculate_feature_weight(ji.raw_data or {})
+                                cw = stored_feature_weight(ji)
                                 raw_jira_sp_sum += sp
                                 complexity_sp_sum += cw
-                                
-                                mf_res = analyze_multi_factor(ji.raw_data or {})
+
+                                mf_res = stored_feature_detail(ji)
                                 completed_tasks_list.append({
                                     "key": ji.issue_key,
                                     "summary": ji.raw_data.get('fields', {}).get('summary', ji.issue_key),
@@ -1891,10 +2017,10 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
                 "late_count": total_late_count,
                 "late_percentage": late_pct,
                 "founder_sp_credit": founder_sp_credit,
-                "max_raw_sp": max_raw_sp,
-                "max_complexity_sp": max_complexity_sp,
-                "max_issues_cnt": max_issues_cnt,
-                "max_founder_sp": max_founder_sp
+                "max_raw_sp": umax_raw_sp,
+                "max_complexity_sp": umax_complexity_sp,
+                "max_issues_cnt": umax_issues_cnt,
+                "max_founder_sp": umax_founder_sp
             }
             
             engine_result = YearlyKPIEngine.calculate_yearly_kpi(

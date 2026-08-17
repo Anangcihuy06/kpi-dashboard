@@ -12,9 +12,14 @@ import models
 from database import SessionLocal
 import logging
 from encrypt import decrypt_val
-from feature_analyzer import calculate_feature_weight
+from feature_analyzer import calculate_feature_weight, FeatureScorer, resolve_feature_config, score_issues_batch
 import concurrent.futures
 from typing import List, Dict, Any, Optional
+
+def _sync_feature_scorer(db):
+    """Build a FeatureScorer using config-matrix variables; enables LLM when OPENROUTER_API_KEY is set."""
+    cfg = resolve_feature_config(db)
+    return FeatureScorer(config=cfg)
 
 def fetch_project_commits(project_id, author_query, gitlab_url, headers, start_date_str, end_date_str):
     commits_url = f"{gitlab_url}/api/v4/projects/{project_id}/repository/commits"
@@ -736,6 +741,7 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
     account_id = jira_identity.external_user_id
     
     issues_synced = 0
+    scorer = _sync_feature_scorer(db)
     
     try:
         search_url = f"{jira_url}/rest/api/3/search/jql"
@@ -777,20 +783,80 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                     issues_synced = 0
                 processed_issues_cache = set()
                 processed_activities_cache = set()
-                
+
+                # Load existing rows for the whole page in one query, then decide
+                # which issues actually need (re)scoring: new rows or changed
+                # summaries are scored; unchanged issues reuse the persisted score
+                # so LLM calls are only paid for new/changed work.
+                page_keys = [i.get("key") for i in issues]
+                existing_by_key = {}
+                if page_keys:
+                    existing_by_key = {
+                        r.issue_key: r for r in db.query(models.RawJiraIssue).filter(
+                            models.RawJiraIssue.issue_key.in_(page_keys)
+                        ).all()
+                    }
+
+                need_score = []
                 for issue in issues:
                     issue_key = issue.get("key")
                     fields = issue.get("fields", {})
-                    
+                    existing = existing_by_key.get(issue_key)
+                    summar = (fields.get("summary") or "").strip()
+                    stored_summary = None
+                    if existing is not None and existing.complexity_detail:
+                        stored_summary = (existing.complexity_detail.get("summary") or "").strip()
+                    if existing is not None and existing.complexity_score is not None and stored_summary == summar:
+                        continue
+                    need_score.append(issue)
+
+                # Batch-score only the issues that need it (rules are cheap; LLM
+                # uses bounded concurrency so per-issue network latency isn't serialized).
+                page_scores = {}
+                if need_score:
+                    try:
+                        if scorer.llm:
+                            page_scores = score_issues_batch(need_score, scorer, workers=5)
+                        else:
+                            for isc in need_score:
+                                page_scores[isc.get("key")] = scorer.score(isc)
+                    except Exception as e:
+                        logger.warning(f"Batch scoring failed for {user.full_name}: {e}")
+
+                for issue in issues:
+                    issue_key = issue.get("key")
+                    fields = issue.get("fields", {})
+
                     # Try custom fields for story points (including customfield_10024 used in Cloud)
                     raw_sp = fields.get("customfield_10024") or fields.get("customfield_10016") or fields.get("customfield_10028") or fields.get("story_points") or 0
                     try:
                         story_points = float(raw_sp) if raw_sp is not None else 0.0
                     except Exception:
                         story_points = 0.0
-                
-                    # Calculate feature weight (complexity score from issue type & priority)
-                    feature_weight = calculate_feature_weight(issue)
+
+                    # Resolve the feature score for this issue: reuse persisted detail
+                    # when the summary is unchanged, otherwise use the page result.
+                    existing_issue = existing_by_key.get(issue_key)
+                    feature_res = page_scores.get(issue_key)
+                    if feature_res is None and existing_issue is not None and existing_issue.complexity_detail:
+                        feature_res = existing_issue.complexity_detail
+                    if feature_res is None:
+                        feature_res = scorer.score(issue)
+                    feature_weight = feature_res["kpi_points"]
+                    complexity_detail = {
+                        "summary": (fields.get("summary") or "").strip(),
+                        "technical_complexity": feature_res["technical_complexity"],
+                        "business_impact": feature_res["business_impact"],
+                        "system_scope": feature_res["system_scope"],
+                        "delivery_risk": feature_res["delivery_risk"],
+                        "ownership_level": feature_res["ownership_level"],
+                        "total_score": feature_res["total_score"],
+                        "kpi_points": feature_weight,
+                        "score_type": feature_res.get("score_type", "rules"),
+                        "model": feature_res.get("model"),
+                        "prompt_version": feature_res.get("prompt_version"),
+                    }
+                    complexity_score = float(feature_weight)
                 
                     # Final story points for KPI calculation (max of explicit SP vs feature weight)
                     effective_sp = story_points if story_points > 0 else feature_weight
@@ -823,11 +889,7 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                     # Store or update raw Jira issue
                     if issue_key in processed_issues_cache:
                         continue
-                        
-                    existing_issue = db.query(models.RawJiraIssue).filter(
-                        models.RawJiraIssue.issue_key == issue_key
-                    ).first()
-                
+
                     resolution_date_str = fields.get("resolutiondate")
                     resolved_at = None
                     if resolution_date_str:
@@ -850,6 +912,8 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                             assignee_account_id=account_id,
                             story_points=effective_sp,
                             resolved_date=resolved_at,
+                            complexity_score=complexity_score,
+                            complexity_detail=complexity_detail,
                             raw_data=issue
                         )
                         db.add(new_issue)
@@ -863,6 +927,8 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                         processed_issues_cache.add(issue_key)
                         existing_issue.story_points = effective_sp
                         existing_issue.status = fields.get("status", {}).get("name") if fields.get("status") else None
+                        existing_issue.complexity_score = complexity_score
+                        existing_issue.complexity_detail = complexity_detail
                         try:
                             db.commit()
                         except Exception as e:
@@ -904,7 +970,9 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                                 "jira_project_key": proj_key,
                                 "jira_project_name": proj_name,
                                 "status": status_name,
-                                "status_category": status_cat
+                                "status_category": status_cat,
+                                "complexity_score": complexity_score,
+                                "complexity_detail": complexity_detail
                             }
                         )
                         db.add(activity)
@@ -1373,7 +1441,9 @@ def calculate_daily_aggregated_kpi(db: Session, user: models.User, date: datetim
                     models.RawJiraIssue.resolved_date <= date_end
                 ).all()
                 daily_raw["complexity_sp"] = sum(
-                    calculate_feature_weight(iss.raw_data or {}) for iss in resolved)
+                    (iss.complexity_score if iss.complexity_score is not None
+                     else calculate_feature_weight(iss.raw_data or {}))
+                    for iss in resolved)
         except Exception as e:
             logger.error(f"Daily complexity calc failed for {user.id} on {date}: {e}")
 

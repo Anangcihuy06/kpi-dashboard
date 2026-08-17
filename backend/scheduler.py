@@ -312,7 +312,16 @@ def sync_and_calculate_all_users_job(year: int = None):
         from fastapi_cache import FastAPICache
         with open("last_sync.txt", "w") as f:
             f.write(str(int(time.time())))
-        
+
+        # Precompute per-user yearly aggregates + company maxima so request
+        # paths only read precomputed rows (never rescan raw Jira issues).
+        try:
+            from precompute_metrics import compute_all_year_metrics
+            compute_all_year_metrics(db, year)
+        except Exception as e:
+            logger.error(f"Precompute metrics failed for year {year}: {e}")
+            db.rollback()
+
         # Invalidate all cache after sync completes
         try:
             backend = FastAPICache.get_backend()
