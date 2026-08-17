@@ -1984,12 +1984,12 @@ def truncate_raw_data(db: Session = Depends(get_db)):
     """
     results = {}
     
-    for table in ["raw_jira_issue_history", "raw_jira_worklogs", "raw_jira_issues"]:
+    for table in ["raw_jira_issue_history", "raw_jira_worklogs", "raw_jira_issues", "activities", "sync_jobs"]:
         try:
-            count_before = db.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar()
-            db.execute(text(f"DELETE FROM {table}"))
+            # We can't use COUNT if the DB is fully locked/hanging, so just TRUNCATE directly
+            db.execute(text(f"TRUNCATE TABLE {table} CASCADE"))
             db.commit()
-            results[table] = {"deleted": count_before}
+            results[table] = {"truncated": True}
         except Exception as e:
             db.rollback()
             results[table] = {"error": str(e)}
