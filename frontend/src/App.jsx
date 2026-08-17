@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { Award, Users, Settings, LogOut, ShieldAlert, KeyRound, Info } from "lucide-react";
+import { Award, Users, Settings, LogOut, KeyRound, Info } from "lucide-react";
+import { toast } from "sonner";
 import Dashboard from "./components/Dashboard";
 import Subordinates from "./components/Subordinates";
 import Configurator from "./components/Configurator";
@@ -40,12 +41,10 @@ export default function App() {
   const [usernameInput, setUsernameInput] = useState("");
   const [passwordInput, setPasswordInput] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
-  const [loginError, setLoginError] = useState(null);
 
   const handleRealLogin = async (e) => {
     e.preventDefault();
     setLoginLoading(true);
-    setLoginError(null);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s max
@@ -77,9 +76,9 @@ export default function App() {
     } catch (err) {
       clearTimeout(timeoutId);
       if (err.name === "AbortError") {
-        setLoginError("Server HRIS tidak merespons (timeout). Coba lagi.");
+        toast.error("Server HRIS tidak merespons (timeout). Coba lagi.");
       } else {
-        setLoginError(err.message);
+        toast.error(err.message);
       }
     } finally {
       setLoginLoading(false);
@@ -122,13 +121,6 @@ export default function App() {
           />
           <h2 className="form-title">KPI Dashboard Portal</h2>
           <p className="form-subtitle">Autentikasi menggunakan akun ATI Business Group Anda</p>
-
-          {loginError && (
-            <div style={{ color: "#b91c1c", backgroundColor: "#fee2e2", border: "1px solid #fecaca", padding: "12px", borderRadius: "16px", fontSize: "13px", marginBottom: "20px", display: "flex", gap: "8px", alignItems: "center" }}>
-              <ShieldAlert size={16} />
-              <span>{loginError}</span>
-            </div>
-          )}
 
           <form onSubmit={handleRealLogin}>
             <div className="form-group">

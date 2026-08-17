@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Users, Search, ArrowLeft, ChevronDown, ChevronUp, BarChart2, Award, Info, Clock, UserCheck, AlertTriangle, RefreshCw, Mail } from "lucide-react";
+import { toast } from "sonner";
 import Dashboard from "./Dashboard";
 
 export default function Subordinates({ supervisorId }) {
@@ -52,7 +53,7 @@ export default function Subordinates({ supervisorId }) {
         { method: "POST" }
       );
       const data = await res.json();
-      console.log("[Attendance Sync]", data.message);
+      toast.info("[Attendance Sync] Memulai sinkronisasi...");
       
       if (data.job_id) {
         // Poll job status every 3s
@@ -65,6 +66,11 @@ export default function Subordinates({ supervisorId }) {
                 clearInterval(poll);
                 await fetchTeamScores();
                 setAttendanceSyncing(false);
+                if (statusData.status === "COMPLETED") {
+                  toast.success("Sinkronisasi kehadiran berhasil!");
+                } else {
+                  toast.error("Sinkronisasi kehadiran gagal.");
+                }
               }
             }
           } catch (e) {
@@ -76,10 +82,11 @@ export default function Subordinates({ supervisorId }) {
         setTimeout(async () => {
           await fetchTeamScores();
           setAttendanceSyncing(false);
+          toast.success("Sinkronisasi kehadiran selesai!");
         }, 3000);
       }
     } catch (err) {
-      console.error("[Attendance Sync] Gagal:", err);
+      toast.error("Gagal sinkronisasi kehadiran: " + err.message);
       setAttendanceSyncing(false);
     }
   };
@@ -188,9 +195,9 @@ export default function Subordinates({ supervisorId }) {
       
       // Update local subordinates list
       setSubordinates(prev => prev.map(s => s.user_id === userId ? { ...s, email: emailVal } : s));
-      alert("Email berhasil disimpan!");
+      toast.success("Email berhasil disimpan!");
     } catch (err) {
-      alert("Gagal menyimpan email: " + err.message);
+      toast.error("Gagal menyimpan email: " + err.message);
     } finally {
       setEmailSaving(prev => ({ ...prev, [userId]: false }));
     }

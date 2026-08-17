@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Settings, Play, CheckCircle, RefreshCw, AlertCircle, Plus, Trash2, Globe, Server } from "lucide-react";
+import { toast } from "sonner";
 
 export default function Configurator() {
   const [activeSubTab, setActiveSubTab] = useState("rules"); // "rules" or "integrations"
@@ -35,7 +36,6 @@ export default function Configurator() {
   const [calcLoading, setCalcLoading] = useState(false);
   const [testLoading, setTestLoading] = useState(false);
   const [integLoading, setIntegLoading] = useState(false);
-  const [message, setMessage] = useState(null);
 
   useEffect(() => {
     fetchSprints();
@@ -83,7 +83,6 @@ export default function Configurator() {
 
   const fetchRulesForDivision = async (divId, groupId) => {
     try {
-      // Fetch current division info first
       const divRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/divisions`);
       const divList = await divRes.json();
       const selectedDiv = divList.find(d => d.id === divId) || { name: "New Division", code: "" };
@@ -101,7 +100,6 @@ export default function Configurator() {
         const isDigitalSolutionGroup = currentUser && currentUser.group_name === "Digital Solution Development";
         
         if (isDigitalSolutionGroup && data.metrics && (!data.metrics.some(m => m.metric_key === "feature_complexity"))) {
-            // Auto-upgrade to Pure Complexity config for Digital Solution Development
             setName("Digital Solution Developer KPI Matrix");
             setMetrics([
               { metric_key: "feature_complexity", category: "ENGINEERING", weight: 0.90, calc_type: "FORMULA", formula_expression: "min((complexity_sp / target_complexity_pts) * 100, 100)", variables: { target_complexity_pts: 300, max_c: 5, max_i: 5, max_s: 5, max_r: 3, max_o: 2 }, cap_score: 100.0 },
@@ -177,7 +175,6 @@ export default function Configurator() {
 
   const handleSaveRules = async () => {
     setSaveLoading(true);
-    setMessage(null);
     try {
       const totalWeight = metrics.reduce((acc, curr) => acc + parseFloat(curr.weight), 0);
       if (totalWeight < 0.99 || totalWeight > 1.01) {
@@ -198,10 +195,10 @@ export default function Configurator() {
 
       if (!response.ok) throw new Error("Gagal menyimpan aturan");
       const data = await response.json();
-      setMessage({ type: "success", text: `Aturan berhasil diperbarui ke Versi ${data.version}!` });
+      toast.success(`Aturan berhasil diperbarui ke Versi ${data.version}!`);
       fetchRulesForDivision(selectedDivisionId);
     } catch (err) {
-      setMessage({ type: "error", text: err.message });
+      toast.error(err.message);
     } finally {
       setSaveLoading(false);
     }
@@ -210,7 +207,6 @@ export default function Configurator() {
   const handleSaveIntegrations = async (e) => {
     e.preventDefault();
     setIntegLoading(true);
-    setMessage(null);
     try {
       const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/integrations", {
         method: "POST",
@@ -228,10 +224,10 @@ export default function Configurator() {
 
       if (!response.ok) throw new Error("Gagal menyimpan integrasi");
       const data = await response.json();
-      setMessage({ type: "success", text: data.message });
+      toast.success(data.message);
       fetchIntegrations();
     } catch (err) {
-      setMessage({ type: "error", text: err.message });
+      toast.error(err.message);
     } finally {
       setIntegLoading(false);
     }
@@ -271,19 +267,14 @@ export default function Configurator() {
 
   const handleCalculateYear = async () => {
     setCalcLoading(true);
-    setMessage(null);
     try {
       const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/sync/year/${selectedYear}`, {
         method: "POST"
       });
       if (!response.ok) throw new Error("Gagal menjalankan kalkulasi");
-      const data = await response.json();
-      setMessage({
-        type: "success",
-        text: `Kalkulasi & Sinkronisasi selesai! Berhasil memperbarui data dari Jira/GitLab untuk tahun ${selectedYear}.`
-      });
+      toast.success(`Kalkulasi & Sinkronisasi selesai! Berhasil memperbarui data dari Jira/GitLab untuk tahun ${selectedYear}.`);
     } catch (err) {
-      setMessage({ type: "error", text: err.message });
+      toast.error(err.message);
     } finally {
       setCalcLoading(false);
     }
@@ -300,30 +291,11 @@ export default function Configurator() {
         </div>
       </div>
 
-      {message && (
-        <div
-          className="card"
-          style={{
-            borderColor: message.type === "success" ? "#bbf7d0" : "#fecaca",
-            backgroundColor: message.type === "success" ? "#f0fdf4" : "#fef2f2",
-            color: message.type === "success" ? "#15803d" : "#b91c1c",
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            padding: "16px 24px",
-            marginBottom: "24px"
-          }}
-        >
-          {message.type === "success" ? <CheckCircle size={20} /> : <AlertCircle size={20} />}
-          <span>{message.text}</span>
-        </div>
-      )}
-
       {/* Sub Tabs Toggle */}
       <div style={{ display: "flex", gap: "12px", borderBottom: "1px solid #cbd5e1", marginBottom: "28px", paddingBottom: "2px" }}>
         <button
           className={`switcher-btn ${activeSubTab === "rules" ? "active" : ""}`}
-          onClick={() => { setActiveSubTab("rules"); setMessage(null); }}
+          onClick={() => setActiveSubTab("rules")}
           style={{ backgroundColor: activeSubTab === "rules" ? "var(--color-secondary)" : "transparent", color: activeSubTab === "rules" ? "#fff" : "var(--color-primary)", padding: "8px 24px", borderRadius: "16px 16px 0 0", fontSize: "14px" }}
         >
           <Settings size={14} style={{ display: "inline", marginRight: "6px" }} />
@@ -331,7 +303,7 @@ export default function Configurator() {
         </button>
         <button
           className={`switcher-btn ${activeSubTab === "integrations" ? "active" : ""}`}
-          onClick={() => { setActiveSubTab("integrations"); setMessage(null); }}
+          onClick={() => setActiveSubTab("integrations")}
           style={{ backgroundColor: activeSubTab === "integrations" ? "var(--color-secondary)" : "transparent", color: activeSubTab === "integrations" ? "#fff" : "var(--color-primary)", padding: "8px 24px", borderRadius: "16px 16px 0 0", fontSize: "14px" }}
         >
           <Globe size={14} style={{ display: "inline", marginRight: "6px" }} />
