@@ -349,9 +349,9 @@ export default function Configurator() {
             {/* Main Formula Rules Configurator */}
             <div className="card">
               <div style={{ marginBottom: "24px", paddingBottom: "20px", borderBottom: "1px solid #e2e8f0" }}>
-                <div className="flex-between" style={{ alignItems: "flex-start" }}>
-                  <div style={{ flex: 1, paddingRight: "20px" }}>
-                    <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "12px" }}>
+                <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-start", gap: "16px" }}>
+                  <div style={{ flex: "1 1 300px" }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center", marginBottom: "12px" }}>
                       <div style={{ 
                         padding: "4px 12px", 
                         background: "rgba(37, 99, 235, 0.1)", 
@@ -380,10 +380,14 @@ export default function Configurator() {
                       </div>
                     </div>
                     
-                    <input
-                      type="text"
+                    <textarea
                       value={name}
-                      onChange={(e) => setName(e.target.value)}
+                      onChange={(e) => {
+                        setName(e.target.value);
+                        e.target.style.height = 'auto';
+                        e.target.style.height = e.target.scrollHeight + 'px';
+                      }}
+                      rows={1}
                       style={{
                         width: "100%",
                         fontSize: "22px",
@@ -395,7 +399,10 @@ export default function Configurator() {
                         marginLeft: "-8px",
                         borderRadius: "6px",
                         transition: "all 0.2s",
-                        outline: "none"
+                        outline: "none",
+                        resize: "none",
+                        overflow: "hidden",
+                        lineHeight: "1.4"
                       }}
                       onFocus={(e) => { e.target.style.border = "1px solid #cbd5e1"; e.target.style.background = "#fff"; }}
                       onBlur={(e) => { e.target.style.border = "1px solid transparent"; e.target.style.background = "transparent"; }}
