@@ -96,7 +96,7 @@ export default function Dashboard({ userId, isSelf }) {
           <span>Data disinkronisasi: <strong>{formatLastSyncTime()}</strong></span>
         </div>
       </div>
-      <div className="filter-group">
+      <div className="filter-group" style={{ display: "flex", justifyContent: "flex-end" }}>
         <select
           className="select-control"
           value={selectedYear}
