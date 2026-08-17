@@ -37,34 +37,14 @@ async def lifespan(app: FastAPI):
     
     # Auto-migrate new columns - wrapped in try/except so app starts even if DB is full
     try:
-        try:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE users ADD COLUMN group_id VARCHAR(50);"))
-        except Exception:
-            pass
-        try:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE users ADD COLUMN group_name VARCHAR(150);"))
-        except Exception:
-            pass
-        try:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE kpi_rules ADD COLUMN group_id VARCHAR(50);"))
-        except Exception:
-            pass
-        try:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE kpi_rules ADD COLUMN group_name VARCHAR(150);"))
-        except Exception:
-            pass
-
-        models.Base.metadata.create_all(bind=engine)
-        
-        db = SessionLocal()
-        if not db.query(models.User).first():
-            print("Database is empty, running seed script...")
-            seed_data()
-        db.close()
+        # TEMPORARILY DISABLED: The DB is 100% full and locks are stuck. 
+        # Attempting to ALTER TABLE or create_all will hang the startup indefinitely.
+        print("Skipping DB schema migrations during emergency recovery mode...")
+        # db = SessionLocal()
+        # if not db.query(models.User).first():
+        #     print("Database is empty, running seed script...")
+        #     seed_data()
+        # db.close()
     except Exception as e:
         print(f"WARNING: DB initialization failed (DB may be full): {e}")
         print("App will start anyway - use /api/v1/db/cleanup to fix DB issues")
