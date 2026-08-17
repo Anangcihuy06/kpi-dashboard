@@ -150,7 +150,7 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
         response = requests.post(external_url, json={
             "username": payload.username,
             "password": payload.password
-        }, timeout=10)
+        }, timeout=30)
     except requests.exceptions.RequestException as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -169,7 +169,7 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
     if token:
         try:
             profile_url = "https://hris-api.atibusinessgroup.com/api/app/users/profile"
-            profile_resp = requests.get(profile_url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
+            profile_resp = requests.get(profile_url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
             print("PROFILE_STATUS:", profile_resp.status_code)
             if profile_resp.status_code == 200:
                 profile_data = profile_resp.json()
