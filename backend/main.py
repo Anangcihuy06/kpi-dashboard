@@ -981,8 +981,7 @@ def add_manual_attendance(payload: ManualAttendanceInput, db: Session = Depends(
 @app.post("/api/v1/sync/year/{year}")
 async def sync_year(year: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     from sync_engine import create_sync_job, update_job_progress, mark_job_completed, mark_job_failed
-    job = create_sync_job(db, "YEARLY_KPI_CALC", f"Admin triggered yearly sync for {year}")
-    job_id = job.id
+    job_id = create_sync_job(db, "SYSTEM", "YEARLY_KPI_CALC")
 
     def run_calculation(jid):
         from fastapi_cache import FastAPICache
@@ -990,7 +989,7 @@ async def sync_year(year: int, background_tasks: BackgroundTasks, db: Session = 
         db_gen = get_db()
         bg_db = next(db_gen)
         try:
-            update_job_progress(bg_db, jid, "RUNNING", 10, "Starting sync for all users...")
+            update_job_progress(bg_db, jid, 10, "RUNNING")
             sync_and_calculate_all_users_job(year)
             try:
                 FastAPICache.clear()
