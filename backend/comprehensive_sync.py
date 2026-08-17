@@ -774,7 +774,9 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                 
                 if not issues:
                     logger.info(f"Synced {issues_synced} new Jira issues (0 processed) for {user.full_name}")
-                    break
+                    issues_synced = 0
+                processed_issues_cache = set()
+                processed_activities_cache = set()
                 
                 for issue in issues:
                     issue_key = issue.get("key")
@@ -819,6 +821,9 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                             project_db_id = new_proj.id
                 
                     # Store or update raw Jira issue
+                    if issue_key in processed_issues_cache:
+                        continue
+                        
                     existing_issue = db.query(models.RawJiraIssue).filter(
                         models.RawJiraIssue.issue_key == issue_key
                     ).first()
@@ -851,9 +856,11 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                         try:
                             db.commit()
                             issues_synced += 1
+                            processed_issues_cache.add(issue_key)
                         except Exception as e:
                             db.rollback()
                     else:
+                        processed_issues_cache.add(issue_key)
                         existing_issue.story_points = effective_sp
                         existing_issue.status = fields.get("status", {}).get("name") if fields.get("status") else None
                         try:
@@ -862,6 +869,10 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                             db.rollback()
                 
                     # Create or update activity for issue
+                    activity_key = f"{user.id}-jira-issue_completed-{issue_key}"
+                    if activity_key in processed_activities_cache:
+                        continue
+                        
                     existing_activity = db.query(models.Activity).filter(
                         and_(
                             models.Activity.user_id == user.id,
@@ -899,9 +910,11 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                         db.add(activity)
                         try:
                             db.commit()
+                            processed_activities_cache.add(activity_key)
                         except Exception as e:
                             db.rollback()
                     else:
+                        processed_activities_cache.add(activity_key)
                         existing_activity.story_points = effective_sp
                         if project_db_id and not existing_activity.project_id:
                             existing_activity.project_id = project_db_id

@@ -22,23 +22,23 @@ def run_worker():
     
     scheduler = BlockingScheduler()
     
-    scheduler.add_job(
-        sync_sprints_job, 
-        IntervalTrigger(minutes=SYNC_SPRINTS_INTERVAL_MINUTES), 
-        id="sync_sprints_job", 
-        replace_existing=True,
-        max_instances=1,
-        misfire_grace_time=300
-    )
+    # scheduler.add_job(
+    #     sync_sprints_job, 
+    #     IntervalTrigger(minutes=SYNC_SPRINTS_INTERVAL_MINUTES), 
+    #     id="sync_sprints_job", 
+    #     replace_existing=True,
+    #     max_instances=1,
+    #     misfire_grace_time=300
+    # )
     
-    scheduler.add_job(
-        sync_and_calculate_all_users_job, 
-        IntervalTrigger(minutes=SYNC_KPI_CALCULATION_INTERVAL_MINUTES), 
-        id="sync_calc_job", 
-        replace_existing=True,
-        max_instances=1,
-        misfire_grace_time=900
-    )
+    # scheduler.add_job(
+    #     sync_and_calculate_all_users_job, 
+    #     IntervalTrigger(minutes=SYNC_KPI_CALCULATION_INTERVAL_MINUTES), 
+    #     id="sync_calc_job", 
+    #     replace_existing=True,
+    #     max_instances=1,
+    #     misfire_grace_time=900
+    # )
     
     scheduler.add_job(
         sync_attendance_nightly_job,
