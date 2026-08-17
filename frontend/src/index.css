@@ -564,16 +564,7 @@ p {
   z-index: 10;
 }
 
-.login-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: linear-gradient(90deg, var(--color-accent) 0%, var(--color-secondary) 50%, var(--color-accent) 100%);
-  border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
-}
+
 
 .login-header-logo {
   max-width: 160px;

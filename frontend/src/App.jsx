@@ -115,7 +115,7 @@ export default function App() {
       <div className="auth-page">
         <div className="login-card">
           <img
-            src="https://atibusinessgroup.com/wp-content/uploads/2025/09/cropped-logo-ati-new-1-1-1-180x180.png"
+            src="/logo-removebg-preview.png"
             alt="ATI Business Group Logo"
             className="login-header-logo"
           />
