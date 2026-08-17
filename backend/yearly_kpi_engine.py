@@ -7,6 +7,16 @@ from engine import evaluate_kpi_formula
 
 logger = logging.getLogger(__name__)
 
+# Map config metric_key -> aggregated raw input metric shown as "Nilai Raw"
+METRIC_RAW_KEY_MAP = {
+    "feature_complexity": "complexity_sp",
+    "jira_sp": "jira_sp",
+    "jira_issues_completed": "jira_issues_completed",
+    "gitlab_mr": "gitlab_mr_merged",
+    "gitlab_commits": "gitlab_commits",
+    "attendance": "attendance_days",
+}
+
 class YearlyKPIEngine:
     @staticmethod
     def calculate_working_days(start_date: datetime, end_date: datetime) -> int:
@@ -180,13 +190,18 @@ class YearlyKPIEngine:
                 total_weight += weight
                 
                 # Fetch actual_value generically if exists
-                actual_val = aggregated_metrics.get(m_def.metric_key, 0.0)
+                raw_key = METRIC_RAW_KEY_MAP.get(m_def.metric_key, m_def.metric_key)
+                actual_val = aggregated_metrics.get(raw_key, aggregated_metrics.get(m_def.metric_key, 0.0))
                 
                 breakdown.append({
                     "metric_key": m_def.metric_key,
+                    "formula": m_def.formula_expression,
                     "formula_used": m_def.formula_expression,
+                    "variables": eval_context,
                     "input_variables": eval_context,
+                    "actual_value": round(actual_val, 2),
                     "raw_score": round(raw_calculated_score, 2),
+                    "calculated_score": round(capped_score, 2),
                     "capped_score": round(capped_score, 2),
                     "weight": weight,
                     "weighted_score": round(weighted_score, 2)

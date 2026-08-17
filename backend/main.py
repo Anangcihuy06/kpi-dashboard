@@ -938,7 +938,7 @@ def get_user_calculation_details(user_id: str, year: int, db: Session = Depends(
         ).all()
         
         # Get actual metrics for user for this year
-        from yearly_kpi_engine import YearlyKPIEngine
+        from yearly_kpi_engine import YearlyKPIEngine, METRIC_RAW_KEY_MAP
         
         working_days = YearlyKPIEngine.calculate_working_days(from_date, to_date)
         
@@ -1051,17 +1051,23 @@ def get_user_calculation_details(user_id: str, year: int, db: Session = Depends(
                 score = evaluate_kpi_formula(m_def.formula_expression, eval_context)
                 capped_score = min(max(score, 0.0), float(m_def.cap_score))
                 weighted_score = capped_score * float(m_def.weight)
-                
+
+                raw_key = METRIC_RAW_KEY_MAP.get(m_def.metric_key, m_def.metric_key)
+                actual_val = user_metrics.get(raw_key, user_metrics.get(m_def.metric_key, 0.0))
+
                 breakdown_details.append({
                     "metric_key": m_def.metric_key,
                     "formula": m_def.formula_expression,
+                    "formula_used": m_def.formula_expression,
+                    "variables": eval_context,
                     "variables_used": eval_context,
+                    "actual_value": round(actual_val, 2),
                     "raw_score": round(score, 2),
+                    "calculated_score": round(capped_score, 2),
                     "capped_score": round(capped_score, 2),
                     "weight": float(m_def.weight),
                     "weighted_score": round(weighted_score, 2),
-                    "category": m_def.category or "ENGINEERING",
-                    "actual_value": user_metrics.get(m_def.metric_key, 0.0)
+                    "category": m_def.category or "ENGINEERING"
                 })
             except Exception as e:
                 breakdown_details.append({
