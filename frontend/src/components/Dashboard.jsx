@@ -322,7 +322,6 @@ export default function Dashboard({ userId, isSelf }) {
               <tr>
                 <th>Indikator</th>
                 <th>Rumus Formula</th>
-                <th>Variabel / Input Raw</th>
                 <th>Nilai Raw</th>
                 <th>Skor Capped</th>
                 <th>Bobot</th>
@@ -339,21 +338,12 @@ export default function Dashboard({ userId, isSelf }) {
                     <td style={{ fontFamily: "monospace", color: "var(--color-secondary)", fontSize: "13px" }}>
                       {item.formula}
                     </td>
-                    <td>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                        {item.variables && typeof item.variables === 'object' && Object.entries(item.variables).map(([k, v]) => (
-                          <span key={k} className="badge badge-primary">
-                            {k}: {typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(2)) : v}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
                     <td style={{ fontWeight: 600 }}>
                       {item.actual_value}
                     </td>
                     <td style={{ fontWeight: 600 }}>
-                      <span className={`badge ${item.calculated_score >= 100 ? "badge-success" : "badge-primary"}`}>
-                        {item.calculated_score}
+                      <span className={`badge ${(item.capped_score || item.calculated_score) >= 100 ? "badge-success" : "badge-primary"}`}>
+                        {item.capped_score !== undefined ? item.capped_score : item.calculated_score}
                       </span>
                     </td>
                     <td>
@@ -365,7 +355,7 @@ export default function Dashboard({ userId, isSelf }) {
                   </tr>
                   {item.metric_key === "feature_complexity" && (
                     <tr>
-                      <td colSpan="7" style={{ padding: "10px 24px 20px" }}>
+                      <td colSpan="6" style={{ padding: "10px 24px 20px" }}>
                         <button
                           className="btn-outline"
                           onClick={() => setIsTasksOpen(!isTasksOpen)}
