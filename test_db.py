@@ -1,7 +1,7 @@
 import os
 from sqlalchemy import text
-from database import SessionLocal
-from models import KPIRule, KPIRuleMetric, Division, User
+from backend.database import SessionLocal
+from backend.models import KPIRule, KPIRuleMetric, Division, User
 
 db = SessionLocal()
 
