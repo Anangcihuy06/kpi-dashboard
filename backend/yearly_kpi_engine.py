@@ -17,6 +17,42 @@ METRIC_RAW_KEY_MAP = {
     "attendance": "attendance_days",
 }
 
+def get_rule_and_metrics_for_user(db, user):
+    """
+    Resolve the active KPI rule for a user (group-level first, then division-level)
+    together with its metric definitions. Single source of truth for rule lookup.
+    """
+    division_id = user.division_id
+    if not division_id:
+        default_div = db.query(models.Division).filter(models.Division.code == "IT").first()
+        division_id = default_div.id if default_div else None
+    if not division_id:
+        return None, []
+
+    group_id = user.group_id
+    rule = None
+    if group_id:
+        rule = db.query(models.KPIRule).filter(
+            models.KPIRule.division_id == division_id,
+            models.KPIRule.group_id == group_id,
+            models.KPIRule.is_active == True
+        ).first()
+
+    if not rule:
+        rule = db.query(models.KPIRule).filter(
+            models.KPIRule.division_id == division_id,
+            models.KPIRule.group_id.is_(None),
+            models.KPIRule.is_active == True
+        ).first()
+
+    if not rule:
+        return None, []
+
+    metrics_defs = db.query(models.KPIRuleMetric).filter(
+        models.KPIRuleMetric.kpi_rule_id == rule.id
+    ).all()
+    return rule, metrics_defs
+
 class YearlyKPIEngine:
     @staticmethod
     def calculate_working_days(start_date: datetime, end_date: datetime) -> int:
@@ -59,41 +95,13 @@ class YearlyKPIEngine:
         user = db.query(models.User).filter(models.User.id == user_id).first()
         if not user:
             return {"error": "User not found"}
-            
-        division_id = user.division_id
-        if not division_id:
-            # Fallback to IT division
-            default_div = db.query(models.Division).filter(models.Division.code == "IT").first()
-            division_id = default_div.id if default_div else None
-            
-        if not division_id:
-            return {"error": "Division not found"}
-            
-        rule = None
-        group_id = user.group_id
-        
-        # Try to find rule by group_id first
-        if group_id:
-            rule = db.query(models.KPIRule).filter(
-                models.KPIRule.division_id == division_id,
-                models.KPIRule.group_id == group_id,
-                models.KPIRule.is_active == True
-            ).first()
-            
-        # Fallback to division-level rule if no group rule exists
-        if not rule:
-            rule = db.query(models.KPIRule).filter(
-                models.KPIRule.division_id == division_id,
-                models.KPIRule.group_id.is_(None),
-                models.KPIRule.is_active == True
-            ).first()
-        
+
+        rule, metrics_defs = get_rule_and_metrics_for_user(db, user)
         if not rule:
             return {"error": "Active KPI Rule not found"}
-            
-        metrics_defs = db.query(models.KPIRuleMetric).filter(
-            models.KPIRuleMetric.kpi_rule_id == rule.id
-        ).all()
+
+        if not metrics_defs:
+            return {"error": "No metrics configured for the active KPI rule"}
         
         # Calculate working days in period
         working_days = YearlyKPIEngine.calculate_working_days(start_date, end_date)

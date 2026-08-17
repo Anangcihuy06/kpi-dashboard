@@ -1319,16 +1319,105 @@ def calculate_daily_aggregated_kpi(db: Session, user: models.User, date: datetim
         late_count = 0
 
     late_percentage = (late_count / attendance_days * 100) if attendance_days > 0 else 0.0
-    
-    # Calculate KPI scores based on current rules (simplified for now)
-    # This would be enhanced with proper formula evaluation
-    
-    delivery_score = min((jira_issues_completed / 2.0) * 100, 120) if jira_issues_completed > 0 else 0.0
-    engineering_score = min(((gitlab_commits + gitlab_mrs_merged) / 3.0) * 100, 120) if gitlab_commits > 0 else 0.0
-    effort_score = min((jira_worklog_minutes / 480.0) * 100, 120) if jira_worklog_minutes > 0 else 0.0
-    quality_score = 100.0  # Default value
-    
-    overall_score = (delivery_score * 0.3) + (engineering_score * 0.4) + (effort_score * 0.2) + (quality_score * 0.1)
+
+    # ── Dynamic KPI scoring from the config matrix (KPIRuleMetric) ──
+    # Every formula, weight, cap and target below comes from the Configurator matrix
+    # for the user's division/group. No hardcoded matrix. Falls back to a legacy
+    # heuristic only if no active rule is configured.
+    delivery_score = 0.0
+    engineering_score = 0.0
+    effort_score = 0.0
+    quality_score = 0.0
+    overall_score = 0.0
+
+    try:
+        from yearly_kpi_engine import get_rule_and_metrics_for_user, YearlyKPIEngine
+        from engine import evaluate_kpi_formula
+
+        rule, metrics_defs = get_rule_and_metrics_for_user(db, user)
+        if not rule or not metrics_defs:
+            raise ValueError("No active KPI rule/metrics configured")
+
+        # Config targets are yearly; scale them to a single working day.
+        ywd = YearlyKPIEngine.calculate_working_days(
+            datetime(date.year, 1, 1), datetime(date.year, 12, 31))
+        day_scale = (1.0 / ywd) if ywd > 0 else 1.0
+
+        daily_raw = {
+            "gitlab_commits": gitlab_commits,
+            "gitlab_mr": gitlab_mrs_merged,
+            "gitlab_mr_merged": gitlab_mrs_merged,
+            "jira_issues_completed": jira_issues_completed,
+            "jira_story_points": jira_story_points,
+            "raw_jira_sp": jira_story_points,
+            "jira_sp": jira_story_points,
+            "worklog_hours": round(jira_worklog_minutes / 60, 2),
+            "attendance_days": attendance_days,
+            "attendance": attendance_days,
+            "late_count": late_count,
+            "late_percentage": late_percentage,
+            "founder_sp_credit": 0.0,
+            "complexity_sp": 0.0,
+        }
+
+        # Complexity of issues resolved on this date
+        try:
+            ji_ident = db.query(models.EmployeeIdentity).filter(
+                models.EmployeeIdentity.user_id == user.id,
+                models.EmployeeIdentity.source == 'jira'
+            ).first()
+            if ji_ident and ji_ident.external_user_id:
+                resolved = db.query(models.RawJiraIssue).filter(
+                    models.RawJiraIssue.assignee_account_id == ji_ident.external_user_id,
+                    models.RawJiraIssue.resolved_date >= date_start,
+                    models.RawJiraIssue.resolved_date <= date_end
+                ).all()
+                daily_raw["complexity_sp"] = sum(
+                    calculate_feature_weight(iss.raw_data or {}) for iss in resolved)
+        except Exception as e:
+            logger.error(f"Daily complexity calc failed for {user.id} on {date}: {e}")
+
+        # Variables from the config matrix take precedence; scale period targets to daily
+        scores_by_category = {}
+        for m_def in metrics_defs:
+            eval_context = dict(daily_raw)
+            if m_def.variables:
+                try:
+                    vars_dict = m_def.variables if isinstance(m_def.variables, dict) \
+                        else json.loads(m_def.variables)
+                    for k, v in vars_dict.items():
+                        eval_context[k] = v
+                except Exception as e:
+                    logger.error(f"Failed to merge variables for {m_def.metric_key}: {e}")
+            for k in list(eval_context.keys()):
+                if k.startswith("target_") or k in ("max_raw_sp", "max_complexity_sp",
+                                                     "max_issues_cnt", "max_founder_sp",
+                                                     "max_jira_sp", "max_complexity_pts",
+                                                     "max_jira_issues", "max_founder_pts"):
+                    try:
+                        eval_context[k] = float(eval_context[k]) * day_scale
+                    except Exception:
+                        pass
+
+            raw_score = evaluate_kpi_formula(m_def.formula_expression, eval_context)
+            cap_score = float(m_def.cap_score or 100.0)
+            capped = min(max(raw_score, 0.0), cap_score)
+            weight = float(m_def.weight)
+            cat = (m_def.category or "ENGINEERING").upper()
+            scores_by_category[cat] = scores_by_category.get(cat, 0.0) + (capped * weight)
+
+        overall_score = sum(scores_by_category.values())
+        delivery_score = scores_by_category.get("DELIVERY", 0.0)
+        engineering_score = scores_by_category.get("ENGINEERING", 0.0)
+        effort_score = scores_by_category.get("EFFORT", 0.0)
+        quality_score = scores_by_category.get("QUALITY", 0.0)
+    except Exception as e:
+        logger.error(f"Config-matrix daily scoring failed for {user.id} on {date}: {e}; using legacy fallback")
+        delivery_score = min((jira_issues_completed / 2.0) * 100, 120) if jira_issues_completed > 0 else 0.0
+        engineering_score = min(((gitlab_commits + gitlab_mrs_merged) / 3.0) * 100, 120) if gitlab_commits > 0 else 0.0
+        effort_score = min((jira_worklog_minutes / 480.0) * 100, 120) if jira_worklog_minutes > 0 else 0.0
+        quality_score = 100.0
+        overall_score = (delivery_score * 0.3) + (engineering_score * 0.4) + (effort_score * 0.2) + (quality_score * 0.1)
     
     # Find relevant project and sprint
     relevant_sprint_id = None
