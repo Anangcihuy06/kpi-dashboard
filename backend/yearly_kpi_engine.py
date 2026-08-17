@@ -115,7 +115,10 @@ class YearlyKPIEngine:
                     logger.error(f"Error parsing variables for metric {m_def.metric_key}: {e}")
 
                 # Merge variables from database into context
-                eval_context = dict(aggregated_metrics)
+                # IMPORTANT: Variables from KPI rule take precedence over calculated company maxima
+                eval_context = {}
+                
+                # First, add variables from the KPI rule configuration
                 try:
                     if m_def.variables:
                         import json
@@ -124,6 +127,12 @@ class YearlyKPIEngine:
                             eval_context[k] = v
                 except Exception as e:
                     logger.error(f"Failed to merge variables for {m_def.metric_key}: {e}")
+                
+                # Then, add user's actual performance metrics, but skip maxima variables that are in config
+                for k, v in aggregated_metrics.items():
+                    # Only add if not already in eval_context (config variables take precedence)
+                    if k not in eval_context:
+                        eval_context[k] = v
                 
                 # CRITICAL FIX: Ensure formula variables exist in context
                 missing_vars = []

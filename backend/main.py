@@ -474,17 +474,27 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
             res = requests.get(url, headers=hdr, timeout=8)
             if res.status_code == 200:
                 employees = res.json().get("employee", [])
+                # Get supervisor's division and group for assignment
+                supervisor = _db.query(models.User).filter(models.User.id == supervisor_user_id).first()
+                default_division_id = supervisor.division_id if supervisor else None
+                default_group_id = supervisor.group_id if supervisor else None
+                default_group_name = supervisor.group_name if supervisor else None
+                
                 for emp in employees:
                     emp_nik = emp.get("nik")
                     emp_name = emp.get("name")
                     emp_id = emp.get("id")
                     if not emp_nik or emp_nik == supervisor_nik:
                         continue
+                    
                     sub = _db.query(models.User).filter(models.User.nik == emp_nik).first()
                     if sub:
                         sub.supervisor_id = supervisor_user_id
                         sub.employee_id = str(emp_id)
                         sub.full_name = emp_name
+                        sub.division_id = default_division_id
+                        sub.group_id = default_group_id
+                        sub.group_name = default_group_name
                         _db.commit()
                     else:
                         new_sub = models.User(
@@ -495,6 +505,9 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
                             employee_id=str(emp_id),
                             roles=["ROLE_USER"],
                             is_active=True,
+                            division_id=default_division_id,
+                            group_id=default_group_id,
+                            group_name=default_group_name,
                             jira_account_id=f"jira_user_api_{emp_id}",
                             gitlab_username=f"gitlab_user_api_{emp_id}"
                         )
@@ -723,11 +736,19 @@ def get_subordinates_list(supervisor_id: str, db: Session = Depends(get_db)):
             if emp_nik == spv.nik:
                 continue
 
+            # Assign supervisor's division and group so the configured matrix applies
+            emp_division_id = spv.division_id
+            emp_group_id = spv.group_id
+            emp_group_name = spv.group_name
+
             sub = db.query(models.User).filter(models.User.nik == emp_nik).first()
             if sub:
                 sub.supervisor_id = spv.id
                 sub.employee_id = str(emp_id)
                 sub.full_name = emp_name
+                sub.division_id = emp_division_id
+                sub.group_id = emp_group_id
+                sub.group_name = emp_group_name
                 db.commit()
             else:
                 temp_id = str(emp_id)
@@ -743,7 +764,9 @@ def get_subordinates_list(supervisor_id: str, db: Session = Depends(get_db)):
                     roles=["EMPLOYEE"],
                     has_subordinates=False,
                     is_active=True,
-                    division_id=spv.division_id,
+                    division_id=emp_division_id,
+                    group_id=emp_group_id,
+                    group_name=emp_group_name,
                     supervisor_id=spv.id,
                     jira_account_id=f"jira_user_{temp_id}",
                     gitlab_username=f"gitlab_user_{temp_id}"
