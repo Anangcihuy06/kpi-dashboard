@@ -1827,3 +1827,176 @@ def get_user_activities(user_id: str, from_date: str, to_date: str, db: Session 
         "total_activities": len(activity_list),
         "activities": activity_list
     }
+
+# ─── DB Maintenance & Cleanup ───────────────────────────────────────────────────
+
+@app.get("/api/v1/health")
+def health_check():
+    """Simple health check that doesn't need DB - useful when DB is down"""
+    return {"status": "ok", "timestamp": datetime.now().isoformat()}
+
+@app.get("/api/v1/db/stats")
+def db_stats(db: Session = Depends(get_db)):
+    """Get table row counts to diagnose disk usage"""
+    try:
+        stats = {}
+        tables = [
+            "raw_jira_issues", "activities", "raw_jira_issue_history",
+            "raw_jira_worklogs", "attendance_records", "kpi_employee_daily",
+            "sprint_kpi_scores", "raw_metrics_data", "sync_jobs"
+        ]
+        for t in tables:
+            try:
+                result = db.execute(text(f"SELECT COUNT(*) FROM {t}"))
+                stats[t] = result.scalar()
+            except Exception:
+                stats[t] = "table not found"
+        return {"status": "ok", "table_counts": stats}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+@app.post("/api/v1/db/cleanup")
+def db_cleanup(db: Session = Depends(get_db)):
+    """
+    Emergency cleanup: remove duplicate raw_jira_issues, 
+    truncate old sync_jobs, and reclaim disk space.
+    """
+    results = {}
+    
+    # 1. Remove duplicate raw_jira_issues (keep the newest by created_at)
+    try:
+        dup_count = db.execute(text("""
+            DELETE FROM raw_jira_issues 
+            WHERE id NOT IN (
+                SELECT DISTINCT ON (issue_key) id 
+                FROM raw_jira_issues 
+                ORDER BY issue_key, created_at DESC
+            )
+        """))
+        db.commit()
+        results["raw_jira_issues_duplicates_removed"] = dup_count.rowcount
+    except Exception as e:
+        db.rollback()
+        # Try SQLite-compatible version
+        try:
+            dup_count = db.execute(text("""
+                DELETE FROM raw_jira_issues 
+                WHERE rowid NOT IN (
+                    SELECT MIN(rowid) FROM raw_jira_issues GROUP BY issue_key
+                )
+            """))
+            db.commit()
+            results["raw_jira_issues_duplicates_removed"] = dup_count.rowcount
+        except Exception as e2:
+            db.rollback()
+            results["raw_jira_issues_cleanup"] = f"skipped: {str(e2)}"
+    
+    # 2. Remove duplicate activities (keep newest per user+reference_id+source)
+    try:
+        dup_act = db.execute(text("""
+            DELETE FROM activities 
+            WHERE id NOT IN (
+                SELECT DISTINCT ON (user_id, source, reference_id) id 
+                FROM activities 
+                ORDER BY user_id, source, reference_id, created_at DESC
+            )
+        """))
+        db.commit()
+        results["activities_duplicates_removed"] = dup_act.rowcount
+    except Exception as e:
+        db.rollback()
+        try:
+            dup_act = db.execute(text("""
+                DELETE FROM activities 
+                WHERE rowid NOT IN (
+                    SELECT MIN(rowid) FROM activities 
+                    GROUP BY user_id, source, activity_type, reference_id
+                )
+            """))
+            db.commit()
+            results["activities_duplicates_removed"] = dup_act.rowcount
+        except Exception as e2:
+            db.rollback()
+            results["activities_cleanup"] = f"skipped: {str(e2)}"
+    
+    # 3. Cleanup old completed sync_jobs (keep last 50)
+    try:
+        old_jobs = db.execute(text("""
+            DELETE FROM sync_jobs 
+            WHERE id NOT IN (
+                SELECT id FROM sync_jobs ORDER BY created_at DESC LIMIT 50
+            )
+        """))
+        db.commit()
+        results["old_sync_jobs_removed"] = old_jobs.rowcount
+    except Exception as e:
+        db.rollback()
+        results["sync_jobs_cleanup"] = f"skipped: {str(e)}"
+    
+    # 4. Cleanup old raw_jira_issue_history (keep last 30 days)
+    try:
+        old_hist = db.execute(text("""
+            DELETE FROM raw_jira_issue_history 
+            WHERE created_at < NOW() - INTERVAL '30 days'
+        """))
+        db.commit()
+        results["old_history_removed"] = old_hist.rowcount
+    except Exception as e:
+        db.rollback()
+        results["history_cleanup"] = f"skipped: {str(e)}"
+    
+    # 5. Try VACUUM to reclaim disk space (Postgres only, won't work in transaction)
+    try:
+        db.commit()  # ensure no open transaction
+        # Need a separate connection for VACUUM
+        from database import engine
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            conn.execute(text("VACUUM FULL"))
+        results["vacuum"] = "completed"
+    except Exception as e:
+        results["vacuum"] = f"skipped: {str(e)}"
+    
+    # Get updated stats
+    try:
+        final_stats = {}
+        for t in ["raw_jira_issues", "activities", "sync_jobs"]:
+            try:
+                result = db.execute(text(f"SELECT COUNT(*) FROM {t}"))
+                final_stats[t] = result.scalar()
+            except Exception:
+                pass
+        results["final_counts"] = final_stats
+    except Exception:
+        pass
+    
+    return {"status": "cleanup_completed", "results": results}
+
+@app.post("/api/v1/db/truncate-raw-data")
+def truncate_raw_data(db: Session = Depends(get_db)):
+    """
+    NUCLEAR OPTION: Truncate raw_jira_issues, raw_jira_issue_history, 
+    and raw_jira_worklogs to free maximum disk space.
+    The data will be re-synced on next Jira sync.
+    """
+    results = {}
+    
+    for table in ["raw_jira_issue_history", "raw_jira_worklogs", "raw_jira_issues"]:
+        try:
+            count_before = db.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar()
+            db.execute(text(f"DELETE FROM {table}"))
+            db.commit()
+            results[table] = {"deleted": count_before}
+        except Exception as e:
+            db.rollback()
+            results[table] = {"error": str(e)}
+    
+    # VACUUM to reclaim space
+    try:
+        from database import engine
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            conn.execute(text("VACUUM FULL"))
+        results["vacuum"] = "completed"
+    except Exception as e:
+        results["vacuum"] = f"skipped: {str(e)}"
+    
+    return {"status": "truncated", "results": results}
