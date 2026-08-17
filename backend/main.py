@@ -165,14 +165,17 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
 
     user_data = response.json()
     
-    # Fetch additional profile data (division, group) using the token
     token = user_data.get("id_token")
     if token:
         try:
             profile_url = "https://hris-api.atibusinessgroup.com/api/app/users/profile"
             profile_resp = requests.get(profile_url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
+            print("PROFILE_STATUS:", profile_resp.status_code)
             if profile_resp.status_code == 200:
                 profile_data = profile_resp.json()
+                print("PROFILE_KEYS:", profile_data.keys())
+                print("PROFILE_GROUP:", profile_data.get("group"))
+                print("PROFILE_DIVISION:", profile_data.get("division"))
                 user_data.update(profile_data)
         except Exception as e:
             print(f"Warning: Failed to fetch profile data: {e}")
@@ -365,6 +368,22 @@ def update_user_email(user_id: str, payload: UpdateUserEmailRequest, db: Session
     db.commit()
     db.refresh(user)
     return {"status": "success", "message": "Email berhasil diperbarui", "email": user.email}
+
+@app.post("/api/v1/auth/debug_login")
+def debug_login(payload: LoginRequest):
+    external_url = "https://hris-api.atibusinessgroup.com/api/authenticate/mobile"
+    response = requests.post(external_url, json={"username": payload.username, "password": payload.password}, timeout=10)
+    user_data = response.json()
+    token = user_data.get("id_token")
+    profile_data = None
+    if token:
+        profile_url = "https://hris-api.atibusinessgroup.com/api/app/users/profile"
+        profile_resp = requests.get(profile_url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
+        try:
+            profile_data = profile_resp.json()
+        except:
+            profile_data = profile_resp.text
+    return {"auth_response": user_data, "profile_response": profile_data}
 
 @app.get("/api/v1/auth/verify")
 def verify_local_session(user_id: str, db: Session = Depends(get_db)):
@@ -961,20 +980,31 @@ def add_manual_attendance(payload: ManualAttendanceInput, db: Session = Depends(
 
 @app.post("/api/v1/sync/year/{year}")
 async def sync_year(year: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    def run_calculation():
+    from sync_engine import create_sync_job, update_job_progress, mark_job_completed, mark_job_failed
+    job = create_sync_job(db, "YEARLY_KPI_CALC", f"Admin triggered yearly sync for {year}")
+    job_id = job.id
+
+    def run_calculation(jid):
         from fastapi_cache import FastAPICache
         from scheduler import sync_and_calculate_all_users_job
+        db_gen = get_db()
+        bg_db = next(db_gen)
         try:
+            update_job_progress(bg_db, jid, "RUNNING", 10, "Starting sync for all users...")
             sync_and_calculate_all_users_job(year)
             try:
                 FastAPICache.clear()
             except Exception:
                 pass
+            mark_job_completed(bg_db, jid, {"message": "Sync completed successfully"})
         except Exception as e:
             print(f"Error in background calculation: {str(e)}")
+            mark_job_failed(bg_db, jid, str(e))
+        finally:
+            bg_db.close()
             
-    background_tasks.add_task(run_calculation)
-    return {"status": "success", "message": f"Sinkronisasi tahun {year} berjalan di background"}
+    background_tasks.add_task(run_calculation, job_id)
+    return {"status": "success", "message": f"Sinkronisasi tahun {year} berjalan di background", "job_id": job_id}
 
 # ─────────────────────────────────────────────────────────────
 # SYNC TRIGGER ENDPOINTS

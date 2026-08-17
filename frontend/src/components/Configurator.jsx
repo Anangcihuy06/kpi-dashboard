@@ -272,10 +272,35 @@ export default function Configurator() {
         method: "POST"
       });
       if (!response.ok) throw new Error("Gagal menjalankan kalkulasi");
-      toast.success(`Kalkulasi & Sinkronisasi selesai! Berhasil memperbarui data dari Jira/GitLab untuk tahun ${selectedYear}.`);
+      const data = await response.json();
+      
+      if (data.job_id) {
+        toast.info("Memulai sinkronisasi dan kalkulasi KPI...");
+        const poll = setInterval(async () => {
+          try {
+            const statusRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/jobs/${data.job_id}`);
+            if (statusRes.ok) {
+              const statusData = await statusRes.json();
+              if (statusData.status === "COMPLETED" || statusData.status === "FAILED") {
+                clearInterval(poll);
+                setCalcLoading(false);
+                if (statusData.status === "COMPLETED") {
+                  toast.success(`Kalkulasi & Sinkronisasi selesai! Berhasil memperbarui data untuk tahun ${selectedYear}.`);
+                } else {
+                  toast.error("Sinkronisasi gagal: " + (statusData.error_message || "Unknown error"));
+                }
+              }
+            }
+          } catch (e) {
+            console.error("Error polling job status:", e);
+          }
+        }, 3000);
+      } else {
+        toast.success(`Kalkulasi & Sinkronisasi selesai! Berhasil memperbarui data untuk tahun ${selectedYear}.`);
+        setCalcLoading(false);
+      }
     } catch (err) {
       toast.error(err.message);
-    } finally {
       setCalcLoading(false);
     }
   };
