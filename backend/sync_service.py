@@ -18,14 +18,23 @@ def parse_iso_datetime(date_str: str) -> datetime:
 
 def get_system_token(max_retries=3, retry_delay=1) -> str:
     """
-    Log in to talent-backend to retrieve Bearer token for attendance sync with retry logic.
+    Log in to HRIS backend to retrieve Bearer token for attendance sync with retry logic.
+    Credentials come from environment variables (HRIS_SYSTEM_USERNAME / HRIS_SYSTEM_PASSWORD).
     """
+    import os
+    username = os.getenv("HRIS_SYSTEM_USERNAME", "")
+    password = os.getenv("HRIS_SYSTEM_PASSWORD", "")
+
+    if not username or not password:
+        logger.warning("No HRIS system credentials configured (HRIS_SYSTEM_USERNAME/PASSWORD). Set them in the environment.")
+        return ""
+
     url = "https://hris-api.atibusinessgroup.com/api/authenticate/mobile"
     for attempt in range(max_retries):
         try:
             res = requests.post(url, json={
-                "username": "01.05.13.500",
-                "password": "rf1d"
+                "username": username,
+                "password": password
             }, timeout=8)
             if res.status_code == 200:
                 return res.json().get("id_token", "")

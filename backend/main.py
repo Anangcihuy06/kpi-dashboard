@@ -23,9 +23,91 @@ from fastapi_cache import FastAPICache
 from fastapi_cache.backends.inmemory import InMemoryBackend
 from fastapi_cache.decorator import cache
 from scheduler import init_scheduler
-from sync_service import sync_attendance_for_sprint, get_system_token
+from sync_service import sync_attendance_for_sprint
 from multi_board_sync import sync_all_boards_sprints, get_user_active_sprint
 from comprehensive_sync import sync_user_comprehensive, calculate_daily_aggregated_kpi
+
+def sync_subordinates_for_supervisor(db, supervisor, token):
+    """
+    Fetch subordinates of a supervisor from HRIS and assign the supervisor's
+    division/group to each employee. Idempotent — safe to call multiple times.
+    Returns the number of employees processed.
+    """
+    if not supervisor or not token:
+        return 0
+
+    hdr = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    url = "https://hris-api.atibusinessgroup.com/api/app/overtime/request-data"
+    try:
+        res = requests.get(url, headers=hdr, timeout=8)
+        if res.status_code != 200:
+            print(f"[Sync] Failed to fetch subordinates for {supervisor.id}: HTTP {res.status_code}")
+            return 0
+        employees = res.json().get("employee", [])
+    except Exception as e:
+        print(f"[Sync Warning] Failed to fetch subordinates for {supervisor.id}: {str(e)}")
+        return 0
+
+    supervisor_division_id = supervisor.division_id
+    supervisor_group_id = supervisor.group_id
+    supervisor_group_name = supervisor.group_name
+
+    processed = 0
+    for emp in employees:
+        emp_nik = emp.get("nik")
+        emp_name = emp.get("name")
+        emp_id = emp.get("id")
+
+        if not emp_nik:
+            continue
+        if emp_nik == supervisor.nik:
+            continue
+
+        sub = db.query(models.User).filter(models.User.nik == emp_nik).first()
+        if sub:
+            sub.supervisor_id = supervisor.id
+            sub.employee_id = str(emp_id)
+            sub.full_name = emp_name
+            if supervisor_division_id:
+                sub.division_id = supervisor_division_id
+            if supervisor_group_id:
+                sub.group_id = supervisor_group_id
+                sub.group_name = supervisor_group_name
+            db.commit()
+        else:
+            temp_id = str(emp_id)
+            id_exists = db.query(models.User).filter(models.User.id == temp_id).first()
+            if id_exists:
+                temp_id = f"ext_{emp_id}"
+            new_sub = models.User(
+                id=temp_id,
+                nik=emp_nik,
+                employee_id=str(emp_id),
+                full_name=emp_name,
+                roles=["EMPLOYEE"],
+                has_subordinates=False,
+                is_active=True,
+                division_id=supervisor_division_id,
+                group_id=supervisor_group_id,
+                group_name=supervisor_group_name,
+                supervisor_id=supervisor.id,
+                jira_account_id=f"jira_user_{temp_id}",
+                gitlab_username=f"gitlab_user_{temp_id}"
+            )
+            db.add(new_sub)
+            db.commit()
+        processed += 1
+
+    # Remove supervisor links for subordinates no longer returned by HRIS
+    if "ROLE_ADMIN" not in (supervisor.roles or []):
+        api_niks = {emp["nik"] for emp in employees if emp.get("nik")}
+        db.query(models.User).filter(
+            models.User.supervisor_id == supervisor.id,
+            ~models.User.nik.in_(list(api_niks))
+        ).update({"supervisor_id": None}, synchronize_session=False)
+        db.commit()
+
+    return processed
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -367,10 +449,10 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
     roles = user_data.get("roles", [])
     has_subs = user_data.get("hasSubordinates", False)
     
-    # Handle supervisor link
+    # Handle supervisor link — purely from HRIS, no special-casing
     supervisor_id = None
     direct_spv = user_data.get("directSpv")
-    if direct_spv and direct_spv.get("id") and nik != "01.05.13.500":
+    if direct_spv and direct_spv.get("id"):
         spv_id = str(direct_spv["id"])
         spv_in_db = db.query(models.User).filter(models.User.id == spv_id).first()
         if not spv_in_db:
@@ -469,50 +551,9 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
         from database import SessionLocal
         _db = SessionLocal()
         try:
-            hdr = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-            url = "https://hris-api.atibusinessgroup.com/api/app/overtime/request-data"
-            res = requests.get(url, headers=hdr, timeout=8)
-            if res.status_code == 200:
-                employees = res.json().get("employee", [])
-                # Get supervisor's division and group for assignment
-                supervisor = _db.query(models.User).filter(models.User.id == supervisor_user_id).first()
-                default_division_id = supervisor.division_id if supervisor else None
-                default_group_id = supervisor.group_id if supervisor else None
-                default_group_name = supervisor.group_name if supervisor else None
-                
-                for emp in employees:
-                    emp_nik = emp.get("nik")
-                    emp_name = emp.get("name")
-                    emp_id = emp.get("id")
-                    if not emp_nik or emp_nik == supervisor_nik:
-                        continue
-                    
-                    sub = _db.query(models.User).filter(models.User.nik == emp_nik).first()
-                    if sub:
-                        sub.supervisor_id = supervisor_user_id
-                        sub.employee_id = str(emp_id)
-                        sub.full_name = emp_name
-                        sub.division_id = default_division_id
-                        sub.group_id = default_group_id
-                        sub.group_name = default_group_name
-                        _db.commit()
-                    else:
-                        new_sub = models.User(
-                            id=f"api_{emp_id}",
-                            nik=emp_nik,
-                            full_name=emp_name,
-                            supervisor_id=supervisor_user_id,
-                            employee_id=str(emp_id),
-                            roles=["ROLE_USER"],
-                            is_active=True,
-                            division_id=default_division_id,
-                            group_id=default_group_id,
-                            group_name=default_group_name,
-                            jira_account_id=f"jira_user_api_{emp_id}",
-                            gitlab_username=f"gitlab_user_api_{emp_id}"
-                        )
-                        _db.add(new_sub)
-                        _db.commit()
+            supervisor = _db.query(models.User).filter(models.User.id == supervisor_user_id).first()
+            if supervisor:
+                sync_subordinates_for_supervisor(_db, supervisor, token)
         except Exception as e:
             print(f"[BG Sync] Subordinate sync failed for {supervisor_user_id}: {e}")
         finally:
@@ -700,86 +741,20 @@ def get_my_performance(user_id: str, db: Session = Depends(get_db)):
     }
 
 @app.get("/api/v1/kpi/subordinates")
-@cache(expire=60)
 def get_subordinates_list(supervisor_id: str, db: Session = Depends(get_db)):
     spv = db.query(models.User).filter(models.User.id == supervisor_id).first()
     if not spv:
         raise HTTPException(status_code=404, detail="Supervisor tidak ditemukan")
 
-    # Fetch team from external API
-    token = get_system_token()
-    employees = []
+    # Use the supervisor's OWN token (stored at their login). Never fall back to a
+    # shared/system account — every manager must see only their own team.
+    stored = _supervisor_token_store.get(supervisor_id)
+    token = None
+    if stored and stored.get("token") and stored.get("expires_at", datetime.min) > datetime.now():
+        token = stored["token"]
+
     if token:
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json"
-        }
-        url = "https://hris-api.atibusinessgroup.com/api/app/overtime/request-data"
-        try:
-            res = requests.get(url, headers=headers, timeout=8)
-            if res.status_code == 200:
-                employees = res.json().get("employee", [])
-        except Exception as e:
-            print(f"[Sync Warning] Failed to fetch subordinates from API: {str(e)}")
-
-    if employees:
-        api_niks = {emp["nik"] for emp in employees if emp.get("nik")}
-        for emp in employees:
-            emp_nik = emp.get("nik")
-            emp_name = emp.get("name")
-            emp_id = emp.get("id")
-
-            if not emp_nik:
-                continue
-
-            # Skip the supervisor themselves
-            if emp_nik == spv.nik:
-                continue
-
-            # Assign supervisor's division and group so the configured matrix applies
-            emp_division_id = spv.division_id
-            emp_group_id = spv.group_id
-            emp_group_name = spv.group_name
-
-            sub = db.query(models.User).filter(models.User.nik == emp_nik).first()
-            if sub:
-                sub.supervisor_id = spv.id
-                sub.employee_id = str(emp_id)
-                sub.full_name = emp_name
-                sub.division_id = emp_division_id
-                sub.group_id = emp_group_id
-                sub.group_name = emp_group_name
-                db.commit()
-            else:
-                temp_id = str(emp_id)
-                id_exists = db.query(models.User).filter(models.User.id == temp_id).first()
-                if id_exists:
-                    temp_id = f"ext_{emp_id}"
-                
-                new_user = models.User(
-                    id=temp_id,
-                    nik=emp_nik,
-                    employee_id=str(emp_id),
-                    full_name=emp_name,
-                    roles=["EMPLOYEE"],
-                    has_subordinates=False,
-                    is_active=True,
-                    division_id=emp_division_id,
-                    group_id=emp_group_id,
-                    group_name=emp_group_name,
-                    supervisor_id=spv.id,
-                    jira_account_id=f"jira_user_{temp_id}",
-                    gitlab_username=f"gitlab_user_{temp_id}"
-                )
-                db.add(new_user)
-                db.commit()
-
-        if "ROLE_ADMIN" not in spv.roles:
-            db.query(models.User).filter(
-                models.User.supervisor_id == spv.id,
-                ~models.User.nik.in_(list(api_niks))
-            ).update({"supervisor_id": None}, synchronize_session=False)
-            db.commit()
+        sync_subordinates_for_supervisor(db, spv, token)
 
     users = get_recursive_subordinates(db, supervisor_id)
 
