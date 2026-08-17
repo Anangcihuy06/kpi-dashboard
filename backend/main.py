@@ -133,26 +133,37 @@ async def lifespan(app: FastAPI):
         models.Base.metadata.create_all(bind=engine)
         print("Database tables created successfully")
 
-        # Auto-migrate columns added to existing tables (create_all only adds new tables)
+        # Auto-migrate columns added to existing tables (create_all only adds new tables).
+        # Uses SQLAlchemy Inspector so it works on both SQLite and PostgreSQL.
         try:
-            with engine.begin() as conn:
-                table_cols = {}
-                for table_name in ("raw_jira_issues", "company_maxima"):
-                    rows = conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
-                    table_cols[table_name] = {r[1] for r in rows}
-                if "complexity_score" not in table_cols["raw_jira_issues"]:
+            from sqlalchemy import inspect as sa_inspect
+            _insp = sa_inspect(engine)
+
+            def _existing_cols(table_name):
+                try:
+                    return {c["name"] for c in _insp.get_columns(table_name)}
+                except Exception:
+                    return set()
+
+            ri_cols = _existing_cols("raw_jira_issues")
+            if ri_cols and "complexity_score" not in ri_cols:
+                with engine.begin() as conn:
                     conn.execute(text("ALTER TABLE raw_jira_issues ADD COLUMN complexity_score FLOAT"))
-                    print("Migrated: raw_jira_issues.complexity_score")
-                if "complexity_detail" not in table_cols["raw_jira_issues"]:
+                print("Migrated: raw_jira_issues.complexity_score")
+            if ri_cols and "complexity_detail" not in ri_cols:
+                with engine.begin() as conn:
                     conn.execute(text("ALTER TABLE raw_jira_issues ADD COLUMN complexity_detail JSON"))
-                    print("Migrated: raw_jira_issues.complexity_detail")
-                cm_cols = table_cols.get("company_maxima", set())
-                if cm_cols and "group_id" not in cm_cols:
+                print("Migrated: raw_jira_issues.complexity_detail")
+
+            cm_cols = _existing_cols("company_maxima")
+            if cm_cols and "group_id" not in cm_cols:
+                with engine.begin() as conn:
                     conn.execute(text("ALTER TABLE company_maxima ADD COLUMN group_id VARCHAR(50)"))
-                    print("Migrated: company_maxima.group_id")
-                if cm_cols and "division_id" not in cm_cols:
+                print("Migrated: company_maxima.group_id")
+            if cm_cols and "division_id" not in cm_cols:
+                with engine.begin() as conn:
                     conn.execute(text("ALTER TABLE company_maxima ADD COLUMN division_id VARCHAR(50)"))
-                    print("Migrated: company_maxima.division_id")
+                print("Migrated: company_maxima.division_id")
         except Exception as mig_e:
             print(f"Warning: auto-migration skipped: {mig_e}")
 
