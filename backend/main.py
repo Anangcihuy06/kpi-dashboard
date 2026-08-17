@@ -13,11 +13,17 @@ from pydantic import BaseModel
 # In-memory store for supervisor HRIS tokens
 _supervisor_token_store = {}
 
+# Cache for expensive company-wide maxima computation (PASS 1).
+# Keyed by year; invalidated after sync operations. TTL prevents stale data.
+_company_maxima_cache = {}
+_COMPANY_MAXIMA_TTL = 1800  # 30 minutes
+
 from database import engine, get_db
 import models
 from engine import DynamicKPIEngine, evaluate_kpi_formula
 from encrypt import encrypt_val, decrypt_val
 import os
+import time
 from contextlib import asynccontextmanager
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.inmemory import InMemoryBackend
@@ -1355,6 +1361,7 @@ async def sync_year(year: int, background_tasks: BackgroundTasks, db: Session = 
                 FastAPICache.clear()
             except Exception:
                 pass
+            _company_maxima_cache.clear()
             mark_job_completed(bg_db, jid, {"message": "Sync completed successfully"})
         except Exception as e:
             print(f"Error in background calculation: {str(e)}")
@@ -1420,6 +1427,7 @@ def trigger_sync(background_tasks: BackgroundTasks):
             # Invalidate cache after sync completes
             try:
                 FastAPICache.clear()
+                _company_maxima_cache.clear()
                 logger.info("Cache invalidated after manual sync")
             except Exception as e:
                 logger.warning(f"Failed to invalidate cache: {e}")
@@ -1435,6 +1443,7 @@ def trigger_sync(background_tasks: BackgroundTasks):
 # ─────────────────────────────────────────────────────────────
 
 @app.get("/api/v1/kpi/yearly-performance")
+@cache(expire=300)
 def get_yearly_performance(year: int, user_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """
     Get accumulated KPI data for a specific year (Jan 1 - Dec 31) for the current user.
@@ -1496,6 +1505,102 @@ def get_team_yearly_performance(year: int, user_id: str, db: Session = Depends(g
 # TIME RANGE BASED KPI ENDPOINTS (NEW ARCHITECTURE)
 # ─────────────────────────────────────────────────────────────
 
+def _compute_company_maxima(db: Session, from_date: datetime, to_date: datetime) -> Dict[str, float]:
+    """
+    Calculate 5-pillar company maxima (raw SP, complexity SP, issues, founder credits)
+    for the given period by scanning the raw Jira data of all active users.
+    Expensive — result is cached in _company_maxima_cache.
+    """
+    req_year = from_date.year
+    all_active_users = db.query(models.User).filter(models.User.is_active == True).all()
+
+    from founder_engine import get_founder_credits_for_user
+    from feature_analyzer import calculate_feature_weight
+
+    user_metrics = {}
+    for u in all_active_users:
+        raw_sp = 0.0
+        complexity_sp = 0.0
+        issues_cnt = 0
+
+        jira_ident = db.query(models.EmployeeIdentity).filter(
+            models.EmployeeIdentity.user_id == u.id,
+            models.EmployeeIdentity.source == 'jira'
+        ).first()
+
+        if jira_ident and jira_ident.external_user_id:
+            raw_issues = db.query(models.RawJiraIssue).filter(
+                models.RawJiraIssue.assignee_account_id == jira_ident.external_user_id
+            ).all()
+            for ji in raw_issues:
+                r_dt_naive = None
+                if ji.resolved_date:
+                    r_dt = ji.resolved_date
+                    r_dt_naive = r_dt.replace(tzinfo=None) if hasattr(r_dt, 'replace') else r_dt
+                elif ji.raw_data and 'fields' in ji.raw_data:
+                    fields = ji.raw_data['fields']
+                    r_date_str = fields.get('resolutiondate') or fields.get('updated') or fields.get('created')
+                    if r_date_str:
+                        try:
+                            clean_date = r_date_str.split('.')[0]
+                            if 'T' in clean_date:
+                                r_dt_naive = datetime.strptime(clean_date, "%Y-%m-%dT%H:%M:%S")
+                            else:
+                                r_dt = datetime.fromisoformat(clean_date.replace('Z', '+00:00'))
+                                r_dt_naive = r_dt.replace(tzinfo=None)
+                        except Exception:
+                            pass
+                if not r_dt_naive and (ji.updated_date or ji.created_date):
+                    r_dt = ji.updated_date or ji.created_date
+                    r_dt_naive = r_dt.replace(tzinfo=None) if hasattr(r_dt, 'replace') else r_dt
+
+                if r_dt_naive and from_date <= r_dt_naive <= to_date:
+                    try:
+                        status_lower = (ji.status or "").lower()
+                        if status_lower in ["done", "resolved", "ready to release", "ready for uat", "uat (user)", "ready for qa", "in qa"]:
+                            issues_cnt += 1
+                            sp = float(ji.story_points or 0.0)
+                            cw = calculate_feature_weight(ji.raw_data or {})
+                            raw_sp += sp
+                            complexity_sp += cw
+                    except Exception:
+                        pass
+
+        founder = get_founder_credits_for_user(u.id, target_year=req_year)
+
+        user_metrics[u.id] = {
+            "raw_sp": raw_sp,
+            "complexity_sp": complexity_sp,
+            "issues_cnt": issues_cnt,
+            "founder_sp": founder
+        }
+
+    maxima = {
+        "max_raw_sp": max((m["raw_sp"] for m in user_metrics.values()), default=1.0) or 1.0,
+        "max_complexity_sp": max((m["complexity_sp"] for m in user_metrics.values()), default=1.0) or 1.0,
+        "max_issues_cnt": max((m["issues_cnt"] for m in user_metrics.values()), default=1.0) or 1.0,
+        "max_founder_sp": max((m["founder_sp"] for m in user_metrics.values()), default=1.0) or 1.0,
+    }
+    logger.info(
+        f"Calculated 5-pillar maxima: raw_sp={maxima['max_raw_sp']}, "
+        f"complexity={maxima['max_complexity_sp']}, issues={maxima['max_issues_cnt']}, "
+        f"founder={maxima['max_founder_sp']}"
+    )
+    return maxima
+
+
+def _get_company_maxima(db: Session, from_date: datetime, to_date: datetime) -> Dict[str, float]:
+    """Cached wrapper around _compute_company_maxima — keyed by year, TTL 30 min."""
+    year = from_date.year
+    now = time.time()
+    hit = _company_maxima_cache.get(year)
+    if hit and now - hit[0] < _COMPANY_MAXIMA_TTL:
+        return hit[1]
+    maxima = _compute_company_maxima(db, from_date, to_date)
+    _company_maxima_cache[year] = (now, maxima)
+    return maxima
+
+
 class TimeRangeKPIRequest(BaseModel):
     from_date: str  # YYYY-MM-DD
     to_date: str    # YYYY-MM-DD
@@ -1529,74 +1634,11 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
                 target_user_ids = [user_id]
         
         # === PASS 1: Calculate 5-Pillar Team Maxima per requested period ===
-        req_year_pass1 = from_date.year
-        all_active_users = db.query(models.User).filter(models.User.is_active == True).all()
-        
-        user_p1_metrics = {}
-        from founder_engine import get_founder_credits_for_user
-        from feature_analyzer import calculate_feature_weight
-        
-        for u_p1 in all_active_users:
-            raw_sp_p1 = 0.0
-            complexity_sp_p1 = 0.0
-            issues_cnt_p1 = 0
-            
-            jira_id_p1 = db.query(models.EmployeeIdentity).filter(
-                models.EmployeeIdentity.user_id == u_p1.id,
-                models.EmployeeIdentity.source == 'jira'
-            ).first()
-            
-            if jira_id_p1 and jira_id_p1.external_user_id:
-                raw_j_p1 = db.query(models.RawJiraIssue).filter(
-                    models.RawJiraIssue.assignee_account_id == jira_id_p1.external_user_id
-                ).all()
-                for ji in raw_j_p1:
-                    r_dt_naive = None
-                    if ji.resolved_date:
-                        r_dt = ji.resolved_date
-                        r_dt_naive = r_dt.replace(tzinfo=None) if hasattr(r_dt, 'replace') else r_dt
-                    elif ji.raw_data and 'fields' in ji.raw_data:
-                        fields_p1 = ji.raw_data['fields']
-                        r_date_str = fields_p1.get('resolutiondate') or fields_p1.get('updated') or fields_p1.get('created')
-                        if r_date_str:
-                            try:
-                                clean_date = r_date_str.split('.')[0]
-                                if 'T' in clean_date:
-                                    r_dt_naive = datetime.strptime(clean_date, "%Y-%m-%dT%H:%M:%S")
-                                else:
-                                    r_dt = datetime.fromisoformat(clean_date.replace('Z', '+00:00'))
-                                    r_dt_naive = r_dt.replace(tzinfo=None)
-                            except Exception:
-                                pass
-                    if not r_dt_naive and (ji.updated_date or ji.created_date):
-                        r_dt = ji.updated_date or ji.created_date
-                        r_dt_naive = r_dt.replace(tzinfo=None) if hasattr(r_dt, 'replace') else r_dt
-                        
-                    if r_dt_naive and from_date <= r_dt_naive <= to_date:
-                        try:
-                            status_lower = (ji.status or "").lower()
-                            if status_lower in ["done", "resolved", "ready to release", "ready for uat", "uat (user)", "ready for qa", "in qa"]:
-                                issues_cnt_p1 += 1
-                                sp = float(ji.story_points or 0.0)
-                                cw = calculate_feature_weight(ji.raw_data or {})
-                                raw_sp_p1 += sp
-                                complexity_sp_p1 += cw
-                        except Exception:
-                            pass
-                            
-            founder_p1 = get_founder_credits_for_user(u_p1.id, target_year=req_year_pass1)
-            
-            user_p1_metrics[u_p1.id] = {
-                "raw_sp": raw_sp_p1,
-                "complexity_sp": complexity_sp_p1,
-                "issues_cnt": issues_cnt_p1,
-                "founder_sp": founder_p1
-            }
-            
-        max_raw_sp = max((m["raw_sp"] for m in user_p1_metrics.values()), default=1.0) or 1.0
-        max_complexity_sp = max((m["complexity_sp"] for m in user_p1_metrics.values()), default=1.0) or 1.0
-        max_issues_cnt = max((m["issues_cnt"] for m in user_p1_metrics.values()), default=1.0) or 1.0
-        max_founder_sp = max((m["founder_sp"] for m in user_p1_metrics.values()), default=1.0) or 1.0
+        maxima = _get_company_maxima(db, from_date, to_date)
+        max_raw_sp = maxima["max_raw_sp"]
+        max_complexity_sp = maxima["max_complexity_sp"]
+        max_issues_cnt = maxima["max_issues_cnt"]
+        max_founder_sp = maxima["max_founder_sp"]
         global_max_sp = max_raw_sp
             
         logger.info(f"Calculated 5-pillar maxima: raw_sp={max_raw_sp}, complexity={max_complexity_sp}, issues={max_issues_cnt}, founder={max_founder_sp}")
@@ -2067,6 +2109,7 @@ def trigger_comprehensive_sync(request: ComprehensiveSyncRequest, background_tas
                 # Invalidate cache after comprehensive sync
                 try:
                     FastAPICache.clear()
+                    _company_maxima_cache.clear()
                     logger.info("Cache invalidated after comprehensive sync")
                 except Exception as e:
                     logger.warning(f"Failed to invalidate cache: {e}")
