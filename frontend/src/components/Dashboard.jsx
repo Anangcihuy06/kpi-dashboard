@@ -82,7 +82,9 @@ export default function Dashboard({ userId, isSelf }) {
       <div>
         <h2>{isSelf ? "My Performance Dashboard" : `Dashboard: ${data?.full_name || "Anggota Tim"}`}</h2>
         <p style={{ color: "var(--color-text-muted)", fontSize: "14px" }}>
-          Divisi IT & Engineering | NIK: {userId === "482" ? "01.05.13.500" : "Bawahan"}
+          {data
+            ? `${[data.division_name, data.group_name].filter(Boolean).join(" · ") || "Divisi tidak diketahui"}${data.nik ? ` | NIK: ${data.nik}` : ""}`
+            : "Memuat profil..."}
         </p>
         <div style={{
           display: "flex",

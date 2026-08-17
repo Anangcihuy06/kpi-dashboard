@@ -1900,6 +1900,10 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
                 "full_name": user.full_name,
                 "nik": user.nik,
                 "email": user.email,
+                "division_id": user.division_id,
+                "division_name": user.division.name if user.division else None,
+                "group_id": user.group_id,
+                "group_name": user.group_name,
                 "completed_tasks": completed_tasks_list,
                 "period": {
                     "from_date": from_date.strftime("%Y-%m-%d"),
