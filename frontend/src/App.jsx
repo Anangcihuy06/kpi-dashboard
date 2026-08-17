@@ -174,7 +174,7 @@ export default function App() {
       <nav className="sidebar">
         <div className="brand-logo-container">
           <img
-            src="https://atibusinessgroup.com/wp-content/uploads/2025/09/cropped-logo-ati-new-1-1-1-180x180.png"
+            src="/logo-removebg-preview.png"
             alt="ATI Logo"
             style={{ width: "32px", height: "32px" }}
           />
