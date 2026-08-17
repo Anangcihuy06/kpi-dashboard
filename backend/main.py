@@ -2004,3 +2004,18 @@ def truncate_raw_data(db: Session = Depends(get_db)):
         results["vacuum"] = f"skipped: {str(e)}"
     
     return {"status": "truncated", "results": results}
+
+@app.post("/api/v1/db/kill-locks")
+def kill_locks(db: Session = Depends(get_db)):
+    """Kill all other Postgres connections to release locks."""
+    try:
+        db.execute(text("""
+            SELECT pg_terminate_backend(pg_stat_activity.pid)
+            FROM pg_stat_activity
+            WHERE pg_stat_activity.datname = current_database()
+              AND pid <> pg_backend_pid();
+        """))
+        db.commit()
+        return {"status": "locks_killed"}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
