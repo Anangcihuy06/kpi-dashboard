@@ -35,25 +35,212 @@ async def lifespan(app: FastAPI):
     from seed import seed_data
     from sqlalchemy import text
     
-    # Auto-migrate new columns - wrapped in try/except so app starts even if DB is full
+    print("Starting KPI Dashboard backend...")
+    
     try:
-        # TEMPORARILY DISABLED: The DB is 100% full and locks are stuck. 
-        # Attempting to ALTER TABLE or create_all will hang the startup indefinitely.
-        print("Skipping DB schema migrations during emergency recovery mode...")
-        # db = SessionLocal()
-        # if not db.query(models.User).first():
-        #     print("Database is empty, running seed script...")
-        #     seed_data()
-        # db.close()
-    except Exception as e:
-        print(f"WARNING: DB initialization failed (DB may be full): {e}")
-        print("App will start anyway - use /api/v1/db/cleanup to fix DB issues")
+        print("Starting database initialization...")
+        
+        # Create tables first
+        print("Creating database tables...")
+        models.Base.metadata.create_all(bind=engine)
+        print("Database tables created successfully")
+        
+        db = SessionLocal()
+        
+        # Check if database is empty and needs seeding
+        user_count = db.query(models.User).count()
+        print(f"Current users count: {user_count}")
+        
+        if user_count == 0:
+            print("Database is empty, running seed script...")
+            seed_data()
+            print("Seed data populated successfully")
+        else:
+            print(f"Database already contains {user_count} users")
+        
+        # Ensure default divisions exist
+        it_division = db.query(models.Division).filter(models.Division.code == "IT").first()
+        if not it_division:
+            print("Creating default IT division...")
+            it_div = models.Division(code="IT", name="IT & Engineering", description="Information Technology Division")
+            db.add(it_div)
+            db.commit()
+            print("Default IT division created")
+        else:
+            print("Default IT division already exists")
+            
+        # Ensure integration settings exist
+        integration_settings = db.query(models.IntegrationSetting).first()
+        if not integration_settings:
+            print("Creating default integration settings...")
+            default_settings = models.IntegrationSetting(
+                jira_url="",
+                jira_email="", 
+                jira_token_encrypted="",
+                jira_board_ids=[],
+                default_jira_board_id="",
+                jira_sp_field="customfield_10016",
+                gitlab_url="https://gitlab.com",
+                gitlab_token_encrypted=""
+            )
+            db.add(default_settings)
+            db.commit()
+            print("Default integration settings created")
+        else:
+            print("Integration settings already exist")
+        
+        db.close()
+        print("Database initialization complete")
 
-    FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
-    # init_scheduler() is removed for standalone worker approach
-    yield
+        FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
+        print("Cache initialized")
+        
+        # init_scheduler() is removed for standalone worker approach
+        print("Application ready to accept requests")
+        yield
+        
+    except Exception as e:
+        print(f"CRITICAL ERROR during startup: {e}")
+        import traceback
+        traceback.print_exc()
+        # Still try to start even if DB init fails
+        FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
+        yield
 
 app = FastAPI(title="Dynamic KPI Dashboard API", lifespan=lifespan)
+
+# Health check endpoint for Railway
+@app.get("/health")
+def health_check():
+    """Health check endpoint for Railway monitoring"""
+    try:
+        from database import engine
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "database": "disconnected",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }, 503
+
+# Database diagnostics endpoint
+@app.get("/api/v1/db/diagnostics")
+def db_diagnostics():
+    """Database diagnostics endpoint for debugging production issues"""
+    from database import engine
+    from models import User, Division, Sprint, KPIRule, IntegrationSetting
+    from sqlalchemy import inspect
+    
+    diagnostics = {
+        "timestamp": datetime.now().isoformat(),
+        "database_url_type": "postgresql" if "postgresql" in str(engine.url) else "sqlite",
+        "status": "unknown"
+    }
+    
+    try:
+        with engine.connect() as conn:
+            # Test basic connection
+            result = conn.execute(text("SELECT 1"))
+            assert result.scalar() == 1
+            
+            # Get table info
+            inspector = inspect(engine)
+            tables = inspector.get_table_names()
+            diagnostics["tables"] = tables
+            
+            # Check data counts
+            from database import SessionLocal
+            db = SessionLocal()
+            try:
+                diagnostics["counts"] = {
+                    "users": db.query(User).count(),
+                    "divisions": db.query(Division).count(),
+                    "sprints": db.query(Sprint).count(),
+                    "kpi_rules": db.query(KPIRule).count(),
+                    "integration_settings": db.query(IntegrationSetting).count()
+                }
+                
+                # Check critical data
+                it_division = db.query(Division).filter(Division.code == "IT").first()
+                diagnostics["it_division_exists"] = it_division is not None
+                
+                integration_settings = db.query(IntegrationSetting).first()
+                diagnostics["integration_settings_exist"] = integration_settings is not None
+                
+                # Determine overall status
+                if (diagnostics["counts"]["divisions"] > 0 and 
+                    diagnostics["integration_settings_exist"]):
+                    diagnostics["status"] = "healthy"
+                else:
+                    diagnostics["status"] = "needs_setup"
+                    
+            finally:
+                db.close()
+                
+        return diagnostics, 200
+        
+    except Exception as e:
+        diagnostics["status"] = "error"
+        diagnostics["error"] = str(e)
+        return diagnostics, 500
+
+# Force database initialization endpoint
+@app.post("/api/v1/db/initialize")
+def force_db_initialize():
+    """Force database initialization - useful for production setup"""
+    from database import engine, SessionLocal
+    import models
+    from models import Division, IntegrationSetting
+    from sqlalchemy import text
+    
+    try:
+        # Create tables
+        models.Base.metadata.create_all(bind=engine)
+        
+        # Ensure divisions exist
+        db = SessionLocal()
+        try:
+            if not db.query(Division).filter(Division.code == "IT").first():
+                it_div = Division(code="IT", name="IT & Engineering", description="Information Technology Division")
+                db.add(it_div)
+                db.commit()
+                
+            # Ensure integration settings exist  
+            if not db.query(IntegrationSetting).first():
+                default_settings = IntegrationSetting(
+                    jira_url="",
+                    jira_email="", 
+                    jira_token_encrypted="",
+                    jira_board_ids=[],
+                    default_jira_board_id="",
+                    jira_sp_field="customfield_10016",
+                    gitlab_url="https://gitlab.com",
+                    gitlab_token_encrypted=""
+                )
+                db.add(default_settings)
+                db.commit()
+                
+            return {
+                "status": "success",
+                "message": "Database initialized successfully",
+                "timestamp": datetime.now().isoformat()
+            }
+        finally:
+            db.close()
+            
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }, 500
 
 # Enable CORS for frontend integration
 app.add_middleware(
