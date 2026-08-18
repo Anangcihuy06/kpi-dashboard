@@ -14,6 +14,15 @@ class SafeMathEvaluator(ast.NodeVisitor):
         ast.UAdd: operator.pos,
     }
 
+    ALLOWED_COMPARISONS = {
+        ast.Gt: operator.gt,
+        ast.GtE: operator.ge,
+        ast.Lt: operator.lt,
+        ast.LtE: operator.le,
+        ast.Eq: operator.eq,
+        ast.NotEq: operator.ne,
+    }
+
     ALLOWED_FUNCTIONS = {
         "min": min,
         "max": max,
@@ -57,16 +66,107 @@ class SafeMathEvaluator(ast.NodeVisitor):
                 func = self.ALLOWED_FUNCTIONS[node.func.id]
                 args = [self.visit(arg) for arg in node.args]
                 return float(func(*args))
+            # Support conditional function: if(condition, value_if_true, value_if_false)
+            if isinstance(node.func, ast.Name) and node.func.id == "if":
+                if len(node.args) != 3:
+                    raise ValueError("Fungsi 'if' membutuhkan 3 argumen: if(kondisi, nilai_benar, nilai_salah)")
+                cond = self.visit(node.args[0])
+                return float(self.visit(node.args[1] if cond else node.args[2]))
             raise ValueError("Pemanggilan fungsi tidak dikenal/diizinkan!")
+
+        elif isinstance(node, ast.Compare):
+            if len(node.comparators) != 1 or len(node.ops) != 1:
+                raise ValueError("Perbandingan berantai tidak diizinkan!")
+            op_type = type(node.ops[0])
+            if op_type not in self.ALLOWED_COMPARISONS:
+                raise ValueError(f"Operator perbandingan '{op_type.__name__}' tidak diizinkan!")
+            left = self.visit(node.left)
+            right = self.visit(node.comparators[0])
+            return float(self.ALLOWED_COMPARISONS[op_type](left, right))
+
+        elif isinstance(node, ast.IfExp):
+            cond = self.visit(node.test)
+            return float(self.visit(node.body if cond else node.orelse))
+
+        elif isinstance(node, ast.BoolOp):
+            values = [self.visit(v) for v in node.values]
+            if isinstance(node.op, ast.And):
+                result = True
+                for v in values:
+                    result = result and bool(v)
+                return float(result)
+            elif isinstance(node.op, ast.Or):
+                result = False
+                for v in values:
+                    result = result or bool(v)
+                return float(result)
+            raise ValueError(f"Operator boolean '{type(node.op).__name__}' tidak diizinkan!")
 
         else:
             raise ValueError(f"Sintaks tidak diizinkan dalam rumus: {type(node).__name__}")
 
 
+def _preprocess_if_calls(formula_str: str) -> str:
+    """Convert AI-generated `if(cond, a, b)` calls into valid Python ternary.
+
+    `if` is a reserved Python keyword, so `if(x > 1, 10, 0)` fails ast.parse.
+    We rewrite it to `(10 if (x > 1) else 0)` so the SafeMathEvaluator can handle
+    it through ast.IfExp.
+    """
+    out = []
+    i = 0
+    n = len(formula_str)
+    while i < n:
+        c = formula_str[i]
+        # Look for `if(` that is a function call (not part of identifier / not ternary)
+        if c == 'i' and i + 2 < n and formula_str[i:i+3] == 'if(':
+            # find matching close paren
+            depth = 1
+            j = i + 3
+            while j < n and depth > 0:
+                if formula_str[j] == '(':
+                    depth += 1
+                elif formula_str[j] == ')':
+                    depth -= 1
+                j += 1
+            if depth == 0:
+                inner = formula_str[i+3:j-1]
+                parts = _split_top_level_commas(inner)
+                if len(parts) == 3:
+                    cond, val_true, val_false = parts
+                    out.append(f"({val_true} if ({cond}) else {val_false})")
+                    i = j
+                    continue
+                # malformed -> leave as-is (will fail parse, caught later)
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _split_top_level_commas(s: str) -> list:
+    """Split a string on commas that are not nested inside () [] {}."""
+    parts = []
+    depth = 0
+    current = []
+    for ch in s:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if ch == ',' and depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+    parts.append("".join(current).strip())
+    return parts
+
+
 def evaluate_kpi_formula(formula_str: str, context: Dict[str, float]) -> float:
     try:
         # Pre-process formula: strip spaces and check safety
-        tree = ast.parse(formula_str, mode='eval')
+        processed = _preprocess_if_calls(formula_str)
+        tree = ast.parse(processed, mode='eval')
         evaluator = SafeMathEvaluator(context)
         return float(evaluator.visit(tree))
     except Exception as e:
