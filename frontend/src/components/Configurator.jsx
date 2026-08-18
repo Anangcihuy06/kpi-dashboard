@@ -34,6 +34,7 @@ export default function Configurator() {
 
   const [saveLoading, setSaveLoading] = useState(false);
   const [calcLoading, setCalcLoading] = useState(false);
+  const [syncDataLoading, setSyncDataLoading] = useState(false);
   const [testLoading, setTestLoading] = useState(false);
   const [integLoading, setIntegLoading] = useState(false);
   const [showAIPrompt, setShowAIPrompt] = useState(false);
@@ -364,38 +365,73 @@ export default function Configurator() {
     }
   };
 
-  const handleCalculateYear = async () => {
+  const pollJobUntilDone = (jobId, onDone) => {
+    const poll = setInterval(async () => {
+      try {
+        const statusRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/jobs/${jobId}`);
+        if (statusRes.ok) {
+          const statusData = await statusRes.json();
+          if (statusData.status === "COMPLETED" || statusData.status === "FAILED") {
+            clearInterval(poll);
+            onDone(statusData);
+          }
+        }
+      } catch (e) {
+        console.error("Error polling job status:", e);
+      }
+    }, 3000);
+  };
+
+  const handleSyncData = async () => {
+    setSyncDataLoading(true);
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/sync/data`, {
+        method: "POST"
+      });
+      if (!response.ok) throw new Error("Gagal menjalankan sync data");
+      const data = await response.json();
+
+      if (data.job_id) {
+        toast.info("Sync data dari Jira/GitLab berjalan di background...");
+        pollJobUntilDone(data.job_id, async (statusData) => {
+          setSyncDataLoading(false);
+          if (statusData.status === "COMPLETED") {
+            toast.success("Sync data selesai! Jira & GitLab berhasil diperbarui.");
+          } else {
+            toast.error("Sync data gagal: " + (statusData.error_message || "Unknown error"));
+          }
+        });
+      } else {
+        toast.success("Sync data selesai!");
+        setSyncDataLoading(false);
+      }
+    } catch (err) {
+      toast.error(err.message);
+      setSyncDataLoading(false);
+    }
+  };
+
+  const handleCalcKPI = async () => {
     setCalcLoading(true);
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/sync/year/${selectedYear}`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/calculate/${selectedYear}`, {
         method: "POST"
       });
       if (!response.ok) throw new Error("Gagal menjalankan kalkulasi");
       const data = await response.json();
-      
+
       if (data.job_id) {
-        toast.info("Memulai sinkronisasi dan kalkulasi KPI...");
-        const poll = setInterval(async () => {
-          try {
-            const statusRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/jobs/${data.job_id}`);
-            if (statusRes.ok) {
-              const statusData = await statusRes.json();
-              if (statusData.status === "COMPLETED" || statusData.status === "FAILED") {
-                clearInterval(poll);
-                setCalcLoading(false);
-                if (statusData.status === "COMPLETED") {
-                  toast.success(`Kalkulasi & Sinkronisasi selesai! Berhasil memperbarui data untuk tahun ${selectedYear}.`);
-                } else {
-                  toast.error("Sinkronisasi gagal: " + (statusData.error_message || "Unknown error"));
-                }
-              }
-            }
-          } catch (e) {
-            console.error("Error polling job status:", e);
+        toast.info("Menghitung KPI dari data lokal...");
+        pollJobUntilDone(data.job_id, async (statusData) => {
+          setCalcLoading(false);
+          if (statusData.status === "COMPLETED") {
+            toast.success(`Kalkulasi KPI selesai untuk tahun ${selectedYear}.`);
+          } else {
+            toast.error("Kalkulasi KPI gagal: " + (statusData.error_message || "Unknown error"));
           }
-        }, 3000);
+        });
       } else {
-        toast.success(`Kalkulasi & Sinkronisasi selesai! Berhasil memperbarui data untuk tahun ${selectedYear}.`);
+        toast.success(`Kalkulasi KPI selesai untuk tahun ${selectedYear}.`);
         setCalcLoading(false);
       }
     } catch (err) {
@@ -439,11 +475,20 @@ export default function Configurator() {
         <>
           {/* Calculate scores trigger */}
           <div className="card" style={{ background: "linear-gradient(90deg, var(--color-tint) 0%, rgba(255,255,255,1) 100%)", borderColor: "var(--color-accent)" }}>
-            <h3 style={{ marginBottom: "8px" }}>Trigger Sync & Kalkulasi Tahunan (Data dari Database Lokal)</h3>
+            <h3 style={{ marginBottom: "8px" }}>Sync Data & Hitung KPI</h3>
             <p style={{ fontSize: "13px", color: "var(--color-text-muted)", marginBottom: "20px" }}>
-              Jalankan sinkronisasi langsung untuk menarik data dari Jira/GitLab kantor, memproses formula, dan meng-update dashboard untuk satu tahun penuh.
+              <strong>Sync Data</strong> menarik data terbaru dari Jira/GitLab ke database lokal. <strong>Hitung KPI</strong> menghitung KPI karyawan menggunakan data yang sudah ada di database lokal.
             </p>
-            <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+            <div style={{ display: "flex", gap: "12px", alignItems: "flex-end", flexWrap: "wrap" }}>
+              <button
+                className="btn-primary"
+                onClick={handleSyncData}
+                disabled={syncDataLoading}
+                style={{ width: "auto", padding: "0 24px", height: "44px", display: "flex", alignItems: "center", gap: "8px" }}
+              >
+                {syncDataLoading ? <RefreshCw className="animate-spin" size={16} /> : <Globe size={16} />}
+                {syncDataLoading ? "Sync Data Berjalan..." : "Sync Data"}
+              </button>
               <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                 <label className="form-label" style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>Pilih Tahun</label>
                 <select
@@ -458,12 +503,12 @@ export default function Configurator() {
               </div>
               <button
                 className="btn-primary"
-                onClick={handleCalculateYear}
+                onClick={handleCalcKPI}
                 disabled={calcLoading}
-                style={{ width: "auto", padding: "0 24px", height: "44px", marginTop: "16px" }}
+                style={{ width: "auto", padding: "0 24px", height: "44px", display: "flex", alignItems: "center", gap: "8px" }}
               >
                 {calcLoading ? <RefreshCw className="animate-spin" size={16} /> : <Play size={16} />}
-                Sync & Hitung KPI Karyawan
+                {calcLoading ? "Menghitung KPI..." : "Hitung KPI"}
               </button>
             </div>
           </div>

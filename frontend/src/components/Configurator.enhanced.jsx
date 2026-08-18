@@ -32,6 +32,7 @@ export default function Configurator() {
 
   const [saveLoading, setSaveLoading] = useState(false);
   const [calcLoading, setCalcLoading] = useState(false);
+  const [syncDataLoading, setSyncDataLoading] = useState(false);
   const [testLoading, setTestLoading] = useState(false);
   const [integLoading, setIntegLoading] = useState(false);
   const [message, setMessage] = useState(null);
@@ -268,22 +269,79 @@ export default function Configurator() {
     }
   };
 
-  const handleCalculateYear = async () => {
+  const pollJobUntilDone = (jobId, onDone) => {
+    const poll = setInterval(async () => {
+      try {
+        const statusRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/jobs/${jobId}`);
+        if (statusRes.ok) {
+          const statusData = await statusRes.json();
+          if (statusData.status === "COMPLETED" || statusData.status === "FAILED") {
+            clearInterval(poll);
+            onDone(statusData);
+          }
+        }
+      } catch (e) {
+        console.error("Error polling job status:", e);
+      }
+    }, 3000);
+  };
+
+  const handleSyncData = async () => {
+    setSyncDataLoading(true);
+    setMessage(null);
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/sync/data`, {
+        method: "POST"
+      });
+      if (!response.ok) throw new Error("Gagal menjalankan sync data");
+      const data = await response.json();
+
+      if (data.job_id) {
+        setMessage({ type: "info", text: "Sync data dari Jira/GitLab berjalan di background..." });
+        pollJobUntilDone(data.job_id, (statusData) => {
+          setSyncDataLoading(false);
+          if (statusData.status === "COMPLETED") {
+            setMessage({ type: "success", text: "Sync data selesai! Jira & GitLab berhasil diperbarui." });
+          } else {
+            setMessage({ type: "error", text: "Sync data gagal: " + (statusData.error_message || "Unknown error") });
+          }
+        });
+      } else {
+        setMessage({ type: "success", text: "Sync data selesai!" });
+        setSyncDataLoading(false);
+      }
+    } catch (err) {
+      setMessage({ type: "error", text: err.message });
+      setSyncDataLoading(false);
+    }
+  };
+
+  const handleCalcKPI = async () => {
     setCalcLoading(true);
     setMessage(null);
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/sync/year/${selectedYear}`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/calculate/${selectedYear}`, {
         method: "POST"
       });
       if (!response.ok) throw new Error("Gagal menjalankan kalkulasi");
       const data = await response.json();
-      setMessage({
-        type: "success",
-        text: `Kalkulasi & Sinkronisasi selesai! Berhasil memperbarui data dari Jira/GitLab untuk tahun ${selectedYear}.`
-      });
+
+      if (data.job_id) {
+        setMessage({ type: "info", text: "Menghitung KPI dari data lokal..." });
+        pollJobUntilDone(data.job_id, (statusData) => {
+          setCalcLoading(false);
+          if (statusData.status === "COMPLETED") {
+            setMessage({ type: "success", text: `Kalkulasi KPI selesai untuk tahun ${selectedYear}.` });
+          } else {
+            setMessage({ type: "error", text: "Kalkulasi KPI gagal: " + (statusData.error_message || "Unknown error") });
+          }
+        });
+      } else {
+        setMessage({ type: "success", text: `Kalkulasi KPI selesai untuk tahun ${selectedYear}.` });
+        setCalcLoading(false);
+      }
     } catch (err) {
       setMessage({ type: "error", text: err.message });
-    } finally {
       setCalcLoading(false);
     }
   };
@@ -360,12 +418,28 @@ export default function Configurator() {
                   gap: "10px"
                 }}>
                   <Zap size={20} style={{ color: "var(--color-secondary)" }} />
-                  Trigger Sync & Kalkulasi Tahunan
+                  Sync Data & Hitung KPI
                 </h3>
                 <p style={{ fontSize: "13px", color: "var(--color-text-muted)", marginBottom: "20px", lineHeight: "1.6" }}>
-                  Jalankan sinkronisasi langsung untuk menarik data dari Jira/GitLab kantor, memproses formula, dan meng-update dashboard untuk satu tahun penuh.
+                  <strong>Sync Data</strong> menarik data terbaru dari Jira/GitLab ke database lokal. <strong>Hitung KPI</strong> menghitung KPI karyawan menggunakan data yang sudah ada di database lokal.
                 </p>
                 <div style={{ display: "flex", gap: "16px", alignItems: "center", flexWrap: "wrap" }}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={handleSyncData}
+                    disabled={syncDataLoading}
+                    style={{ padding: "10px 24px", borderRadius: "var(--radius-md)" }}
+                  >
+                    {syncDataLoading ? (
+                      <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span className="spinner-premium"></span> Sync Data Berjalan...
+                      </span>
+                    ) : (
+                      <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <Globe size={16} /> Sync Data
+                      </span>
+                    )}
+                  </button>
                   <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                     <label style={{ fontSize: "11px", fontWeight: "700", color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Pilih Tahun</label>
                     <select
@@ -393,17 +467,17 @@ export default function Configurator() {
                   </div>
                   <button
                     className="btn btn-primary"
-                    onClick={handleCalculateYear}
+                    onClick={handleCalcKPI}
                     disabled={calcLoading}
-                    style={{ marginTop: "18px", padding: "10px 24px", borderRadius: "var(--radius-md)" }}
+                    style={{ padding: "10px 24px", borderRadius: "var(--radius-md)" }}
                   >
                     {calcLoading ? (
                       <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        <span className="spinner-premium"></span> Memproses...
+                        <span className="spinner-premium"></span> Menghitung KPI...
                       </span>
                     ) : (
                       <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        <Play size={16} /> Sync & Hitung KPI Karyawan
+                        <Play size={16} /> Hitung KPI
                       </span>
                     )}
                   </button>

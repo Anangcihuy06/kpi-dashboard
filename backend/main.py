@@ -1600,6 +1600,60 @@ async def sync_year(year: int, background_tasks: BackgroundTasks, db: Session = 
     background_tasks.add_task(run_calculation, job_id)
     return {"status": "success", "message": f"Sinkronisasi tahun {year} berjalan di background", "job_id": job_id}
 
+@app.post("/api/v1/sync/data")
+async def sync_data_only(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Sync data from Jira/GitLab into local DB only (no KPI calculation)."""
+    from sync_engine import create_sync_job, update_job_progress, mark_job_completed, mark_job_failed
+    job_id = create_sync_job(db, None, "DATA_SYNC_ONLY")
+
+    def run_sync(jid):
+        from scheduler import sync_data_only_job
+        from database import SessionLocal
+        bg_db = SessionLocal()
+        try:
+            update_job_progress(bg_db, jid, 10, "RUNNING")
+            result = sync_data_only_job()
+            try:
+                _company_maxima_cache.clear()
+            except Exception:
+                pass
+            mark_job_completed(bg_db, jid, result or {"message": "Sync data completed"})
+        except Exception as e:
+            print(f"Error in background data sync: {str(e)}")
+            mark_job_failed(bg_db, jid, str(e))
+        finally:
+            bg_db.close()
+
+    background_tasks.add_task(run_sync, job_id)
+    return {"status": "success", "message": "Sync data dari Jira/GitLab berjalan di background", "job_id": job_id}
+
+@app.post("/api/v1/kpi/calculate/{year}")
+async def calculate_kpi_only(year: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Calculate KPI using local DB data only (no external sync)."""
+    from sync_engine import create_sync_job, update_job_progress, mark_job_completed, mark_job_failed
+    job_id = create_sync_job(db, None, "KPI_CALC_ONLY")
+
+    def run_calc(jid):
+        from scheduler import calculate_kpi_only_job
+        from database import SessionLocal
+        bg_db = SessionLocal()
+        try:
+            update_job_progress(bg_db, jid, 10, "RUNNING")
+            result = calculate_kpi_only_job(year)
+            try:
+                _company_maxima_cache.clear()
+            except Exception:
+                pass
+            mark_job_completed(bg_db, jid, result or {"message": "KPI calculation completed"})
+        except Exception as e:
+            print(f"Error in background KPI calculation: {str(e)}")
+            mark_job_failed(bg_db, jid, str(e))
+        finally:
+            bg_db.close()
+
+    background_tasks.add_task(run_calc, job_id)
+    return {"status": "success", "message": f"Kalkulasi KPI tahun {year} dari data lokal berjalan di background", "job_id": job_id}
+
 # ─────────────────────────────────────────────────────────────
 # SYNC TRIGGER ENDPOINTS
 # ─────────────────────────────────────────────────────────────

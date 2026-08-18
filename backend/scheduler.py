@@ -240,6 +240,174 @@ def sync_sprints_job():
         db.close()
 
 
+def sync_data_only_job():
+    """
+    Sync only data from Jira/GitLab into the local DB without calculating KPI.
+    Used by the 'Sync Data' button in the Configurator.
+    """
+    db = SessionLocal()
+    try:
+        settings = db.query(models.IntegrationSetting).first()
+        if not settings:
+            logger.warning("No integration settings found. Cannot sync data.")
+            return {"status": "error", "message": "Integration settings not found"}
+
+        # 1. Sync sprints from Jira
+        try:
+            logger.info("Sync Data: syncing Jira sprints...")
+            sync_all_boards_sprints(db, settings)
+        except Exception as e:
+            logger.error(f"Sync Data: sprint sync failed: {e}")
+
+        # 2. Sync comprehensive data (GitLab commits/MRs + Jira issues/worklogs) for all active users
+        from comprehensive_sync import sync_user_comprehensive
+        from datetime import datetime as dt
+
+        users = db.query(models.User).filter(models.User.is_active == True).all()
+        start_date = datetime(datetime.now().year, 1, 1, 0, 0, 0)
+        end_date = datetime(datetime.now().year, 12, 31, 23, 59, 59)
+
+        synced_users = 0
+        total_records = 0
+        for u in users:
+            try:
+                result = sync_user_comprehensive(db, u, settings, start_date, end_date)
+                if result.get("status") == "success":
+                    synced_users += 1
+                    total_records += result.get("total_records", 0)
+                logger.info(f"Sync Data: user {u.full_name} -> {result.get('status')} ({result.get('total_records', 0)} records)")
+            except Exception as e:
+                logger.error(f"Sync Data: failed for user {u.full_name}: {e}")
+                db.rollback()
+
+        # Invalidate cache after sync
+        try:
+            from fastapi_cache import FastAPICache
+            backend = FastAPICache.get_backend()
+            if backend:
+                FastAPICache.clear()
+                logger.info("Cache invalidated after data sync")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate cache: {e}")
+
+        import time
+        with open("last_sync.txt", "w") as f:
+            f.write(str(int(time.time())))
+
+        logger.info(f"Sync Data completed. Synced {synced_users} users, {total_records} records.")
+        return {"status": "success", "users_synced": synced_users, "records": total_records}
+
+    except Exception as e:
+        logger.error(f"Error in sync_data_only_job: {e}")
+        return {"status": "error", "message": str(e)}
+    finally:
+        db.close()
+
+
+def calculate_kpi_only_job(year: int = None):
+    """
+    Calculate KPI using data already present in the local DB.
+    Does NOT call any external Jira/GitLab sync.
+    Used by the 'Hitung KPI' button in the Configurator.
+    """
+    if not year:
+        year = datetime.now().year
+
+    logger.info(f"Starting KPI calculation-only job for year {year} (local DB only)...")
+    db = SessionLocal()
+    try:
+        settings = db.query(models.IntegrationSetting).first()
+        if not settings:
+            return {"status": "error", "message": "Integration settings not found"}
+
+        from comprehensive_sync import calculate_daily_aggregated_kpi
+        from precompute_metrics import compute_all_year_metrics
+        from sqlalchemy import and_
+        from datetime import datetime as dt
+
+        # Get all active users
+        users = db.query(models.User).filter(models.User.is_active == True).all()
+
+        start_date = datetime(year, 1, 1, 0, 0, 0)
+        end_date = datetime(year, 12, 31, 23, 59, 59)
+
+        calc_count = 0
+        for u in users:
+            try:
+                # Get all activity dates + attendance dates already stored locally
+                activity_dates_q = db.query(models.Activity.activity_date).filter(
+                    and_(
+                        models.Activity.user_id == u.id,
+                        models.Activity.activity_date >= start_date.date(),
+                        models.Activity.activity_date <= end_date.date()
+                    )
+                ).distinct().all()
+
+                att_dates_q = db.query(models.AttendanceRecord.date).filter(
+                    and_(
+                        models.AttendanceRecord.user_id == u.id,
+                        models.AttendanceRecord.date >= start_date.date().isoformat(),
+                        models.AttendanceRecord.date <= end_date.date().isoformat()
+                    )
+                ).distinct().all()
+
+                all_dates = set()
+                for r in activity_dates_q:
+                    if r[0]:
+                        if isinstance(r[0], dt):
+                            all_dates.add(r[0].date())
+                        elif hasattr(r[0], 'year'):
+                            all_dates.add(r[0])
+                        elif isinstance(r[0], str):
+                            try:
+                                all_dates.add(dt.strptime(r[0][:10], "%Y-%m-%d").date())
+                            except Exception:
+                                pass
+                for r in att_dates_q:
+                    if r[0]:
+                        if hasattr(r[0], 'year'):
+                            all_dates.add(r[0])
+                        elif isinstance(r[0], str):
+                            try:
+                                all_dates.add(dt.strptime(r[0][:10], "%Y-%m-%d").date())
+                            except Exception:
+                                pass
+
+                for d in sorted(all_dates):
+                    calculate_daily_aggregated_kpi(db, u, dt.combine(d, dt.min.time()))
+
+                calc_count += 1
+                logger.info(f"Calculate KPI: processed {u.full_name} for {len(all_dates)} dates")
+            except Exception as e:
+                logger.error(f"Calculate KPI: failed for user {u.id}: {e}")
+                db.rollback()
+
+        # Precompute per-user yearly aggregates + company maxima
+        try:
+            compute_all_year_metrics(db, year)
+        except Exception as e:
+            logger.error(f"Precompute metrics failed for year {year}: {e}")
+            db.rollback()
+
+        # Invalidate all cache
+        try:
+            from fastapi_cache import FastAPICache
+            backend = FastAPICache.get_backend()
+            if backend:
+                FastAPICache.clear()
+                logger.info("Cache invalidated after KPI calculation")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate cache: {e}")
+
+        return {"status": "success", "users_processed": calc_count}
+
+    except Exception as e:
+        logger.error(f"Error in calculate_kpi_only_job: {e}")
+        return {"status": "error", "message": str(e)}
+    finally:
+        db.close()
+
+
 def sync_and_calculate_all_users_job(year: int = None):
     if not year:
         year = datetime.now().year
