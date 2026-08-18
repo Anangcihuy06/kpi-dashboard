@@ -156,7 +156,8 @@ class YearlyKPIEngine:
                 missing_vars = []
                 try:
                     import ast
-                    tree = ast.parse(m_def.formula_expression, mode='eval')
+                    from engine import _preprocess_if_calls
+                    tree = ast.parse(_preprocess_if_calls(m_def.formula_expression), mode='eval')
                     for node in ast.walk(tree):
                         if isinstance(node, ast.Name) and node.id not in eval_context:
                             missing_vars.append(node.id)

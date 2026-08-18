@@ -1251,6 +1251,7 @@ def get_user_calculation_details(user_id: str, year: int, db: Session = Depends(
                         complexity_sp += cw
             
             user_metrics["raw_jira_sp"] = raw_jira_sp
+            user_metrics["jira_sp"] = raw_jira_sp
             user_metrics["complexity_sp"] = complexity_sp
             user_metrics["jira_issues_completed"] = issues_completed
             

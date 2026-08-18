@@ -399,7 +399,7 @@ class AIFeatureScorer:
         variables = set()
         
         # Remove function calls and operators
-        cleaned_formula = re.sub(r'\b(min|max|abs|round)\s*\(', '', formula)
+        cleaned_formula = re.sub(r'\b(min|max|abs|round|if)\s*\(', '', formula)
         cleaned_formula = re.sub(r'[+\-*/%<>=!&|^(),\s]', ' ', cleaned_formula)
         
         # Extract potential variable names
