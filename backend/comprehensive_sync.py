@@ -1453,26 +1453,29 @@ def calculate_daily_aggregated_kpi(db: Session, user: models.User, date: datetim
 
         # Complexity of issues resolved on this date
         try:
-            if preloaded and preloaded.get("jira_ident") is not None:
-                ji_ident = preloaded["jira_ident"]
+            if preloaded and preloaded.get("complexity_by_date") is not None:
+                daily_raw["complexity_sp"] = preloaded["complexity_by_date"].get(date.date(), 0.0)
             else:
-                ji_ident = db.query(models.EmployeeIdentity).filter(
-                    models.EmployeeIdentity.user_id == user.id,
-                    models.EmployeeIdentity.source == 'jira'
-                ).first()
-            if ji_ident and ji_ident.external_user_id:
-                if preloaded and preloaded.get("resolved_by_date") is not None:
-                    resolved = preloaded["resolved_by_date"].get(date.date(), [])
+                if preloaded and preloaded.get("jira_ident") is not None:
+                    ji_ident = preloaded["jira_ident"]
                 else:
-                    resolved = db.query(models.RawJiraIssue).filter(
-                        models.RawJiraIssue.assignee_account_id == ji_ident.external_user_id,
-                        models.RawJiraIssue.resolved_date >= date_start,
-                        models.RawJiraIssue.resolved_date <= date_end
-                    ).all()
-                daily_raw["complexity_sp"] = sum(
-                    (iss.complexity_score if iss.complexity_score is not None
-                     else calculate_feature_weight(iss.raw_data or {}))
-                    for iss in resolved)
+                    ji_ident = db.query(models.EmployeeIdentity).filter(
+                        models.EmployeeIdentity.user_id == user.id,
+                        models.EmployeeIdentity.source == 'jira'
+                    ).first()
+                if ji_ident and ji_ident.external_user_id:
+                    if preloaded and preloaded.get("resolved_by_date") is not None:
+                        resolved = preloaded["resolved_by_date"].get(date.date(), [])
+                    else:
+                        resolved = db.query(models.RawJiraIssue).filter(
+                            models.RawJiraIssue.assignee_account_id == ji_ident.external_user_id,
+                            models.RawJiraIssue.resolved_date >= date_start,
+                            models.RawJiraIssue.resolved_date <= date_end
+                        ).all()
+                    daily_raw["complexity_sp"] = sum(
+                        (iss.complexity_score if iss.complexity_score is not None
+                         else calculate_feature_weight(iss.raw_data or {}))
+                        for iss in resolved)
         except Exception as e:
             logger.error(f"Daily complexity calc failed for {user.id} on {date}: {e}")
 
@@ -1528,14 +1531,11 @@ def calculate_daily_aggregated_kpi(db: Session, user: models.User, date: datetim
     # Create or update daily KPI record
     if preloaded and preloaded.get("daily_by_date") is not None:
         daily_kpi = preloaded["daily_by_date"].get(date.date())
+        # preload already contains ALL rows for the year, so a miss means we
+        # genuinely need to INSERT; no point re-querying per date (which was a
+        # hot path: thousands of tiny SELECTs during a full re-calc).
         if daily_kpi is None:
-            # Need a lookup even in batch mode when row doesn't exist yet
-            daily_kpi = db.query(models.KPIEmployeeDaily).filter(
-                and_(
-                    models.KPIEmployeeDaily.user_id == user.id,
-                    models.KPIEmployeeDaily.date == date_start
-                )
-            ).first()
+            daily_kpi = None
     else:
         daily_kpi = db.query(models.KPIEmployeeDaily).filter(
             and_(

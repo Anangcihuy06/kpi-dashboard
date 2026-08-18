@@ -32,6 +32,7 @@ export default function Configurator() {
 
   const [saveLoading, setSaveLoading] = useState(false);
   const [calcLoading, setCalcLoading] = useState(false);
+  const [calcProgress, setCalcProgress] = useState(0);
   const [syncDataLoading, setSyncDataLoading] = useState(false);
   const [testLoading, setTestLoading] = useState(false);
   const [integLoading, setIntegLoading] = useState(false);
@@ -269,13 +270,14 @@ export default function Configurator() {
     }
   };
 
-  const pollJobUntilDone = (jobId, onDone, timeoutMs = 60 * 60 * 1000) => {
+  const pollJobUntilDone = (jobId, onDone, timeoutMs = 60 * 60 * 1000, onProgress = null) => {
     const startedAt = Date.now();
     const poll = setInterval(async () => {
       try {
         const statusRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/jobs/${jobId}`);
         if (statusRes.ok) {
           const statusData = await statusRes.json();
+          if (onProgress && statusData.progress != null) onProgress(statusData.progress);
           if (statusData.status === "COMPLETED" || statusData.status === "FAILED") {
             clearInterval(poll);
             onDone(statusData);
@@ -324,6 +326,7 @@ export default function Configurator() {
 
   const handleCalcKPI = async () => {
     setCalcLoading(true);
+    setCalcProgress(0);
     setMessage(null);
     try {
       const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/calculate/${selectedYear}`, {
@@ -336,19 +339,22 @@ export default function Configurator() {
         setMessage({ type: "info", text: "Menghitung KPI dari data lokal..." });
         pollJobUntilDone(data.job_id, (statusData) => {
           setCalcLoading(false);
+          setCalcProgress(100);
           if (statusData.status === "COMPLETED") {
             setMessage({ type: "success", text: `Kalkulasi KPI selesai untuk tahun ${selectedYear}.` });
           } else {
             setMessage({ type: "error", text: "Kalkulasi KPI gagal: " + (statusData.error_message || "Unknown error") });
           }
-        });
+        }, 60 * 60 * 1000, setCalcProgress);
       } else {
         setMessage({ type: "success", text: `Kalkulasi KPI selesai untuk tahun ${selectedYear}.` });
         setCalcLoading(false);
+        setCalcProgress(100);
       }
     } catch (err) {
       setMessage({ type: "error", text: err.message });
       setCalcLoading(false);
+      setCalcProgress(0);
     }
   };
 
@@ -488,6 +494,22 @@ export default function Configurator() {
                     )}
                   </button>
                 </div>
+                {calcLoading && (
+                  <div style={{ marginTop: "10px", width: "100%", maxWidth: "360px" }}>
+                    <div style={{
+                      height: "8px", background: "#e2e8f0", borderRadius: "4px", overflow: "hidden"
+                    }}>
+                      <div style={{
+                        height: "100%", width: `${Math.max(calcProgress, 2)}%`,
+                        background: "var(--color-secondary)", borderRadius: "4px",
+                        transition: "width 0.8s ease-in-out"
+                      }} />
+                    </div>
+                    <div style={{ marginTop: "6px", fontSize: "12px", color: "var(--color-text-muted)" }}>
+                      Kalkulasi berjalan: {calcProgress}%
+                    </div>
+                  </div>
+                )}
               </div>
               <div style={{ 
                 padding: "16px", 

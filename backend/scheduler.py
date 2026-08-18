@@ -348,29 +348,34 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
 
         from comprehensive_sync import calculate_daily_aggregated_kpi
         from precompute_metrics import compute_all_year_metrics
+        from feature_analyzer import calculate_feature_weight
         from sqlalchemy import and_
         from datetime import datetime as dt
+        from concurrent.futures import ThreadPoolExecutor
 
         # Get all active users
         users = db.query(models.User).filter(models.User.is_active == True).all()
 
         start_date = datetime(year, 1, 1, 0, 0, 0)
         end_date = datetime(year, 12, 31, 23, 59, 59)
-
-        calc_count = 0
-        total_dates = 0
         total_users = len(users)
-        for idx, u in enumerate(users):
+
+        # Thread-safe progress reporting (main.py's progress_cb shares one bg_db
+        # session, so concurrent calls must be serialised).
+        _progress_lock = threading.Lock()
+        _computed = {"users": 0, "dates": 0}
+        _cancelled = {"flag": False}
+
+        def _process_user(user, u_index):
+            """Bulk-load + calculate all dates for ONE user in its own session."""
+            if _cancelled["flag"]:
+                return None
+            sdb = SessionLocal()
             try:
-                if _job_was_cancelled(db, job_id):
-                    logger.info(f"KPI calc job {job_id} was cancelled; stopping early")
-                    calc_count = None
-                    break
-                # ── Bulk load ALL data for this user ONCE per year ──
                 # 1. Activities for the whole year (single query)
-                act_q = db.query(models.Activity).filter(
+                act_q = sdb.query(models.Activity).filter(
                     and_(
-                        models.Activity.user_id == u.id,
+                        models.Activity.user_id == user.id,
                         models.Activity.activity_date >= start_date,
                         models.Activity.activity_date <= end_date
                     )
@@ -381,9 +386,9 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
                     activities_by_date.setdefault(d, []).append(a)
 
                 # 2. Attendance for the whole year (single query)
-                att_q = db.query(models.AttendanceRecord).filter(
+                att_q = sdb.query(models.AttendanceRecord).filter(
                     and_(
-                        models.AttendanceRecord.user_id == u.id,
+                        models.AttendanceRecord.user_id == user.id,
                         models.AttendanceRecord.date >= start_date.date().isoformat(),
                         models.AttendanceRecord.date <= end_date.date().isoformat()
                     )
@@ -391,36 +396,39 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
                 attendance_by_date = {a.date: a for a in att_q}
 
                 # 3. Jira identity (single query)
-                ji_ident = db.query(models.EmployeeIdentity).filter(
+                ji_ident = sdb.query(models.EmployeeIdentity).filter(
                     and_(
-                        models.EmployeeIdentity.user_id == u.id,
+                        models.EmployeeIdentity.user_id == user.id,
                         models.EmployeeIdentity.source == 'jira'
                     )
                 ).first()
 
-                # 4. All resolved RawJiraIssue for the year (single query)
-                resolved_by_date = {}
+                # 4. All resolved RawJiraIssue for the year, pre-aggregated into a
+                #    per-date complexity sum ONCE (not per date, not per issue).
+                complexity_by_date = {}
                 if ji_ident and ji_ident.external_user_id:
-                    issues_q = db.query(models.RawJiraIssue).filter(
+                    issues_q = sdb.query(models.RawJiraIssue).filter(
                         models.RawJiraIssue.assignee_account_id == ji_ident.external_user_id,
                         models.RawJiraIssue.resolved_date >= start_date,
                         models.RawJiraIssue.resolved_date <= end_date
                     ).all()
                     for iss in issues_q:
-                        if iss.resolved_date:
-                            rdate = iss.resolved_date.date() if hasattr(iss.resolved_date, 'date') else iss.resolved_date
-                            resolved_by_date.setdefault(rdate, []).append(iss)
+                        if not iss.resolved_date:
+                            continue
+                        rdate = iss.resolved_date.date() if hasattr(iss.resolved_date, 'date') else iss.resolved_date
+                        w = iss.complexity_score if iss.complexity_score is not None else calculate_feature_weight(iss.raw_data or {})
+                        complexity_by_date[rdate] = complexity_by_date.get(rdate, 0.0) + float(w)
 
                 # 5. Rule + metrics resolved ONCE (not per date!)
                 from yearly_kpi_engine import get_rule_and_metrics_for_user, YearlyKPIEngine
-                rule, metrics_defs = get_rule_and_metrics_for_user(db, u)
+                rule, metrics_defs = get_rule_and_metrics_for_user(sdb, user)
                 working_days = YearlyKPIEngine.calculate_working_days(
                     datetime(year, 1, 1), datetime(year, 12, 31))
 
                 # 6. Existing daily KPI rows (single query)
-                existing_rows = db.query(models.KPIEmployeeDaily).filter(
+                existing_rows = sdb.query(models.KPIEmployeeDaily).filter(
                     and_(
-                        models.KPIEmployeeDaily.user_id == u.id,
+                        models.KPIEmployeeDaily.user_id == user.id,
                         models.KPIEmployeeDaily.date >= start_date,
                         models.KPIEmployeeDaily.date <= end_date
                     )
@@ -441,7 +449,7 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
                 preloaded = {
                     "activities_by_date": activities_by_date,
                     "attendance_by_date": attendance_by_date,
-                    "resolved_by_date": resolved_by_date,
+                    "complexity_by_date": complexity_by_date,
                     "jira_ident": ji_ident,
                     "rule_metrics": (rule, metrics_defs),
                     "working_days": working_days,
@@ -450,24 +458,55 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
                 }
 
                 for d_idx, d in enumerate(sorted(all_dates)):
-                    calculate_daily_aggregated_kpi(db, u, dt.combine(d, dt.min.time()), preloaded=preloaded)
-                    # Update progress inside the date loop so updated_at stays fresh
-                    # even when a single user takes many minutes.
+                    if _cancelled["flag"]:
+                        break
+                    calculate_daily_aggregated_kpi(sdb, user, dt.combine(d, dt.min.time()), preloaded=preloaded)
+                    # Progress inside the date loop keeps updated_at fresh even when
+                    # a single user takes many minutes.
                     if progress_cb and total_users > 0:
-                        num_dates = len(all_dates)
-                        fraction = (idx + (d_idx + 1) / max(num_dates, 1)) / total_users
+                        num_dates = max(len(all_dates), 1)
+                        with _progress_lock:
+                            done_users = _computed["users"]
+                        fraction = (done_users + (d_idx + 1) / num_dates) / total_users
                         progress_cb(int(10 + fraction * 80))
 
                 # One commit per user instead of one per date
-                db.commit()
-                calc_count += 1
-                total_dates += len(all_dates)
-                logger.info(f"Calculate KPI: processed {u.full_name} for {len(all_dates)} dates")
+                sdb.commit()
+                return (user.full_name, len(all_dates))
             except Exception as e:
-                logger.error(f"Calculate KPI: failed for user {u.id}: {e}")
-                db.rollback()
-            if progress_cb and total_users > 0:
-                progress_cb(int(10 + (idx + 1) / total_users * 80))
+                logger.error(f"Calculate KPI: failed for user {user.id}: {e}")
+                sdb.rollback()
+                return None
+            finally:
+                sdb.close()
+
+        calc_count = 0
+        total_dates = 0
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            futures = []
+            for idx, u in enumerate(users):
+                if _job_was_cancelled(db, job_id):
+                    _cancelled["flag"] = True
+                    logger.info(f"KPI calc job {job_id} was cancelled; stopping early")
+                    break
+                futures.append(pool.submit(_process_user, u, idx))
+            for fut in futures:
+                res = fut.result()
+                with _progress_lock:
+                    _computed["users"] += 1
+                if res:
+                    calc_count += 1
+                    total_dates += res[1]
+                    logger.info(f"Calculate KPI: processed {res[0]} for {res[1]} dates")
+                if progress_cb and total_users > 0:
+                    with _progress_lock:
+                        done_users = _computed["users"]
+                    progress_cb(int(10 + done_users / max(total_users, 1) * 80))
+                if _cancelled["flag"]:
+                    break
+
+        if calc_count is None or _cancelled["flag"]:
+            return {"status": "cancelled", "message": "Kalkulasi dibatalkan karena job baru dimulai"}
 
         # Precompute per-user yearly aggregates + company maxima
         try:
@@ -486,8 +525,6 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
         except Exception as e:
             logger.warning(f"Failed to invalidate cache: {e}")
 
-        if calc_count is None:
-            return {"status": "cancelled", "message": "Kalkulasi dibatalkan karena job baru dimulai"}
         return {"status": "success", "users_processed": calc_count, "dates_processed": total_dates}
 
     except Exception as e:
