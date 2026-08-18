@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 import models
@@ -17,6 +17,30 @@ def create_sync_job(db: Session, user_id: str, job_type: str) -> str:
     db.commit()
     db.refresh(job)
     return job.id
+
+def mark_stale_jobs_failed(db: Session, job_type: str = None, max_age_minutes: int = 15):
+    """Mark jobs stuck in PENDING/RUNNING as FAILED.
+
+    Railway (re)deploys kill in-process background tasks. A job left in
+    PENDING/RUNNING with no progress updates for a long time means its worker
+    was killed, so it will never complete. Clean these up before creating a
+    new job so polling can't hang on zombie statuses.
+    """
+    cutoff = datetime.now() - timedelta(minutes=max_age_minutes)
+    q = db.query(models.SyncJob).filter(
+        models.SyncJob.status.in_(["PENDING", "RUNNING"]),
+        models.SyncJob.started_at < cutoff
+    )
+    if job_type:
+        q = q.filter(models.SyncJob.job_type == job_type)
+    stale = q.all()
+    for job in stale:
+        job.status = "FAILED"
+        job.error_message = "Job dibatalkan: worker dihentikan (redeploy/restart) sebelum selesai. Silakan jalankan ulang."
+        job.completed_at = datetime.now()
+    if stale:
+        db.commit()
+    return len(stale)
 
 def update_job_progress(db: Session, job_id: str, progress: int, status: str = "RUNNING"):
     """Update job progress safely"""

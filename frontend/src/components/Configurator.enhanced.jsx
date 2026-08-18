@@ -269,7 +269,8 @@ export default function Configurator() {
     }
   };
 
-  const pollJobUntilDone = (jobId, onDone) => {
+  const pollJobUntilDone = (jobId, onDone, timeoutMs = 10 * 60 * 1000) => {
+    const startedAt = Date.now();
     const poll = setInterval(async () => {
       try {
         const statusRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/jobs/${jobId}`);
@@ -278,7 +279,12 @@ export default function Configurator() {
           if (statusData.status === "COMPLETED" || statusData.status === "FAILED") {
             clearInterval(poll);
             onDone(statusData);
+            return;
           }
+        }
+        if (Date.now() - startedAt > timeoutMs) {
+          clearInterval(poll);
+          onDone({ status: "TIMEOUT", error_message: "Waktu habis menunggu job. Cek ulang nanti atau jalankan ulang." });
         }
       } catch (e) {
         console.error("Error polling job status:", e);
