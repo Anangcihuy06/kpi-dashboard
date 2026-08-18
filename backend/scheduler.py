@@ -4,6 +4,7 @@ import threading
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from database import SessionLocal
 import models
 from engine import DynamicKPIEngine
@@ -426,24 +427,38 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
 
                     # 4b. Backfill complexity_score for issues missing it, ONCE, so
                     #     later runs only ever do the cheap aggregate query above.
-                    null_issues = sdb.query(models.RawJiraIssue).filter(
+                    #     Use streaming + batch commit to avoid massive transaction
+                    #     stalls when thousands of issues need scoring.
+                    null_issues_q = sdb.query(
+                        models.RawJiraIssue.id,
+                        models.RawJiraIssue.resolved_date,
+                        models.RawJiraIssue.raw_data
+                    ).filter(
                         models.RawJiraIssue.assignee_account_id == ji_ident.external_user_id,
                         models.RawJiraIssue.resolved_date >= start_date,
                         models.RawJiraIssue.resolved_date <= end_date,
                         models.RawJiraIssue.complexity_score.is_(None)
-                    ).all()
-                    if null_issues:
-                        for iss in null_issues:
-                            if not iss.resolved_date:
-                                continue
-                            w = calculate_feature_weight(iss.raw_data or {})
-                            iss.complexity_score = float(w)
-                            rdate = iss.resolved_date.date() if hasattr(iss.resolved_date, 'date') else iss.resolved_date
-                            complexity_by_date[rdate] = complexity_by_date.get(rdate, 0.0) + float(w)
+                    ).yield_per(100)
+                    backfill_count = 0
+                    batch_size = 50
+                    for null_id, null_date, null_raw in null_issues_q:
+                        if not null_date:
+                            continue
+                        w = calculate_feature_weight(null_raw or {})
+                        rdate = null_date.date() if hasattr(null_date, 'date') else null_date
+                        complexity_by_date[rdate] = complexity_by_date.get(rdate, 0.0) + float(w)
+                        sdb.execute(
+                            text("UPDATE raw_jira_issues SET complexity_score = :score WHERE id = :id"),
+                            {"score": float(w), "id": null_id}
+                        )
+                        backfill_count += 1
+                        if backfill_count % batch_size == 0:
+                            sdb.commit()
+                    if backfill_count > 0:
                         sdb.commit()
                         logger.info(
                             f"Calculate KPI: backfilled complexity_score for "
-                            f"{len(null_issues)} issues of user {user.id}"
+                            f"{backfill_count} issues of user {user.id}"
                         )
 
                 # 5. Rule + metrics resolved ONCE (not per date!)
