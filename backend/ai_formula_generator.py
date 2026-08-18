@@ -253,7 +253,7 @@ class AIFeatureScorer:
         }
         return focus_map.get(division_code.upper(), "General operations and performance")
     
-    async def _call_ai_api(self, prompt: str) -> Dict[str, Any]:
+    def _call_ai_api(self, prompt: str) -> Dict[str, Any]:
         """
         Call OpenRouter API for formula generation
         
@@ -287,8 +287,8 @@ class AIFeatureScorer:
         }
         
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(
                     self.BASE_URL,
                     headers=headers,
                     json=data
