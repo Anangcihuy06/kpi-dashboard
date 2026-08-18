@@ -295,7 +295,7 @@ export default function Configurator() {
       if (!response.ok) throw new Error("Gagal menyimpan aturan");
       const data = await response.json();
       toast.success(`Aturan berhasil diperbarui ke Versi ${data.version}!`);
-      fetchRulesForDivision(selectedDivisionId);
+      fetchRulesForDivision(selectedDivisionId, selectedGroupId);
     } catch (err) {
       toast.error(err.message);
     } finally {

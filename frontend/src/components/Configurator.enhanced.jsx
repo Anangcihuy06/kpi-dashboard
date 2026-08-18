@@ -198,7 +198,7 @@ export default function Configurator() {
       if (!response.ok) throw new Error("Gagal menyimpan aturan");
       const data = await response.json();
       setMessage({ type: "success", text: `Aturan berhasil diperbarui ke Versi ${data.version}!` });
-      fetchRulesForDivision(selectedDivisionId);
+      fetchRulesForDivision(selectedDivisionId, selectedGroupId);
     } catch (err) {
       setMessage({ type: "error", text: err.message });
     } finally {
