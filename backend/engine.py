@@ -1,4 +1,5 @@
 import ast
+import json
 import operator
 from typing import Dict, Any, List
 
@@ -134,6 +135,9 @@ def _preprocess_if_calls(formula_str: str) -> str:
                 parts = _split_top_level_commas(inner)
                 if len(parts) == 3:
                     cond, val_true, val_false = parts
+                    cond = _preprocess_if_calls(cond)
+                    val_true = _preprocess_if_calls(val_true)
+                    val_false = _preprocess_if_calls(val_false)
                     out.append(f"({val_true} if ({cond}) else {val_false})")
                     i = j
                     continue
@@ -174,6 +178,68 @@ def evaluate_kpi_formula(formula_str: str, context: Dict[str, float]) -> float:
         return 0.0
 
 
+def normalize_rule_variables(variables) -> Dict[str, Any]:
+    """Normalize KPIRuleMetric.variables into flat scalar values.
+
+    AI-generated variables are stored in two shapes:
+      * simple scalar:  {"target_days": 261}
+      * declarative:    {"jira_sp": {"description": "...", "default_value": 0}}
+    This helper returns the scalar value (default_value when dict) so the
+    evaluator never receives a dict, fixing `float() argument must be ... not 'dict'`.
+    Non-numeric / unsupported values are dropped.
+
+    Returns (declarative, scalar) where declarative contains only the dict-form
+    entries (used as fallback only) and scalar contains the plain config values
+    (kept with their original precedence).
+    """
+    if not variables:
+        return {}, {}
+    try:
+        var_dict = variables if isinstance(variables, dict) else json.loads(variables)
+    except Exception:
+        return {}, {}
+    if not isinstance(var_dict, dict):
+        return {}, {}
+
+    declarative: Dict[str, Any] = {}
+    scalar: Dict[str, Any] = {}
+    for key, raw_val in var_dict.items():
+        val = raw_val
+        is_decl = isinstance(raw_val, dict)
+        if is_decl:
+            val = raw_val.get("default_value")
+        if val is None:
+            continue
+        if isinstance(val, bool):
+            continue
+        try:
+            numeric = float(val)
+        except (TypeError, ValueError):
+            continue
+        (declarative if is_decl else scalar)[key] = numeric
+    return declarative, scalar
+
+
+def merge_rule_variables(eval_context: Dict[str, Any], variables) -> Dict[str, Any]:
+    """Merge rule variables into eval_context without clobbering actual metrics.
+
+    Declarative variables ({metric: {description, default_value}}) only fill keys
+    that are absent from the context, so `jira_sp` (real data) is never overridden
+    by a template default. Plain scalar config values (e.g. target_days,
+    late_percentage penalty) keep their original precedence and override any
+    existing value.
+    """
+    if not variables:
+        return eval_context
+    declarative, scalar = normalize_rule_variables(variables)
+    for key, val in declarative.items():
+        if key not in eval_context:
+            eval_context[key] = val
+    for key, val in scalar.items():
+        eval_context[key] = val
+    return eval_context
+
+
 class DynamicKPIEngine:
     @classmethod
     def calculate_sprint_score(
@@ -193,7 +259,8 @@ class DynamicKPIEngine:
             cap_score = float(metric_rule.get("cap_score", 120.0))
 
             # Combine input raw metrics and static variables configured in the rule
-            eval_context = {**raw_metrics, **variables}
+            eval_context = dict(raw_metrics)
+            eval_context = merge_rule_variables(eval_context, variables)
             
             # Use safe parser
             raw_calculated_score = evaluate_kpi_formula(formula, eval_context)

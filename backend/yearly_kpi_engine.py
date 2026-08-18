@@ -136,21 +136,17 @@ class YearlyKPIEngine:
                 # IMPORTANT: Variables from KPI rule take precedence over calculated company maxima
                 eval_context = {}
                 
-                # First, add variables from the KPI rule configuration
+                # First, add user's actual performance metrics
+                eval_context.update(aggregated_metrics)
+                
+                # Then, add rule config variables that are not already present
+                # (actual metrics win over declarative default_values)
                 try:
                     if m_def.variables:
-                        import json
-                        vars_dict = m_def.variables if isinstance(m_def.variables, dict) else json.loads(m_def.variables)
-                        for k, v in vars_dict.items():
-                            eval_context[k] = v
+                        from engine import merge_rule_variables
+                        eval_context = merge_rule_variables(eval_context, m_def.variables)
                 except Exception as e:
                     logger.error(f"Failed to merge variables for {m_def.metric_key}: {e}")
-                
-                # Then, add user's actual performance metrics, but skip maxima variables that are in config
-                for k, v in aggregated_metrics.items():
-                    # Only add if not already in eval_context (config variables take precedence)
-                    if k not in eval_context:
-                        eval_context[k] = v
                 
                 # CRITICAL FIX: Ensure formula variables exist in context
                 missing_vars = []

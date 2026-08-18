@@ -123,13 +123,11 @@ def test_calculation_consistency():
             print(f"\nTesting metric: {m.metric_key}")
             
             # Build eval context
-            eval_context = {**sample_metrics}
+            eval_context = dict(sample_metrics)
             try:
                 if m.variables:
-                    import json
-                    vars_dict = m.variables if isinstance(m.variables, dict) else json.loads(m.variables)
-                    for k, v in vars_dict.items():
-                        eval_context[k] = v
+                    from engine import merge_rule_variables
+                    eval_context = merge_rule_variables(eval_context, m.variables)
             except Exception as e:
                 print(f"  Error parsing variables: {e}")
                 continue

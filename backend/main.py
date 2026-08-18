@@ -1280,13 +1280,11 @@ def get_user_calculation_details(user_id: str, year: int, db: Session = Depends(
                 # Build eval context
                 eval_context = dict(user_metrics)
                 
-                # Add variables from rule
+                # Add variables from rule (actual metrics take precedence)
                 try:
                     if m_def.variables:
-                        import json
-                        vars_dict = m_def.variables if isinstance(m_def.variables, dict) else json.loads(m_def.variables)
-                        for k, v in vars_dict.items():
-                            eval_context[k] = v
+                        from engine import merge_rule_variables
+                        eval_context = merge_rule_variables(eval_context, m_def.variables)
                 except Exception as e:
                     print(f"Error parsing variables for {m_def.metric_key}: {e}")
                 

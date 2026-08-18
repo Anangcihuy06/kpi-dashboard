@@ -164,22 +164,15 @@ def check_current_issue(user_nik, year=2026):
         
         for m_def in metrics:
             try:
-                eval_context = {}
+                eval_context = dict(user_metrics)
                 
-                # Add variables from rule first (config takes precedence)
+                # Add variables from rule (actual metrics take precedence)
                 try:
                     if m_def.variables:
-                        import json
-                        vars_dict = m_def.variables if isinstance(m_def.variables, dict) else json.loads(m_def.variables)
-                        for k, v in vars_dict.items():
-                            eval_context[k] = v
+                        from engine import merge_rule_variables
+                        eval_context = merge_rule_variables(eval_context, m_def.variables)
                 except Exception as e:
                     print(f"  Variables error: {e}")
-                
-                # Add user metrics, but skip maxima variables that are in config
-                for k, v in user_metrics.items():
-                    if k not in eval_context:  # Config variables take precedence
-                        eval_context[k] = v
                 
                 # Calculate score
                 score = evaluate_kpi_formula(m_def.formula_expression, eval_context)

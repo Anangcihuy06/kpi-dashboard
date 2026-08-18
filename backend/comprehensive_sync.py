@@ -1482,10 +1482,8 @@ def calculate_daily_aggregated_kpi(db: Session, user: models.User, date: datetim
             eval_context = dict(daily_raw)
             if m_def.variables:
                 try:
-                    vars_dict = m_def.variables if isinstance(m_def.variables, dict) \
-                        else json.loads(m_def.variables)
-                    for k, v in vars_dict.items():
-                        eval_context[k] = v
+                    from engine import merge_rule_variables
+                    eval_context = merge_rule_variables(eval_context, m_def.variables)
                 except Exception as e:
                     logger.error(f"Failed to merge variables for {m_def.metric_key}: {e}")
             for k in list(eval_context.keys()):
