@@ -1,5 +1,6 @@
 import requests
 from datetime import datetime
+import threading
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy.orm import Session
@@ -13,6 +14,11 @@ import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Scheduler")
+
+# Serialises KPI writes. All paths that store rows into kpi_employee_daily
+# (manual "Hitung KPI" job, background scheduler job) must go through this lock
+# so two workers never deadlock each other with overlapping row locks.
+KPI_CALC_LOCK = threading.Lock()
 
 # Configurable scheduler intervals (can be overridden via environment variables)
 SYNC_SPRINTS_INTERVAL_MINUTES = int(os.getenv("SYNC_SPRINTS_INTERVAL_MINUTES", "60"))
@@ -304,6 +310,19 @@ def sync_data_only_job():
         db.close()
 
 
+def _job_was_cancelled(db: Session, job_id: str) -> bool:
+    """True when this job's row was already failed/closed by a newer trigger.
+
+    The old worker thread keeps running even after cancel_running_jobs marks its
+    row FAILED. It must notice and stop itself, otherwise it still writes rows
+    and run_calc would resurrect it as COMPLETED.
+    """
+    if not job_id:
+        return False
+    job = db.query(models.SyncJob).filter(models.SyncJob.id == job_id).first()
+    return job is not None and job.status == "FAILED"
+
+
 def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=None):
     """
     Calculate KPI using data already present in the local DB.
@@ -312,6 +331,13 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
     """
     if not year:
         year = datetime.now().year
+
+    # Only one KPI calc may write kpi_employee_daily at a time. Multiple parallel
+    # runs (repeated user clicks while poll shows a spinner) deadlock on
+    # overlapping row locks and every job freezes at the same user.
+    if not KPI_CALC_LOCK.acquire(blocking=False):
+        logger.warning("calculate_kpi_only_job skipped: another KPI calc is already running")
+        return {"status": "error", "message": "Kalkulasi KPI sedang berjalan. Tunggu kalkulasi yang sedang berjalan selesai, lalu coba lagi."}
 
     logger.info(f"Starting KPI calculation-only job for year {year} (local DB only)...")
     db = SessionLocal()
@@ -336,6 +362,10 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
         total_users = len(users)
         for idx, u in enumerate(users):
             try:
+                if _job_was_cancelled(db, job_id):
+                    logger.info(f"KPI calc job {job_id} was cancelled; stopping early")
+                    calc_count = None
+                    break
                 # ── Bulk load ALL data for this user ONCE per year ──
                 # 1. Activities for the whole year (single query)
                 act_q = db.query(models.Activity).filter(
@@ -456,6 +486,8 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
         except Exception as e:
             logger.warning(f"Failed to invalidate cache: {e}")
 
+        if calc_count is None:
+            return {"status": "cancelled", "message": "Kalkulasi dibatalkan karena job baru dimulai"}
         return {"status": "success", "users_processed": calc_count, "dates_processed": total_dates}
 
     except Exception as e:
@@ -463,12 +495,20 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
         return {"status": "error", "message": str(e)}
     finally:
         db.close()
+        try:
+            KPI_CALC_LOCK.release()
+        except RuntimeError:
+            pass
 
 
 def sync_and_calculate_all_users_job(year: int = None):
     if not year:
         year = datetime.now().year
-        
+
+    if not KPI_CALC_LOCK.acquire(blocking=False):
+        logger.info("sync_and_calculate_all_users_job skipped: another KPI calc is already running")
+        return
+
     logger.info(f"Starting background KPI calculation for year {year}...")
     db = SessionLocal()
     try:
@@ -560,6 +600,10 @@ def sync_and_calculate_all_users_job(year: int = None):
             
     finally:
         db.close()
+        try:
+            KPI_CALC_LOCK.release()
+        except RuntimeError:
+            pass
 
 
 def init_scheduler():

@@ -1663,6 +1663,14 @@ async def calculate_kpi_only(year: int, background_tasks: BackgroundTasks, db: S
                 _company_maxima_cache.clear()
             except Exception:
                 pass
+            status = (result or {}).get("status", "error")
+            if status == "cancelled":
+                # Job row was already marked FAILED by cancel_running_jobs;
+                # do not resurrect it as COMPLETED.
+                return
+            if status == "error":
+                mark_job_failed(bg_db, jid, (result or {}).get("message", "Kalkulasi KPI gagal"))
+                return
             mark_job_completed(bg_db, jid, result or {"message": "KPI calculation completed"})
         except Exception as e:
             print(f"Error in background KPI calculation: {str(e)}")
