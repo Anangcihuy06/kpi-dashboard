@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Settings, Play, CheckCircle, RefreshCw, AlertCircle, Plus, Trash2, Globe, Server, Shield, UserCog, User, Building2, Layers, ShieldAlert, Lock } from "lucide-react";
+import { Settings, Play, CheckCircle, RefreshCw, AlertCircle, Plus, Trash2, Globe, Server, Shield, UserCog, User, Building2, Layers, ShieldAlert, Lock, Sparkles, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Configurator() {
@@ -36,6 +36,9 @@ export default function Configurator() {
   const [calcLoading, setCalcLoading] = useState(false);
   const [testLoading, setTestLoading] = useState(false);
   const [integLoading, setIntegLoading] = useState(false);
+  const [showAIPrompt, setShowAIPrompt] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [indicatorDescription, setIndicatorDescription] = useState("");
 
   useEffect(() => {
     fetchSprints();
@@ -173,7 +176,61 @@ export default function Configurator() {
       return;
     }
 
-    setMetrics([...metrics, { metric_key: "", weight: 0.10, calc_type: "FORMULA", formula_expression: "", variables: {}, cap_score: 100 }]);
+    setShowAIPrompt(true);
+  };
+
+  const handleAIGenerate = async () => {
+    if (!indicatorDescription.trim()) {
+      toast.error("Mohon isi deskripsi indikator");
+      return;
+    }
+
+    setAiLoading(true);
+    try {
+      const request = {
+        user_id: currentUser.id,
+        user_name: currentUser.name,
+        user_role: currentUser.roles?.[0] || "EMPLOYEE",
+        has_subordinates: currentUser.hasSubordinates || false,
+        division_id: currentUser.division_id,
+        division_name: divisions.find(d => d.id === currentUser.division_id)?.name || "Unknown",
+        division_code: divisions.find(d => d.id === currentUser.division_id)?.code || "UNKNOWN",
+        group_id: selectedGroupId,
+        group_name: currentUser.group_name || null,
+        creation_scope: selectedGroupId ? "group" : "division",
+        indicator_description: indicatorDescription
+      };
+
+      const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/ai/generate-formula", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request)
+      });
+
+      const data = await response.json();
+
+      if (data.status === "success" && data.formula) {
+        const newMetric = {
+          metric_key: data.variables?.metric_key || "kpi_" + Date.now(),
+          weight: 0.10,
+          calc_type: "FORMULA",
+          formula_expression: data.formula,
+          variables: data.variables || {},
+          cap_score: data.cap_score || 100
+        };
+
+        setMetrics([...metrics, newMetric]);
+        setShowAIPrompt(false);
+        setIndicatorDescription("");
+        toast.success("Indikator berhasil dibuat dengan AI!");
+      } else {
+        throw new Error(data.error || "Gagal generate formula");
+      }
+    } catch (error) {
+      toast.error(error.message || "Terjadi kesalahan saat generate formula");
+    } finally {
+      setAiLoading(false);
+    }
   };
 
   const removeMetricRow = (idx) => {
@@ -486,7 +543,7 @@ export default function Configurator() {
                     </button>
                     {canCreateIndicators() ? (
                       <button className="btn-primary" onClick={addMetricRow} style={{ padding: "8px 16px", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px", borderRadius: "8px", boxShadow: "0 1px 3px rgba(37,99,235,0.2)" }}>
-                        <Plus size={16} /> Tambah Indikator
+                        <Sparkles size={16} /> Tambah dengan AI
                       </button>
                     ) : (
                       <div className="permission-message" style={{ 
@@ -887,6 +944,158 @@ export default function Configurator() {
             </div>
             <div style={{ padding: "16px 24px", borderTop: "1px solid #e2e8f0", textAlign: "right", backgroundColor: "#f8fafc", borderRadius: "0 0 12px 12px" }}>
               <button onClick={() => setShowGuide(false)} className="btn-primary" style={{ padding: "8px 24px", fontSize: "14px" }}>Tutup</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAIPrompt && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: "rgba(0, 0, 0, 0.5)",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          zIndex: 1000,
+        }}>
+          <div style={{
+            background: "white",
+            borderRadius: "16px",
+            padding: "24px",
+            width: "90%",
+            maxWidth: "500px",
+            boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)"
+          }}>
+            <div style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: "16px"
+            }}>
+              <h2 style={{
+                fontSize: "18px",
+                fontWeight: 700,
+                color: "#0f172a",
+                margin: 0,
+                display: "flex",
+                alignItems: "center",
+                gap: "8px"
+              }}>
+                <Sparkles size={20} /> Buat Indikator dengan AI
+              </h2>
+              <button
+                onClick={() => {
+                  setShowAIPrompt(false);
+                  setIndicatorDescription("");
+                }}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: "4px",
+                  color: "#64748b"
+                }}
+              >
+                <ShieldAlert size={20} />
+              </button>
+            </div>
+
+            <div style={{ marginBottom: "16px" }}>
+              <label style={{
+                display: "block",
+                fontSize: "14px",
+                fontWeight: 600,
+                color: "#374151",
+                marginBottom: "8px"
+              }}>
+                Deskripsi Indikator KPI
+              </label>
+              <textarea
+                value={indicatorDescription}
+                onChange={(e) => setIndicatorDescription(e.target.value)}
+                placeholder="Contoh: Indikator kehadiran dengan target 22 hari kerja per bulan, penalti 0.5 poin untuk keterlambatan di atas 15 menit"
+                rows={4}
+                style={{
+                  width: "100%",
+                  padding: "12px",
+                  border: "1px solid #d1d5db",
+                  borderRadius: "8px",
+                  fontSize: "14px",
+                  fontFamily: "inherit",
+                  resize: "vertical",
+                  boxSizing: "border-box"
+                }}
+              />
+            </div>
+
+            <div style={{
+              background: "#fef3c7",
+              padding: "12px",
+              borderRadius: "8px",
+              marginBottom: "16px",
+              fontSize: "12px",
+              color: "#92400e"
+            }}>
+              <strong>💡 Tips:</strong> Jelaskan secara detail tentang:
+              <ul style={{ margin: "8px 0 0 20px", padding: 0 }}>
+                <li>Target yang ingin dicapai</li>
+                <li>Metric apa yang diukur</li>
+                <li>Aturan penalti/pengurangan</li>
+              </ul>
+            </div>
+
+            <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+              <button
+                onClick={() => {
+                  setShowAIPrompt(false);
+                  setIndicatorDescription("");
+                }}
+                style={{
+                  padding: "10px 20px",
+                  border: "1px solid #d1d5db",
+                  background: "white",
+                  borderRadius: "8px",
+                  cursor: "pointer",
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  color: "#374151"
+                }}
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleAIGenerate}
+                disabled={aiLoading}
+                style={{
+                  padding: "10px 20px",
+                  background: aiLoading ? "#9ca3af" : "#2563eb",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "8px",
+                  cursor: aiLoading ? "not-allowed" : "pointer",
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px"
+                }}
+              >
+                {aiLoading ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    Sedang Generate...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={16} />
+                    Generate Formula
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>
