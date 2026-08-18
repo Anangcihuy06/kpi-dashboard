@@ -1152,6 +1152,7 @@ def validate_indicator_creation_permission(user_id: str, scope: str, division_id
         }
 
 # Enhanced debugging endpoint for checking employee calculations
+
 @app.get("/api/v1/kpi/user-calculation-details")
 def get_user_calculation_details(user_id: str, year: int, db: Session = Depends(get_db)):
     """Get detailed calculation breakdown for a user for debugging"""
@@ -1185,7 +1186,7 @@ def get_user_calculation_details(user_id: str, year: int, db: Session = Depends(
         ).all()
         
         # Get actual metrics for user for this year
-        from yearly_kpi_engine import YearlyKPIEngine, METRIC_RAW_KEY_MAP
+        from yearly_kpi_engine import YearlyKPIEngine, METRIC_RAW_KEY_MAP, _resolve_formula_raw_value
         
         working_days = YearlyKPIEngine.calculate_working_days(from_date, to_date)
         
@@ -1295,7 +1296,12 @@ def get_user_calculation_details(user_id: str, year: int, db: Session = Depends(
                 weighted_score = capped_score * float(m_def.weight)
 
                 raw_key = METRIC_RAW_KEY_MAP.get(m_def.metric_key, m_def.metric_key)
-                actual_val = user_metrics.get(raw_key, user_metrics.get(m_def.metric_key, 0.0))
+                if raw_key in user_metrics:
+                    actual_val = user_metrics.get(raw_key, user_metrics.get(m_def.metric_key, 0.0))
+                else:
+                    # AI-generated formula metric: resolve the raw measure behind the formula
+                    # (e.g. jira_sp) so the dashboard "Nilai Raw" column shows real data.
+                    actual_val = _resolve_formula_raw_value(m_def.formula_expression, user_metrics, eval_context)
 
                 breakdown_details.append({
                     "metric_key": m_def.metric_key,

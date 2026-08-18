@@ -17,6 +17,40 @@ METRIC_RAW_KEY_MAP = {
     "attendance": "attendance_days",
 }
 
+
+def _resolve_formula_raw_value(formula_expression: str, metrics: Dict[str, Any], eval_context: Dict[str, Any]) -> float:
+    """Resolve the raw measure behind an AI-generated formula metric.
+
+    For metric_keys not mapped in METRIC_RAW_KEY_MAP (e.g. `if(jira_sp > 300, 10, 0)`),
+    extract the variable names from the formula and return the first real performance
+    metric so the dashboard "Nilai Raw" column shows actual data instead of 0.
+    """
+    try:
+        import ast
+        from engine import _preprocess_if_calls
+        tree = ast.parse(_preprocess_if_calls(formula_expression), mode='eval')
+        vars_in_formula = [
+            node.id for node in ast.walk(tree)
+            if isinstance(node, ast.Name) and node.id not in ("min", "max", "abs", "round")
+        ]
+    except Exception:
+        vars_in_formula = []
+
+    priority = ("jira_sp", "raw_jira_sp", "complexity_sp", "jira_issues_completed",
+                "attendance_days", "gitlab_commits", "gitlab_mr", "worklog_hours",
+                "founder_sp_credit")
+    for var in vars_in_formula:
+        if var in priority and var in metrics:
+            val = metrics.get(var, 0.0)
+            return round(float(val), 2) if isinstance(val, (int, float)) else 0.0
+    for var in vars_in_formula:
+        if var.startswith(("target_", "max_", "min_")):
+            continue
+        if var in metrics:
+            val = metrics.get(var, 0.0)
+            return round(float(val), 2) if isinstance(val, (int, float)) else 0.0
+    return 0.0
+
 def get_rule_and_metrics_for_user(db, user):
     """
     Resolve the active KPI rule for a user (group-level first, then division-level)
@@ -196,7 +230,13 @@ class YearlyKPIEngine:
                 
                 # Fetch actual_value generically if exists
                 raw_key = METRIC_RAW_KEY_MAP.get(m_def.metric_key, m_def.metric_key)
-                actual_val = aggregated_metrics.get(raw_key, aggregated_metrics.get(m_def.metric_key, 0.0))
+                if raw_key in aggregated_metrics:
+                    actual_val = aggregated_metrics.get(raw_key, aggregated_metrics.get(m_def.metric_key, 0.0))
+                else:
+                    # AI-generated formula metric: resolve the raw measure behind the
+                    # formula (e.g. jira_sp) so the "Nilai Raw" column shows real data.
+                    actual_val = _resolve_formula_raw_value(
+                        m_def.formula_expression, aggregated_metrics, eval_context)
                 
                 breakdown.append({
                     "metric_key": m_def.metric_key,
