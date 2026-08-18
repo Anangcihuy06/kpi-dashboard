@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { Settings, Play, CheckCircle, RefreshCw, AlertCircle, Plus, Trash2, Globe, Server, Wand2, Shield, UserCog, User, Building2, Layers, Users, ShieldAlert, Lock } from "lucide-react";
+import { Settings, Play, CheckCircle, RefreshCw, AlertCircle, Plus, Trash2, Globe, Server, Shield, UserCog, User, Building2, Layers, ShieldAlert, Lock } from "lucide-react";
 import { toast } from "sonner";
-import AIIndicatorCreator from "./AIIndicatorCreator";
 
 export default function Configurator() {
   const [activeSubTab, setActiveSubTab] = useState("rules"); // "rules" or "integrations"
@@ -37,9 +36,6 @@ export default function Configurator() {
   const [calcLoading, setCalcLoading] = useState(false);
   const [testLoading, setTestLoading] = useState(false);
   const [integLoading, setIntegLoading] = useState(false);
-
-  // NEW: AI Indicator Creator states
-  const [showAICreator, setShowAICreator] = useState(false);
 
   useEffect(() => {
     fetchSprints();
@@ -177,29 +173,10 @@ export default function Configurator() {
       });
       return;
     }
-
-    // Show AI creator for managers and admins
-    setShowAICreator(true);
   };
 
   const removeMetricRow = (idx) => {
     setMetrics(metrics.filter((_, i) => i !== idx));
-  };
-
-  // NEW: Handle AI-generated formula
-  const handleAIGeneratedFormula = (aiResult) => {
-    const newMetric = {
-      metric_key: `ai_generated_${Date.now()}`,
-      category: "AI_GENERATED",
-      weight: 0.10,
-      calc_type: "FORMULA",
-      formula_expression: aiResult.formula_expression,
-      variables: aiResult.variables,
-      cap_score: aiResult.cap_score
-    };
-
-    setMetrics([...metrics, newMetric]);
-    setShowAICreator(false);
   };
 
   // Helper functions for role checking
@@ -226,9 +203,9 @@ export default function Configurator() {
         submessage: "Hubungi manager Anda untuk perubahan indikator."
       };
     }
-    if (permissionLevel === "MANAGER" && !selectedGroupId) {
+    if (permissionLevel === 'MANAGER' && !selectedGroupId) {
       return {
-        icon: <Users size={24} />,
+        icon: <ShieldAlert size={24} />,
         title: "Group Selection Required",
         message: "Pilih grup terlebih dahulu untuk menambahkan indikator.",
         submessage: "Anda hanya dapat membuat indikator untuk grup Anda sendiri."
@@ -508,7 +485,7 @@ export default function Configurator() {
                     </button>
                     {canCreateIndicators() ? (
                       <button className="btn-primary" onClick={addMetricRow} style={{ padding: "8px 16px", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px", borderRadius: "8px", boxShadow: "0 1px 3px rgba(37,99,235,0.2)" }}>
-                        <Wand2 size={16} /> Tambah Indikator dengan AI
+                        <Plus size={16} /> Tambah Indikator
                       </button>
                     ) : (
                       <div className="permission-message" style={{ 
@@ -914,17 +891,6 @@ export default function Configurator() {
         </div>
       )}
 
-        {/* NEW: AI Indicator Creator Modal */}
-        {showAICreator && (
-          <AIIndicatorCreator
-            currentUser={currentUser}
-            selectedDivisionId={selectedDivisionId}
-            selectedGroupId={selectedGroupId}
-            divisions={divisions}
-            onFormulaGenerated={handleAIGeneratedFormula}
-            onCancel={() => setShowAICreator(false)}
-          />
-        )}
     </div>
   );
 }
