@@ -574,6 +574,31 @@ DIVISION_VARIABLE_REGISTRY = {
     }
 }
 
+def _normalize_division_code(division_code: str) -> str:
+    """Normalize HRIS division names/codes to registry codes."""
+    if not division_code:
+        return "IT"
+    code = division_code.strip().upper()
+    if code in DIVISION_VARIABLE_REGISTRY:
+        return code
+    aliases = {
+        "TECHNOLOGY": "IT",
+        "IT & ENGINEERING": "IT",
+        "IT OPERATIONS": "IT_OPS",
+        "IT OPS": "IT_OPS",
+        "OPERATIONS": "IT_OPS",
+        "FARE FILING": "FARE_FILING",
+        "FARE LOADING": "FARE_LOADING",
+        "TRAVEL OPS": "TRAVEL_OPS",
+        "TRAVEL OPERATIONS": "TRAVEL_OPS",
+        "HUMAN RESOURCES": "HR",
+        "SALES & MARKETING": "SALES",
+    }
+    for alias, registry_key in aliases.items():
+        if alias in code:
+            return registry_key
+    return code
+
 def get_division_variables(division_code: str) -> dict:
     """
     Get variables for a specific division
@@ -584,7 +609,7 @@ def get_division_variables(division_code: str) -> dict:
     Returns:
         Dictionary containing division variables or empty dict if not found
     """
-    division_data = DIVISION_VARIABLE_REGISTRY.get(division_code.upper())
+    division_data = DIVISION_VARIABLE_REGISTRY.get(_normalize_division_code(division_code))
     if division_data:
         return division_data["variables"]
     return {"core": [], "advanced": [], "ai_suggested": []}
@@ -599,7 +624,7 @@ def get_division_example_prompts(division_code: str) -> list:
     Returns:
         List of example prompts or empty list if not found
     """
-    division_data = DIVISION_VARIABLE_REGISTRY.get(division_code.upper())
+    division_data = DIVISION_VARIABLE_REGISTRY.get(_normalize_division_code(division_code))
     if division_data:
         return division_data.get("example_prompts", [])
     return []
@@ -614,7 +639,7 @@ def get_division_common_targets(division_code: str) -> dict:
     Returns:
         Dictionary of common targets or empty dict if not found
     """
-    division_data = DIVISION_VARIABLE_REGISTRY.get(division_code.upper())
+    division_data = DIVISION_VARIABLE_REGISTRY.get(_normalize_division_code(division_code))
     if division_data:
         return division_data.get("common_targets", {})
     return {}

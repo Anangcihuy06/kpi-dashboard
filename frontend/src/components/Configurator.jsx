@@ -189,7 +189,7 @@ export default function Configurator() {
     try {
       const request = {
         user_id: currentUser.id || "unknown",
-        user_name: currentUser.name || currentUser.username || "Unknown User",
+        user_name: currentUser.fullName || currentUser.name || "Unknown User",
         user_role: currentUser.roles?.[0] || "EMPLOYEE",
         has_subordinates: currentUser.hasSubordinates || false,
         division_id: currentUser.division_id,
