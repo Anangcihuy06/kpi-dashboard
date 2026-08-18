@@ -332,51 +332,99 @@ def calculate_kpi_only_job(year: int = None):
         end_date = datetime(year, 12, 31, 23, 59, 59)
 
         calc_count = 0
+        total_dates = 0
         for u in users:
             try:
-                # Get all activity dates + attendance dates already stored locally
-                activity_dates_q = db.query(models.Activity.activity_date).filter(
+                # ── Bulk load ALL data for this user ONCE per year ──
+                # 1. Activities for the whole year (single query)
+                act_q = db.query(models.Activity).filter(
                     and_(
                         models.Activity.user_id == u.id,
-                        models.Activity.activity_date >= start_date.date(),
-                        models.Activity.activity_date <= end_date.date()
+                        models.Activity.activity_date >= start_date,
+                        models.Activity.activity_date <= end_date
                     )
-                ).distinct().all()
+                ).all()
+                activities_by_date = {}
+                for a in act_q:
+                    d = a.activity_date.date() if hasattr(a.activity_date, 'date') else a.activity_date.date()
+                    activities_by_date.setdefault(d, []).append(a)
 
-                att_dates_q = db.query(models.AttendanceRecord.date).filter(
+                # 2. Attendance for the whole year (single query)
+                att_q = db.query(models.AttendanceRecord).filter(
                     and_(
                         models.AttendanceRecord.user_id == u.id,
                         models.AttendanceRecord.date >= start_date.date().isoformat(),
                         models.AttendanceRecord.date <= end_date.date().isoformat()
                     )
-                ).distinct().all()
+                ).all()
+                attendance_by_date = {a.date: a for a in att_q}
 
-                all_dates = set()
-                for r in activity_dates_q:
-                    if r[0]:
-                        if isinstance(r[0], dt):
-                            all_dates.add(r[0].date())
-                        elif hasattr(r[0], 'year'):
-                            all_dates.add(r[0])
-                        elif isinstance(r[0], str):
-                            try:
-                                all_dates.add(dt.strptime(r[0][:10], "%Y-%m-%d").date())
-                            except Exception:
-                                pass
-                for r in att_dates_q:
-                    if r[0]:
-                        if hasattr(r[0], 'year'):
-                            all_dates.add(r[0])
-                        elif isinstance(r[0], str):
-                            try:
-                                all_dates.add(dt.strptime(r[0][:10], "%Y-%m-%d").date())
-                            except Exception:
-                                pass
+                # 3. Jira identity (single query)
+                ji_ident = db.query(models.EmployeeIdentity).filter(
+                    and_(
+                        models.EmployeeIdentity.user_id == u.id,
+                        models.EmployeeIdentity.source == 'jira'
+                    )
+                ).first()
+
+                # 4. All resolved RawJiraIssue for the year (single query)
+                resolved_by_date = {}
+                if ji_ident and ji_ident.external_user_id:
+                    issues_q = db.query(models.RawJiraIssue).filter(
+                        models.RawJiraIssue.assignee_account_id == ji_ident.external_user_id,
+                        models.RawJiraIssue.resolved_date >= start_date,
+                        models.RawJiraIssue.resolved_date <= end_date
+                    ).all()
+                    for iss in issues_q:
+                        if iss.resolved_date:
+                            rdate = iss.resolved_date.date() if hasattr(iss.resolved_date, 'date') else iss.resolved_date
+                            resolved_by_date.setdefault(rdate, []).append(iss)
+
+                # 5. Rule + metrics resolved ONCE (not per date!)
+                from yearly_kpi_engine import get_rule_and_metrics_for_user, YearlyKPIEngine
+                rule, metrics_defs = get_rule_and_metrics_for_user(db, u)
+                working_days = YearlyKPIEngine.calculate_working_days(
+                    datetime(year, 1, 1), datetime(year, 12, 31))
+
+                # 6. Existing daily KPI rows (single query)
+                existing_rows = db.query(models.KPIEmployeeDaily).filter(
+                    and_(
+                        models.KPIEmployeeDaily.user_id == u.id,
+                        models.KPIEmployeeDaily.date >= start_date,
+                        models.KPIEmployeeDaily.date <= end_date
+                    )
+                ).all()
+                daily_by_date = {}
+                for r in existing_rows:
+                    k = r.date.date() if hasattr(r.date, 'date') else r.date
+                    daily_by_date[k] = r
+
+                # Combine unique dates from activities + attendance
+                all_dates = set(activities_by_date.keys())
+                for date_str in attendance_by_date.keys():
+                    try:
+                        all_dates.add(dt.strptime(date_str[:10], "%Y-%m-%d").date())
+                    except Exception:
+                        pass
+
+                preloaded = {
+                    "activities_by_date": activities_by_date,
+                    "attendance_by_date": attendance_by_date,
+                    "resolved_by_date": resolved_by_date,
+                    "jira_ident": ji_ident,
+                    "rule_metrics": (rule, metrics_defs),
+                    "working_days": working_days,
+                    "daily_by_date": daily_by_date,
+                    "no_commit": True,
+                }
 
                 for d in sorted(all_dates):
-                    calculate_daily_aggregated_kpi(db, u, dt.combine(d, dt.min.time()))
+                    calculate_daily_aggregated_kpi(db, u, dt.combine(d, dt.min.time()), preloaded=preloaded)
 
+                # One commit per user instead of one per date
+                db.commit()
                 calc_count += 1
+                total_dates += len(all_dates)
                 logger.info(f"Calculate KPI: processed {u.full_name} for {len(all_dates)} dates")
             except Exception as e:
                 logger.error(f"Calculate KPI: failed for user {u.id}: {e}")
@@ -399,7 +447,7 @@ def calculate_kpi_only_job(year: int = None):
         except Exception as e:
             logger.warning(f"Failed to invalidate cache: {e}")
 
-        return {"status": "success", "users_processed": calc_count}
+        return {"status": "success", "users_processed": calc_count, "dates_processed": total_dates}
 
     except Exception as e:
         logger.error(f"Error in calculate_kpi_only_job: {e}")

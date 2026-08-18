@@ -377,7 +377,6 @@ def discover_all_gitlab_projects(db: Session, settings: models.IntegrationSettin
                                     )
                                     db.add(new_proj)
                                     try:
-                                        db.commit()
                                         db.refresh(new_proj)
                                         discovered_projects.append(new_proj)
                                     except Exception:
@@ -1316,23 +1315,38 @@ def sync_user_comprehensive(db: Session, user: models.User, settings: models.Int
 # AGGREGATED KPI CALCULATION
 # ─────────────────────────────────────────────────────────────
 
-def calculate_daily_aggregated_kpi(db: Session, user: models.User, date: datetime) -> Dict[str, Any]:
+def calculate_daily_aggregated_kpi(db: Session, user: models.User, date: datetime, preloaded: dict = None) -> Dict[str, Any]:
     """
     Calculate KPI aggregation for a specific date
     This follows the documentation's kpi_employee_daily approach
+
+    Args:
+        preloaded: Optional dict with pre-fetched data to avoid repeated queries:
+            - activities_by_date: {date: [Activity]}
+            - attendance_by_date: {date_str: AttendanceRecord}
+            - resolved_by_date: {date: [RawJiraIssue]} (only dates with issues)
+            - jira_ident: EmployeeIdentity or None
+            - rule_metrics: (rule, [KPIRuleMetric]) or (None, [])
+            - working_days: int (precomputed for the year)
+            - daily_by_date: {date: KPIEmployeeDaily}
+            - no_commit: bool (skip db.commit for batch mode)
     """
     
     date_start = date.replace(hour=0, minute=0, second=0, microsecond=0)
     date_end = date.replace(hour=23, minute=59, second=59, microsecond=999999)
     
-    # Get activities for this date
-    activities = db.query(models.Activity).filter(
-        and_(
-            models.Activity.user_id == user.id,
-            models.Activity.activity_date >= date_start,
-            models.Activity.activity_date <= date_end
-        )
-    ).all()
+    # Check preloaded activity data first (avoids N dates * N users queries)
+    if preloaded and preloaded.get("activities_by_date") is not None:
+        activities = preloaded["activities_by_date"].get(date.date(), [])
+    else:
+        # Get activities for this date
+        activities = db.query(models.Activity).filter(
+            and_(
+                models.Activity.user_id == user.id,
+                models.Activity.activity_date >= date_start,
+                models.Activity.activity_date <= date_end
+            )
+        ).all()
     
     # Initialize metrics
     gitlab_commits = 0
@@ -1367,12 +1381,15 @@ def calculate_daily_aggregated_kpi(db: Session, user: models.User, date: datetim
     
     # Get attendance for this date
     date_str = date.strftime("%Y-%m-%d")
-    attendance = db.query(models.AttendanceRecord).filter(
-        and_(
-            models.AttendanceRecord.user_id == user.id,
-            models.AttendanceRecord.date == date_str
-        )
-    ).first()
+    if preloaded and preloaded.get("attendance_by_date") is not None:
+        attendance = preloaded["attendance_by_date"].get(date_str)
+    else:
+        attendance = db.query(models.AttendanceRecord).filter(
+            and_(
+                models.AttendanceRecord.user_id == user.id,
+                models.AttendanceRecord.date == date_str
+            )
+        ).first()
     
     if attendance:
         attendance_days = 1 if attendance.status in ["PRESENT", "LATE"] else 0
@@ -1402,13 +1419,19 @@ def calculate_daily_aggregated_kpi(db: Session, user: models.User, date: datetim
         from yearly_kpi_engine import get_rule_and_metrics_for_user, YearlyKPIEngine
         from engine import evaluate_kpi_formula
 
-        rule, metrics_defs = get_rule_and_metrics_for_user(db, user)
+        if preloaded and preloaded.get("rule_metrics") is not None:
+            rule, metrics_defs = preloaded["rule_metrics"]
+        else:
+            rule, metrics_defs = get_rule_and_metrics_for_user(db, user)
         if not rule or not metrics_defs:
             raise ValueError("No active KPI rule/metrics configured")
 
         # Config targets are yearly; scale them to a single working day.
-        ywd = YearlyKPIEngine.calculate_working_days(
-            datetime(date.year, 1, 1), datetime(date.year, 12, 31))
+        if preloaded and preloaded.get("working_days") is not None:
+            ywd = preloaded["working_days"]
+        else:
+            ywd = YearlyKPIEngine.calculate_working_days(
+                datetime(date.year, 1, 1), datetime(date.year, 12, 31))
         day_scale = (1.0 / ywd) if ywd > 0 else 1.0
 
         daily_raw = {
@@ -1430,16 +1453,22 @@ def calculate_daily_aggregated_kpi(db: Session, user: models.User, date: datetim
 
         # Complexity of issues resolved on this date
         try:
-            ji_ident = db.query(models.EmployeeIdentity).filter(
-                models.EmployeeIdentity.user_id == user.id,
-                models.EmployeeIdentity.source == 'jira'
-            ).first()
+            if preloaded and preloaded.get("jira_ident") is not None:
+                ji_ident = preloaded["jira_ident"]
+            else:
+                ji_ident = db.query(models.EmployeeIdentity).filter(
+                    models.EmployeeIdentity.user_id == user.id,
+                    models.EmployeeIdentity.source == 'jira'
+                ).first()
             if ji_ident and ji_ident.external_user_id:
-                resolved = db.query(models.RawJiraIssue).filter(
-                    models.RawJiraIssue.assignee_account_id == ji_ident.external_user_id,
-                    models.RawJiraIssue.resolved_date >= date_start,
-                    models.RawJiraIssue.resolved_date <= date_end
-                ).all()
+                if preloaded and preloaded.get("resolved_by_date") is not None:
+                    resolved = preloaded["resolved_by_date"].get(date.date(), [])
+                else:
+                    resolved = db.query(models.RawJiraIssue).filter(
+                        models.RawJiraIssue.assignee_account_id == ji_ident.external_user_id,
+                        models.RawJiraIssue.resolved_date >= date_start,
+                        models.RawJiraIssue.resolved_date <= date_end
+                    ).all()
                 daily_raw["complexity_sp"] = sum(
                     (iss.complexity_score if iss.complexity_score is not None
                      else calculate_feature_weight(iss.raw_data or {}))
@@ -1499,12 +1528,23 @@ def calculate_daily_aggregated_kpi(db: Session, user: models.User, date: datetim
         relevant_project_id = latest_activity.project_id
     
     # Create or update daily KPI record
-    daily_kpi = db.query(models.KPIEmployeeDaily).filter(
-        and_(
-            models.KPIEmployeeDaily.user_id == user.id,
-            models.KPIEmployeeDaily.date == date_start
-        )
-    ).first()
+    if preloaded and preloaded.get("daily_by_date") is not None:
+        daily_kpi = preloaded["daily_by_date"].get(date.date())
+        if daily_kpi is None:
+            # Need a lookup even in batch mode when row doesn't exist yet
+            daily_kpi = db.query(models.KPIEmployeeDaily).filter(
+                and_(
+                    models.KPIEmployeeDaily.user_id == user.id,
+                    models.KPIEmployeeDaily.date == date_start
+                )
+            ).first()
+    else:
+        daily_kpi = db.query(models.KPIEmployeeDaily).filter(
+            and_(
+                models.KPIEmployeeDaily.user_id == user.id,
+                models.KPIEmployeeDaily.date == date_start
+            )
+        ).first()
     
     if not daily_kpi:
         daily_kpi = models.KPIEmployeeDaily(
@@ -1552,7 +1592,8 @@ def calculate_daily_aggregated_kpi(db: Session, user: models.User, date: datetim
         daily_kpi.project_id = relevant_project_id
         daily_kpi.sprint_id = relevant_sprint_id
     
-    db.commit()
+    if not (preloaded and preloaded.get("no_commit")):
+        db.commit()
     
     return {
         "date": date.strftime("%Y-%m-%d"),

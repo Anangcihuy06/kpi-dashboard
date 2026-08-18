@@ -164,6 +164,15 @@ async def lifespan(app: FastAPI):
                 with engine.begin() as conn:
                     conn.execute(text("ALTER TABLE company_maxima ADD COLUMN division_id VARCHAR(50)"))
                 print("Migrated: company_maxima.division_id")
+
+            # Performance indexes for KPI calculation hot paths
+            with engine.begin() as conn:
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_kpi_daily_user_date ON kpi_employee_daily (user_id, date)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_activities_user_date ON activities (user_id, activity_date)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_attendance_user_date ON attendance_records (user_id, date)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_emp_identity_user_source ON employee_identity (user_id, source)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_raw_jira_assignee_resolved ON raw_jira_issues (assignee_account_id, resolved_date)"))
+            print("Performance indexes ensured")
         except Exception as mig_e:
             print(f"Warning: auto-migration skipped: {mig_e}")
 
