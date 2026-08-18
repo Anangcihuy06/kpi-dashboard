@@ -48,12 +48,20 @@ def mark_stale_jobs_failed(db: Session, job_type: str = None, max_age_minutes: i
     return marked
 
 def update_job_progress(db: Session, job_id: str, progress: int, status: str = "RUNNING"):
-    """Update job progress safely"""
+    """Update job progress safely.
+
+    Skips the write when the progress value did not change, so the high-frequency
+    calls (per date during KPI calc) do not spam thousands of DB commits while
+    still refreshing updated_at whenever the percentage actually moves.
+    """
     job = db.query(models.SyncJob).filter(models.SyncJob.id == job_id).first()
-    if job:
-        job.progress = progress
-        job.status = status
-        db.commit()
+    if not job:
+        return
+    if job.progress == progress and job.status == status:
+        return
+    job.progress = progress
+    job.status = status
+    db.commit()
 
 def mark_job_completed(db: Session, job_id: str, result: dict = None):
     """Mark job as completed"""

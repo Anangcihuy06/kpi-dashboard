@@ -419,16 +419,20 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
                     "no_commit": True,
                 }
 
-                for d in sorted(all_dates):
+                for d_idx, d in enumerate(sorted(all_dates)):
                     calculate_daily_aggregated_kpi(db, u, dt.combine(d, dt.min.time()), preloaded=preloaded)
+                    # Update progress inside the date loop so updated_at stays fresh
+                    # even when a single user takes many minutes.
+                    if progress_cb and total_users > 0:
+                        num_dates = len(all_dates)
+                        fraction = (idx + (d_idx + 1) / max(num_dates, 1)) / total_users
+                        progress_cb(int(10 + fraction * 80))
 
                 # One commit per user instead of one per date
                 db.commit()
                 calc_count += 1
                 total_dates += len(all_dates)
                 logger.info(f"Calculate KPI: processed {u.full_name} for {len(all_dates)} dates")
-                if progress_cb and total_users > 0:
-                    progress_cb(int(10 + (idx + 1) / total_users * 80))
             except Exception as e:
                 logger.error(f"Calculate KPI: failed for user {u.id}: {e}")
                 db.rollback()
