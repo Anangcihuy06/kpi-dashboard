@@ -1655,7 +1655,9 @@ async def calculate_kpi_only(year: int, background_tasks: BackgroundTasks, db: S
         bg_db = SessionLocal()
         try:
             update_job_progress(bg_db, jid, 10, "RUNNING")
-            result = calculate_kpi_only_job(year)
+            def _progress_cb(pct):
+                update_job_progress(bg_db, jid, int(pct), "RUNNING")
+            result = calculate_kpi_only_job(year, job_id=jid, progress_cb=_progress_cb)
             try:
                 _company_maxima_cache.clear()
             except Exception:

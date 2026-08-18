@@ -28,19 +28,24 @@ def mark_stale_jobs_failed(db: Session, job_type: str = None, max_age_minutes: i
     """
     cutoff = datetime.now() - timedelta(minutes=max_age_minutes)
     q = db.query(models.SyncJob).filter(
-        models.SyncJob.status.in_(["PENDING", "RUNNING"]),
-        models.SyncJob.started_at < cutoff
+        models.SyncJob.status.in_(["PENDING", "RUNNING"])
     )
     if job_type:
         q = q.filter(models.SyncJob.job_type == job_type)
     stale = q.all()
+    marked = 0
     for job in stale:
+        ref_time = job.updated_at or job.started_at or job.created_at
+        # A job that updates progress keeps touching updated_at, so it is NOT stale.
+        if not ref_time or ref_time >= cutoff:
+            continue
         job.status = "FAILED"
         job.error_message = "Job dibatalkan: worker dihentikan (redeploy/restart) sebelum selesai. Silakan jalankan ulang."
         job.completed_at = datetime.now()
-    if stale:
+        marked += 1
+    if marked:
         db.commit()
-    return len(stale)
+    return marked
 
 def update_job_progress(db: Session, job_id: str, progress: int, status: str = "RUNNING"):
     """Update job progress safely"""
@@ -80,8 +85,8 @@ def mark_single_stale_job_failed(db: Session, job: models.SyncJob):
     if job.status not in ("PENDING", "RUNNING"):
         return job
     cutoff = datetime.now() - timedelta(minutes=15)
-    started = job.started_at or job.created_at
-    if started and started < cutoff:
+    ref_time = job.updated_at or job.started_at or job.created_at
+    if ref_time and ref_time < cutoff:
         job.status = "FAILED"
         job.error_message = "Job dibatalkan: worker dihentikan (redeploy/restart) sebelum selesai. Silakan jalankan ulang."
         job.completed_at = datetime.now()

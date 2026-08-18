@@ -304,7 +304,7 @@ def sync_data_only_job():
         db.close()
 
 
-def calculate_kpi_only_job(year: int = None):
+def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=None):
     """
     Calculate KPI using data already present in the local DB.
     Does NOT call any external Jira/GitLab sync.
@@ -333,7 +333,8 @@ def calculate_kpi_only_job(year: int = None):
 
         calc_count = 0
         total_dates = 0
-        for u in users:
+        total_users = len(users)
+        for idx, u in enumerate(users):
             try:
                 # ── Bulk load ALL data for this user ONCE per year ──
                 # 1. Activities for the whole year (single query)
@@ -426,9 +427,13 @@ def calculate_kpi_only_job(year: int = None):
                 calc_count += 1
                 total_dates += len(all_dates)
                 logger.info(f"Calculate KPI: processed {u.full_name} for {len(all_dates)} dates")
+                if progress_cb and total_users > 0:
+                    progress_cb(int(10 + (idx + 1) / total_users * 80))
             except Exception as e:
                 logger.error(f"Calculate KPI: failed for user {u.id}: {e}")
                 db.rollback()
+            if progress_cb and total_users > 0:
+                progress_cb(int(10 + (idx + 1) / total_users * 80))
 
         # Precompute per-user yearly aggregates + company maxima
         try:
