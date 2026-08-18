@@ -18,7 +18,7 @@ def create_sync_job(db: Session, user_id: str, job_type: str) -> str:
     db.refresh(job)
     return job.id
 
-def mark_stale_jobs_failed(db: Session, job_type: str = None, max_age_minutes: int = 15):
+def mark_stale_jobs_failed(db: Session, job_type: str = None, max_age_minutes: int = 60):
     """Mark jobs stuck in PENDING/RUNNING as FAILED.
 
     Railway (re)deploys kill in-process background tasks. A job left in
@@ -89,10 +89,14 @@ def mark_single_stale_job_failed(db: Session, job: models.SyncJob):
     RUNNING forever. The frontend polls a single job — so the poll itself must
     resolve the zombie state, otherwise the UI hangs on a spinner with a 200 OK
     response that never changes.
+
+    Uses updated_at so a worker that refreshes progress (per user / per date) is
+    never misclassified as stale, even when the whole run takes far longer than
+    15 minutes.
     """
     if job.status not in ("PENDING", "RUNNING"):
         return job
-    cutoff = datetime.now() - timedelta(minutes=15)
+    cutoff = datetime.now() - timedelta(minutes=60)
     ref_time = job.updated_at or job.started_at or job.created_at
     if ref_time and ref_time < cutoff:
         job.status = "FAILED"
