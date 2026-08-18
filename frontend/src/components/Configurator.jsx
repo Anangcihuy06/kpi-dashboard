@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { Settings, Play, CheckCircle, RefreshCw, AlertCircle, Plus, Trash2, Globe, Server } from "lucide-react";
+import { Settings, Play, CheckCircle, RefreshCw, AlertCircle, Plus, Trash2, Globe, Server, Wand2, Shield, UserCog, User, Building2, Layers, UserGroup, ShieldAlert, Lock } from "lucide-react";
 import { toast } from "sonner";
+import AIIndicatorCreator from "./AIIndicatorCreator";
 
 export default function Configurator() {
   const [activeSubTab, setActiveSubTab] = useState("rules"); // "rules" or "integrations"
@@ -36,6 +37,9 @@ export default function Configurator() {
   const [calcLoading, setCalcLoading] = useState(false);
   const [testLoading, setTestLoading] = useState(false);
   const [integLoading, setIntegLoading] = useState(false);
+
+  // NEW: AI Indicator Creator states
+  const [showAICreator, setShowAICreator] = useState(false);
 
   useEffect(() => {
     fetchSprints();
@@ -163,14 +167,74 @@ export default function Configurator() {
   };
 
   const addMetricRow = () => {
-    setMetrics([
-      ...metrics,
-      { metric_key: "new_metric", category: "ENGINEERING", weight: 0.10, calc_type: "FORMULA", formula_expression: "input * 10", variables: {}, cap_score: 100.0 }
-    ]);
+    // Check user permissions before adding metric
+    const userRole = currentUser.roles?.[0] || "EMPLOYEE";
+    const hasPermission = userRole === "ROLE_ADMIN" || (userRole === "MANAGER" && selectedGroupId);
+
+    if (!hasPermission) {
+      toast.error("Hanya manager dan admin yang dapat menambahkan indikator KPI.", {
+        description: userRole === "EMPLOYEE" ? "Hubungi manager Anda untuk perubahan indikator." : "Pilih grup terlebih dahulu."
+      });
+      return;
+    }
+
+    // Show AI creator for managers and admins
+    setShowAICreator(true);
   };
 
   const removeMetricRow = (idx) => {
     setMetrics(metrics.filter((_, i) => i !== idx));
+  };
+
+  // NEW: Handle AI-generated formula
+  const handleAIGeneratedFormula = (aiResult) => {
+    const newMetric = {
+      metric_key: `ai_generated_${Date.now()}`,
+      category: "AI_GENERATED",
+      weight: 0.10,
+      calc_type: "FORMULA",
+      formula_expression: aiResult.formula_expression,
+      variables: aiResult.variables,
+      cap_score: aiResult.cap_score
+    };
+
+    setMetrics([...metrics, newMetric]);
+    setShowAICreator(false);
+  };
+
+  // Helper functions for role checking
+  const getUserPermissionLevel = () => {
+    if (currentUser.roles?.includes("ROLE_ADMIN")) return "ADMIN";
+    if (currentUser.roles?.includes("MANAGER") || currentUser.hasSubordinates) return "MANAGER";
+    return "EMPLOYEE";
+  };
+
+  const canCreateIndicators = () => {
+    const permissionLevel = getUserPermissionLevel();
+    if (permissionLevel === "EMPLOYEE") return false;
+    if (permissionLevel === "MANAGER" && !selectedGroupId) return false;
+    return true;
+  };
+
+  const getPermissionMessage = () => {
+    const permissionLevel = getUserPermissionLevel();
+    if (permissionLevel === "EMPLOYEE") {
+      return {
+        icon: <ShieldAlert size={24} />,
+        title: "Permission Required",
+        message: "Hanya manager dan admin yang dapat menambahkan indikator KPI.",
+        submessage: "Hubungi manager Anda untuk perubahan indikator."
+      };
+    }
+    if (permissionLevel === "MANAGER" && !selectedGroupId) {
+      return {
+        icon: <UserGroup size={24} />,
+        title: "Group Selection Required",
+        message: "Pilih grup terlebih dahulu untuk menambahkan indikator.",
+        submessage: "Anda hanya dapat membuat indikator untuk grup Anda sendiri."
+      };
+    }
+    return null;
   };
 
   const handleSaveRules = async () => {
@@ -442,9 +506,29 @@ export default function Configurator() {
                     <button className="btn-outline" onClick={() => setShowGuide(true)} style={{ padding: "8px 16px", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px", borderRadius: "8px", borderColor: "#cbd5e1", color: "#475569", background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
                       <AlertCircle size={16} /> Panduan Formula
                     </button>
-                    <button className="btn-primary" onClick={addMetricRow} style={{ padding: "8px 16px", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px", borderRadius: "8px", boxShadow: "0 1px 3px rgba(37,99,235,0.2)" }}>
-                      <Plus size={16} /> Tambah Indikator
-                    </button>
+                    {canCreateIndicators() ? (
+                      <button className="btn-primary" onClick={addMetricRow} style={{ padding: "8px 16px", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px", borderRadius: "8px", boxShadow: "0 1px 3px rgba(37,99,235,0.2)" }}>
+                        <Wand2 size={16} /> Tambah Indikator dengan AI
+                      </button>
+                    ) : (
+                      <div className="permission-message" style={{ 
+                        padding: "8px 12px", 
+                        fontSize: "12px", 
+                        display: "flex", 
+                        alignItems: "center", 
+                        gap: "8px", 
+                        borderRadius: "8px", 
+                        background: "#fef3c7", 
+                        color: "#92400e",
+                        border: "1px solid #fcd34d"
+                      }}>
+                        {getPermissionMessage()?.icon}
+                        <div>
+                          <div style={{ fontWeight: 600 }}>{getPermissionMessage()?.title}</div>
+                          <div style={{ fontSize: "11px" }}>{getPermissionMessage()?.message}</div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -829,6 +913,18 @@ export default function Configurator() {
           </div>
         </div>
       )}
+
+        {/* NEW: AI Indicator Creator Modal */}
+        {showAICreator && (
+          <AIIndicatorCreator
+            currentUser={currentUser}
+            selectedDivisionId={selectedDivisionId}
+            selectedGroupId={selectedGroupId}
+            divisions={divisions}
+            onFormulaGenerated={handleAIGeneratedFormula}
+            onCancel={() => setShowAICreator(false)}
+          />
+        )}
     </div>
   );
 }

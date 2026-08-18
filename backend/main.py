@@ -427,6 +427,20 @@ class UserBoardAssignmentInput(BaseModel):
     jira_board_ids: List[str] = []
     current_active_board: Optional[str] = None
 
+# NEW: AI INDICATOR CREATOR MODELS
+class AIFormulaRequest(BaseModel):
+    user_id: str
+    user_name: str
+    user_role: str
+    has_subordinates: bool
+    division_id: str
+    division_name: str
+    division_code: str
+    group_id: Optional[str] = None
+    group_name: Optional[str] = None
+    creation_scope: str = "personal"
+    indicator_description: str
+
 # Helper: Recursive Subordinates Lookup
 def get_recursive_subordinates(db: Session, supervisor_id: str) -> List[models.User]:
     direct_subs = db.query(models.User).filter(models.User.supervisor_id == supervisor_id).all()
@@ -943,6 +957,190 @@ def evaluate_test(payload: TestFormulaRequest):
         return {"status": "success", "result": round(score, 2)}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+# NEW: AI INDICATOR CREATOR ENDPOINTS
+@app.get("/api/v1/ai/division-context")
+def get_ai_division_context(division_id: str, user_id: str, db: Session = Depends(get_db)):
+    """Get division context for AI-powered indicator creation"""
+    try:
+        # Get user information
+        user = db.query(models.User).filter(models.User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Get division information
+        division = db.query(models.Division).filter(models.Division.id == division_id).first()
+        if not division:
+            raise HTTPException(status_code=404, detail="Division not found")
+        
+        # Import division variables registry
+        from division_variables import (
+            get_division_variables,
+            get_division_example_prompts,
+            get_division_common_targets,
+            get_all_divisions
+        )
+        
+        # Get user's permission level
+        user_role = user.roles[0] if user.roles else "EMPLOYEE"
+        
+        # Get division-specific data
+        division_variables = get_division_variables(division.code)
+        example_prompts = get_division_example_prompts(division.code)
+        common_targets = get_division_common_targets(division.code)
+        
+        # Determine creation scope based on user role
+        if "ROLE_ADMIN" in user.roles:
+            creation_scopes = ["division", "group", "personal"]
+        elif "MANAGER" in user.roles or user.has_subordinates:
+            creation_scopes = ["group", "personal"]
+        else:
+            creation_scopes = ["personal"]
+        
+        return {
+            "status": "success",
+            "user_context": {
+                "user_id": user.id,
+                "user_name": user.full_name,
+                "user_role": user_role,
+                "has_subordinates": user.has_subordinates,
+                "division_id": user.division_id,
+                "group_id": user.group_id,
+                "group_name": user.group_name,
+                "creation_scopes": creation_scopes
+            },
+            "division_context": {
+                "division_id": division.id,
+                "division_name": division.name,
+                "division_code": division.code,
+                "variables": division_variables,
+                "example_prompts": example_prompts,
+                "common_targets": common_targets
+            },
+            "available_divisions": get_all_divisions()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting AI division context: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/v1/ai/generate-formula")
+async def ai_generate_formula(request: AIFormulaRequest, db: Session = Depends(get_db)):
+    """Generate KPI formula using AI based on natural language description"""
+    try:
+        # Validate user exists
+        user = db.query(models.User).filter(models.User.id == request.user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Validate user permissions
+        user_role = user.roles[0] if user.roles else "EMPLOYEE"
+        if user_role == "EMPLOYEE":
+            raise HTTPException(status_code=403, detail="Employees cannot create KPI indicators")
+        
+        # Validate division access
+        if request.division_id != user.division_id and "ROLE_ADMIN" not in user.roles:
+            raise HTTPException(status_code=403, detail="Cannot create indicators for other divisions")
+        
+        # Validate group access if group specified
+        if request.group_id and request.group_id != user.group_id and "ROLE_ADMIN" not in user.roles:
+            raise HTTPException(status_code=403, detail="Cannot create indicators for other groups")
+        
+        # Import AI formula generator
+        from ai_formula_generator import AIFeatureScorer
+        from ai_formula_generator import AIFormulaRequest as AIRequestModel
+        
+        # Create AI request
+        ai_request = AIRequestModel(
+            user_id=request.user_id,
+            user_name=request.user_name,
+            user_role=request.user_role,
+            has_subordinates=request.has_subordinates,
+            division_id=request.division_id,
+            division_name=request.division_name,
+            division_code=request.division_code,
+            group_id=request.group_id,
+            group_name=request.group_name,
+            creation_scope=request.creation_scope,
+            indicator_description=request.indicator_description
+        )
+        
+        # Generate formula
+        scorer = AIFeatureScorer()
+        response = scorer.generate_formula(ai_request)
+        
+        # Add division-specific suggestions if AI fails
+        if response.status == "error":
+            from division_variables import get_division_example_prompts
+            example_prompts = get_division_example_prompts(request.division_code)
+            response.error = f"{response.error}. Try these examples: {', '.join(example_prompts[:2])}"
+        
+        return response.dict()
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating AI formula: {str(e)}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "message": "Failed to generate formula. Please try again or use manual formula creation."
+        }
+
+@app.post("/api/v1/ai/validate-permission")
+def validate_indicator_creation_permission(user_id: str, scope: str, division_id: str, group_id: str = None, db: Session = Depends(get_db)):
+    """Validate if user has permission to create indicators for given scope"""
+    try:
+        # Get user information
+        user = db.query(models.User).filter(models.User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Determine user permission level
+        user_role = user.roles[0] if user.roles else "EMPLOYEE"
+        
+        # Check basic access
+        if user_role == "EMPLOYEE":
+            return {
+                "status": "denied",
+                "reason": "Employees cannot create KPI indicators",
+                "suggestion": "Contact your manager for indicator changes"
+            }
+        
+        # Check scope permissions
+        if scope == "division":
+            if "ROLE_ADMIN" not in user.roles:
+                return {
+                    "status": "denied",
+                    "reason": "Only admins can create division-wide indicators",
+                    "suggestion": "Create group-specific indicators instead"
+                }
+        
+        if scope == "group":
+            if group_id and group_id != user.group_id and "ROLE_ADMIN" not in user.roles:
+                return {
+                    "status": "denied",
+                    "reason": "Cannot create indicators for other groups",
+                    "suggestion": "Create indicators for your own group"
+                }
+        
+        return {
+            "status": "allowed",
+            "user_role": user_role,
+            "scope": scope,
+            "division_access": division_id == user.division_id or "ROLE_ADMIN" in user.roles,
+            "group_access": not group_id or group_id == user.group_id or "ROLE_ADMIN" in user.roles
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error validating permissions: {str(e)}")
+        return {
+            "status": "error",
+            "error": str(e)
+        }
 
 # Enhanced debugging endpoint for checking employee calculations
 @app.get("/api/v1/kpi/user-calculation-details")
