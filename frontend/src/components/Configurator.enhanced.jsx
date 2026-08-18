@@ -269,7 +269,7 @@ export default function Configurator() {
     }
   };
 
-  const pollJobUntilDone = (jobId, onDone, timeoutMs = 10 * 60 * 1000) => {
+  const pollJobUntilDone = (jobId, onDone, timeoutMs = 60 * 60 * 1000) => {
     const startedAt = Date.now();
     const poll = setInterval(async () => {
       try {

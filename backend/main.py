@@ -1645,8 +1645,9 @@ async def sync_data_only(background_tasks: BackgroundTasks, db: Session = Depend
 @app.post("/api/v1/kpi/calculate/{year}")
 async def calculate_kpi_only(year: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Calculate KPI using local DB data only (no external sync)."""
-    from sync_engine import create_sync_job, update_job_progress, mark_job_completed, mark_job_failed, mark_stale_jobs_failed
+    from sync_engine import create_sync_job, update_job_progress, mark_job_completed, mark_job_failed, mark_stale_jobs_failed, cancel_running_jobs
     mark_stale_jobs_failed(db, "KPI_CALC_ONLY")
+    cancel_running_jobs(db, "KPI_CALC_ONLY")
     job_id = create_sync_job(db, None, "KPI_CALC_ONLY")
 
     def run_calc(jid):

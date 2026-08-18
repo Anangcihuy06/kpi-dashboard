@@ -47,21 +47,60 @@ def mark_stale_jobs_failed(db: Session, job_type: str = None, max_age_minutes: i
         db.commit()
     return marked
 
+def cancel_running_jobs(db: Session, job_type: str = None, reason: str = None):
+    """Forcefully FAIL all PENDING/RUNNING jobs of a type.
+
+    Used before starting a new KPI calculation: earlier runs (left by repeated
+    user triggers or manual trips) may still be running in parallel, saturating
+    the DB with row locks on kpi_employee_daily and deadlocking each other.
+    Only one calc should run at a time.
+    """
+    q = db.query(models.SyncJob).filter(
+        models.SyncJob.status.in_(["PENDING", "RUNNING"])
+    )
+    if job_type:
+        q = q.filter(models.SyncJob.job_type == job_type)
+    running = q.all()
+    marked = 0
+    for job in running:
+        job.status = "FAILED"
+        job.error_message = reason or "Job dibatalkan: kalkulasi KPI baru dimulai dan hanya satu job yang boleh berjalan."
+        job.completed_at = datetime.now()
+        marked += 1
+    if marked:
+        db.commit()
+    return marked
+
 def update_job_progress(db: Session, job_id: str, progress: int, status: str = "RUNNING"):
     """Update job progress safely.
 
-    Skips the write when the progress value did not change, so the high-frequency
-    calls (per date during KPI calc) do not spam thousands of DB commits while
-    still refreshing updated_at whenever the percentage actually moves.
+    Two goals are balanced here:
+    1. Skip the write when the progress value did not change so the
+       high-frequency calls (per date during KPI calc) do not spam thousands
+       of DB commits.
+    2. Keep updated_at fresh as a heartbeat. A slow-but-valid job must not be
+       misclassified as stale by mark_single_stale_job_failed when the int
+       progress is temporarily stuck (many dates map to the same integer).
+
+    So we always issue a commit if progress/status changed, OR if the last
+    heartbeat is older than 30 seconds.
     """
     job = db.query(models.SyncJob).filter(models.SyncJob.id == job_id).first()
     if not job:
         return
-    if job.progress == progress and job.status == status:
-        return
-    job.progress = progress
-    job.status = status
-    db.commit()
+    try:
+        now = datetime.now()
+        last = job.updated_at or job.created_at
+        changed = job.progress != progress or job.status != status
+        stale_heartbeat = last is None or (now - last).total_seconds() > 30
+        if changed:
+            job.progress = progress
+            job.status = status
+        if changed or stale_heartbeat:
+            job.updated_at = now
+            db.commit()
+    except Exception:
+        db.rollback()
 
 def mark_job_completed(db: Session, job_id: str, result: dict = None):
     """Mark job as completed"""
