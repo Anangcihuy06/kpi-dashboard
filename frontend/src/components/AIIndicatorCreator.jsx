@@ -4,7 +4,7 @@ import {
   // AI & Formula Icons
   Wand2, Sparkles, FunctionSquare, 
   // Context & Division Icons
-  Building2, Layers, UserGroup,
+  Building2, Layers, Users,
   // User & Role Icons
   Shield, UserCog, User, Crown,
   // Actions
@@ -296,7 +296,7 @@ const AIIndicatorCreator = ({
             </div>
             {selectedGroupId && (
               <div className="context-badge group-badge">
-                <UserGroup size={14} />
+                <Users size={14} />
                 <span>{getGroupName(selectedGroupId)}</span>
               </div>
             )}
@@ -329,7 +329,7 @@ const AIIndicatorCreator = ({
                 className={`scope-option ${selectedScope === 'group' ? 'active' : ''}`}
                 onClick={() => setSelectedScope('group')}
               >
-                <UserGroup size={16} />
+                <Users size={16} />
                 <div className="scope-info">
                   <span className="scope-name">Group-Specific</span>
                   <span className="scope-desc">Affects your group only</span>

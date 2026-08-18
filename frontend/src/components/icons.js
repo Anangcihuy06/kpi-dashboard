@@ -33,7 +33,7 @@ import {
   ChevronDown, ChevronUp,
   
   // Groups & Teams
-  UserGroup,
+  Users,
   
   // Configuration & Settings
   Settings, Sliders,
@@ -118,7 +118,7 @@ import {
   Fingerprint,
   Scan,
   User, UserCheck, UserX, UserPlus, UserMinus, UserCog,
-  Users, UserGroup,
+  Users, Users,
   Crown,
   Briefcase,
   IdCard,
@@ -196,7 +196,7 @@ import {
   Lock, LockOpen,
   Key,
   Eye, EyeOff,
-  User, Users, UserGroup,
+  User, Users, Users,
   Crown,
   Briefcase,
   IdCard,
@@ -361,7 +361,7 @@ export {
   Lightbulb, MessageSquare, ChatBubble, HelpCircle, Info,
   BadgeCheck, AlertOctagon, CircleCheck, CircleX, CircleAlert,
   ChevronDown, ChevronUp,
-  UserGroup,
+  Users,
   Settings, Sliders,
   Plus, Search, Filter,
   Eye, EyeOff,
@@ -441,7 +441,7 @@ export {
   Fingerprint,
   Scan,
   User, UserCheck, UserX, UserPlus, UserMinus, UserCog,
-  Users, UserGroup,
+  Users, Users,
   Crown,
   Briefcase,
   IdCard,
@@ -519,7 +519,7 @@ export {
   Lock, LockOpen,
   Key,
   Eye, EyeOff,
-  User, Users, UserGroup,
+  User, Users, Users,
   Crown,
   Briefcase,
   IdCard,
