@@ -427,10 +427,14 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
 
                     # 4b. Backfill complexity_score for issues missing it, ONCE, so
                     #     later runs only ever do the cheap aggregate query above.
-                    #     Use streaming + batch commit to avoid massive transaction
-                    #     stalls when thousands of issues need scoring.
+                    #     Use parallel scoring (score_issues_batch) with chunked batches
+                    #     to avoid single-threaded stalls when thousands of issues need scoring.
+                    from feature_analyzer import score_issues_batch, resolve_feature_config
+                    cfg = resolve_feature_config(sdb)
+                    scorer_config = cfg if cfg else None
                     null_issues_q = sdb.query(
                         models.RawJiraIssue.id,
+                        models.RawJiraIssue.issue_key,
                         models.RawJiraIssue.resolved_date,
                         models.RawJiraIssue.raw_data
                     ).filter(
@@ -438,24 +442,42 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
                         models.RawJiraIssue.resolved_date >= start_date,
                         models.RawJiraIssue.resolved_date <= end_date,
                         models.RawJiraIssue.complexity_score.is_(None)
-                    ).yield_per(100)
+                    ).yield_per(200)
+                    chunk_size = 100
+                    chunk = []
                     backfill_count = 0
-                    batch_size = 50
-                    for null_id, null_date, null_raw in null_issues_q:
+                    for null_id, null_key, null_date, null_raw in null_issues_q:
                         if not null_date:
                             continue
-                        w = calculate_feature_weight(null_raw or {})
-                        rdate = null_date.date() if hasattr(null_date, 'date') else null_date
-                        complexity_by_date[rdate] = complexity_by_date.get(rdate, 0.0) + float(w)
-                        sdb.execute(
-                            text("UPDATE raw_jira_issues SET complexity_score = :score WHERE id = :id"),
-                            {"score": float(w), "id": null_id}
-                        )
-                        backfill_count += 1
-                        if backfill_count % batch_size == 0:
+                        chunk.append({"id": null_id, "key": null_key, "raw_data": null_raw})
+                        if len(chunk) >= chunk_size:
+                            results = score_issues_batch(chunk, config=scorer_config, workers=5)
+                            for item, res in zip(chunk, results):
+                                if item["id"] in res:
+                                    w = float(res[item["id"]].get("kpi_points", 0))
+                                    rdate = null_date.date() if hasattr(null_date, 'date') else null_date
+                                    complexity_by_date[rdate] = complexity_by_date.get(rdate, 0.0) + w
+                                    sdb.execute(
+                                        text("UPDATE raw_jira_issues SET complexity_score = :score WHERE id = :id"),
+                                        {"score": w, "id": item["id"]}
+                                    )
+                                    backfill_count += 1
                             sdb.commit()
-                    if backfill_count > 0:
+                            chunk = []
+                    if chunk:
+                        results = score_issues_batch(chunk, config=scorer_config, workers=5)
+                        for item, res in zip(chunk, results):
+                            if item["id"] in res:
+                                w = float(res[item["id"]].get("kpi_points", 0))
+                                rdate = null_date.date() if hasattr(null_date, 'date') else null_date
+                                complexity_by_date[rdate] = complexity_by_date.get(rdate, 0.0) + w
+                                sdb.execute(
+                                    text("UPDATE raw_jira_issues SET complexity_score = :score WHERE id = :id"),
+                                    {"score": w, "id": item["id"]}
+                                )
+                                backfill_count += 1
                         sdb.commit()
+                    if backfill_count > 0:
                         logger.info(
                             f"Calculate KPI: backfilled complexity_score for "
                             f"{backfill_count} issues of user {user.id}"
