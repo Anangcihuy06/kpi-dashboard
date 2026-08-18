@@ -69,11 +69,33 @@ def mark_job_failed(db: Session, job_id: str, error: str):
         job.completed_at = datetime.now()
         db.commit()
 
+def mark_single_stale_job_failed(db: Session, job: models.SyncJob):
+    """Mark THIS job FAILED if it is stuck PENDING/RUNNING and too old.
+
+    Railway redeploys kill in-process background tasks, leaving the job stuck
+    RUNNING forever. The frontend polls a single job — so the poll itself must
+    resolve the zombie state, otherwise the UI hangs on a spinner with a 200 OK
+    response that never changes.
+    """
+    if job.status not in ("PENDING", "RUNNING"):
+        return job
+    cutoff = datetime.now() - timedelta(minutes=15)
+    started = job.started_at or job.created_at
+    if started and started < cutoff:
+        job.status = "FAILED"
+        job.error_message = "Job dibatalkan: worker dihentikan (redeploy/restart) sebelum selesai. Silakan jalankan ulang."
+        job.completed_at = datetime.now()
+        db.commit()
+    return job
+
+
 def get_job_status(db: Session, job_id: str):
     """Get the status of a specific job"""
     job = db.query(models.SyncJob).filter(models.SyncJob.id == job_id).first()
     if not job:
         return None
+
+    job = mark_single_stale_job_failed(db, job)
     return {
         "job_id": job.id,
         "status": job.status,
