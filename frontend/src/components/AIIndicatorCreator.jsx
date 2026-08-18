@@ -25,8 +25,6 @@ import {
   Sliders,
   // Additional UI
   Plus, Search, Filter, Eye, EyeOff, ChevronDown, ChevronUp,
-  // Groups & Teams
-  Users,
   // Performance & Metrics
   TrendingUp, BarChart3,
   // Time & Dates
