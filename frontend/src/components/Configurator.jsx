@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Settings, Play, CheckCircle, RefreshCw, AlertCircle, Plus, Trash2, Globe, Server, Wand2, Shield, UserCog, User, Building2, Layers, UserGroup, ShieldAlert, Lock } from "lucide-react";
+import { Settings, Play, CheckCircle, RefreshCw, AlertCircle, Plus, Trash2, Globe, Server, Wand2, Shield, UserCog, User, Building2, Layers, Users, ShieldAlert, Lock } from "lucide-react";
 import { toast } from "sonner";
 import AIIndicatorCreator from "./AIIndicatorCreator";
 
@@ -228,7 +228,7 @@ export default function Configurator() {
     }
     if (permissionLevel === "MANAGER" && !selectedGroupId) {
       return {
-        icon: <UserGroup size={24} />,
+        icon: <Users size={24} />,
         title: "Group Selection Required",
         message: "Pilih grup terlebih dahulu untuk menambahkan indikator.",
         submessage: "Anda hanya dapat membuat indikator untuk grup Anda sendiri."
