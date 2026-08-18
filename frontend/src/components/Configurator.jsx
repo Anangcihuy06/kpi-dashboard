@@ -163,7 +163,6 @@ export default function Configurator() {
   };
 
   const addMetricRow = () => {
-    // Check user permissions before adding metric
     const userRole = currentUser.roles?.[0] || "EMPLOYEE";
     const hasPermission = userRole === "ROLE_ADMIN" || (userRole === "MANAGER" && selectedGroupId);
 
@@ -173,6 +172,8 @@ export default function Configurator() {
       });
       return;
     }
+
+    setMetrics([...metrics, { metric_key: "", weight: 0.10, calc_type: "FORMULA", formula_expression: "", variables: {}, cap_score: 100 }]);
   };
 
   const removeMetricRow = (idx) => {
