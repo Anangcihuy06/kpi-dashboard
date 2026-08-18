@@ -405,19 +405,46 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
 
                 # 4. All resolved RawJiraIssue for the year, pre-aggregated into a
                 #    per-date complexity sum ONCE (not per date, not per issue).
+                #    Fetch only the two needed columns so the huge raw_data JSON
+                #    payload is never deserialised for thousands of issues.
                 complexity_by_date = {}
                 if ji_ident and ji_ident.external_user_id:
-                    issues_q = sdb.query(models.RawJiraIssue).filter(
+                    issues_q = sdb.query(
+                        models.RawJiraIssue.resolved_date,
+                        models.RawJiraIssue.complexity_score
+                    ).filter(
                         models.RawJiraIssue.assignee_account_id == ji_ident.external_user_id,
                         models.RawJiraIssue.resolved_date >= start_date,
                         models.RawJiraIssue.resolved_date <= end_date
                     ).all()
-                    for iss in issues_q:
-                        if not iss.resolved_date:
+                    for rdate, cscore in issues_q:
+                        if not rdate:
                             continue
-                        rdate = iss.resolved_date.date() if hasattr(iss.resolved_date, 'date') else iss.resolved_date
-                        w = iss.complexity_score if iss.complexity_score is not None else calculate_feature_weight(iss.raw_data or {})
+                        rdate = rdate.date() if hasattr(rdate, 'date') else rdate
+                        w = cscore if cscore is not None else 0.0
                         complexity_by_date[rdate] = complexity_by_date.get(rdate, 0.0) + float(w)
+
+                    # 4b. Backfill complexity_score for issues missing it, ONCE, so
+                    #     later runs only ever do the cheap aggregate query above.
+                    null_issues = sdb.query(models.RawJiraIssue).filter(
+                        models.RawJiraIssue.assignee_account_id == ji_ident.external_user_id,
+                        models.RawJiraIssue.resolved_date >= start_date,
+                        models.RawJiraIssue.resolved_date <= end_date,
+                        models.RawJiraIssue.complexity_score.is_(None)
+                    ).all()
+                    if null_issues:
+                        for iss in null_issues:
+                            if not iss.resolved_date:
+                                continue
+                            w = calculate_feature_weight(iss.raw_data or {})
+                            iss.complexity_score = float(w)
+                            rdate = iss.resolved_date.date() if hasattr(iss.resolved_date, 'date') else iss.resolved_date
+                            complexity_by_date[rdate] = complexity_by_date.get(rdate, 0.0) + float(w)
+                        sdb.commit()
+                        logger.info(
+                            f"Calculate KPI: backfilled complexity_score for "
+                            f"{len(null_issues)} issues of user {user.id}"
+                        )
 
                 # 5. Rule + metrics resolved ONCE (not per date!)
                 from yearly_kpi_engine import get_rule_and_metrics_for_user, YearlyKPIEngine

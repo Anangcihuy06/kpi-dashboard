@@ -158,6 +158,7 @@ def get_job_status(db: Session, job_id: str):
         "progress": job.progress,
         "result": job.result,
         "error": job.error_message,
+        "error_message": job.error_message,
         "started_at": job.started_at,
         "completed_at": job.completed_at
     }
