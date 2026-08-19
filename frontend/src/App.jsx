@@ -241,11 +241,11 @@ export default function App() {
                 onClick={() => setActiveTab("subordinates")}
                 role="link"
                 tabIndex={0}
-                aria-label="Hierarki Tim"
+                aria-label="Subordinate"
                 title="Kelola dan evaluasi KPI seluruh anggota tim di bawah kendali Anda"
               >
                 <Users size={18} />
-                <span>Hierarki Tim (Sub)</span>
+                <span>Subordinate</span>
               </div>
             </li>
           )}
