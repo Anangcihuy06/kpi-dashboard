@@ -248,6 +248,7 @@ class YearlyKPIEngine:
                 
                 breakdown.append({
                     "metric_key": m_def.metric_key,
+                    "category": (m_def.category or "ENGINEERING").upper(),
                     "formula": m_def.formula_expression,
                     "formula_used": m_def.formula_expression,
                     "variables": eval_context,
