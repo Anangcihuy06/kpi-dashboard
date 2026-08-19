@@ -41,25 +41,26 @@ class AIFormulaResponse(BaseModel):
 class AIFeatureScorer:
     """
     AI-powered formula generator for KPI indicators
-    Uses OpenRouter API with GPT-4o-mini model
+    Uses Z.AI GLM Coding Plan API with GLM model
     """
     
-    BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+    DEFAULT_BASE_URL = "https://api.z.ai/api/coding/paas/v4/chat/completions"
     
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         """
         Initialize AI Feature Scorer
         
         Args:
-            api_key: OpenRouter API key (defaults to environment variable)
-            model: Model to use (defaults to gpt-4o-mini)
+            api_key: Z.AI API key (defaults to environment variable)
+            model: Model to use (defaults to glm-5.3)
         """
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
-        self.model = model or os.getenv("OPENROUTER_MODEL") or "openai/gpt-4o-mini"
+        self.api_key = api_key or os.getenv("ZAI_API_KEY")
+        self.base_url = os.getenv("ZAI_BASE_URL") or self.DEFAULT_BASE_URL
+        self.model = model or os.getenv("ZAI_MODEL") or "glm-5.3"
         self.enabled = bool(self.api_key and self.api_key.strip())
         
         if not self.enabled:
-            logger.warning("AI Formula Generator disabled: OPENROUTER_API_KEY not set")
+            logger.warning("AI Formula Generator disabled: ZAI_API_KEY not set")
     
     def generate_formula(self, request: AIFormulaRequest) -> AIFormulaResponse:
         """
@@ -81,7 +82,7 @@ class AIFeatureScorer:
             # Generate AI prompt
             prompt = self._build_ai_prompt(request, ai_context)
             
-            # Call OpenRouter API
+            # Call Z.AI Coding Plan API
             response_data = self._call_ai_api(prompt)
             
             if not response_data or response_data.get("status") == "error":
@@ -255,7 +256,7 @@ class AIFeatureScorer:
     
     def _call_ai_api(self, prompt: str) -> Dict[str, Any]:
         """
-        Call OpenRouter API for formula generation
+        Call Z.AI Coding Plan API for formula generation
         
         Args:
             prompt: AI prompt
@@ -266,8 +267,6 @@ class AIFeatureScorer:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://kpi-dashboard-xi-murex.vercel.app",
-            "X-Title": "KPI Dashboard AI Formula Generator"
         }
         
         data = {
@@ -283,13 +282,14 @@ class AIFeatureScorer:
                 }
             ],
             "temperature": 0.3,  # Low temperature for consistent results
-            "max_tokens": 800
+            "max_tokens": 8000,
+            "response_format": {"type": "json_object"}
         }
         
         try:
             with httpx.Client(timeout=30.0) as client:
                 response = client.post(
-                    self.BASE_URL,
+                    self.base_url,
                     headers=headers,
                     json=data
                 )

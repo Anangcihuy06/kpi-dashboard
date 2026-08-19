@@ -10,7 +10,7 @@ Backfill persisted feature complexity scores for existing Jira issues.
 Usage:
   python backfill_weights.py            # rules scorer, only fills missing scores
   python backfill_weights.py --force    # re-score everything
-  python backfill_weights.py --llm      # use OpenRouter LLM scorer
+  python backfill_weights.py --llm      # use Z.AI LLM scorer
 """
 FORCE = "--force" in sys.argv
 USE_LLM = "--llm" in sys.argv

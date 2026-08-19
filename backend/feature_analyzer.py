@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger("feature_analyzer")
 
 # Minimal .env reader (no python-dotenv dependency). Reads backend/.env so
-# OPENROUTER_* work locally; environment variables always take precedence
+# ZAI_* work locally; environment variables always take precedence
 # (Railway sets them natively in production).
 _DOTENV_CACHE = None
 
@@ -251,22 +251,23 @@ def calculate_feature_weight(issue_data: dict, config: Optional[dict] = None) ->
 
 
 # ---------------------------------------------------------------------------
-# Pluggable FeatureScorer (rules / LLM via OpenRouter)
+# Pluggable FeatureScorer (rules / LLM via Z.AI Coding Plan)
 # ---------------------------------------------------------------------------
 
 class LLMFeatureScorer:
-    """Scores Jira issues with an external LLM through OpenRouter.
+    """Scores Jira issues with an external LLM through Z.AI GLM Coding Plan.
 
     - Strict JSON output (5 dimensions + total + reasoning).
     - Retries + per-issue caching; falls back to the rules scorer on failure.
     - Config-driven caps & point mapping.
     """
 
-    BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+    DEFAULT_BASE_URL = "https://api.z.ai/api/coding/paas/v4/chat/completions"
 
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, config: Optional[dict] = None, timeout: int = 30):
-        self.api_key = api_key or _get_env("OPENROUTER_API_KEY")
-        self.model = model or _get_env("OPENROUTER_MODEL") or "openai/gpt-4o-mini"
+        self.api_key = api_key or _get_env("ZAI_API_KEY")
+        self.model = model or _get_env("ZAI_MODEL") or "glm-5.3"
+        self.base_url = _get_env("ZAI_BASE_URL") or self.DEFAULT_BASE_URL
         self.config = _normalise_config(config)
         self.timeout = timeout
         self.cache: Dict[str, dict] = {}
@@ -331,7 +332,6 @@ class LLMFeatureScorer:
             ],
             "temperature": 0.0,
             "response_format": {"type": "json_object"},
-            "metadata": {"prompt_version": PROMPT_VERSION},
         }
 
     @staticmethod
@@ -363,10 +363,8 @@ class LLMFeatureScorer:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": _get_env("OPENROUTER_REFERER", "https://kpi-dashboard.local"),
-            "X-Title": "KPI-Dashboard",
         }
-        resp = requests.post(self.BASE_URL, json=payload, headers=headers, timeout=self.timeout)
+        resp = requests.post(self.base_url, json=payload, headers=headers, timeout=self.timeout)
         resp.raise_for_status()
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
@@ -406,7 +404,7 @@ class FeatureScorer:
     def __init__(self, config: Optional[dict] = None, use_llm: Optional[bool] = None,
                  api_key: Optional[str] = None, model: Optional[str] = None):
         self.config = _normalise_config(config)
-        llm_enabled = bool((api_key or _get_env("OPENROUTER_API_KEY")).strip())
+        llm_enabled = bool((api_key or _get_env("ZAI_API_KEY")).strip())
         if use_llm is None:
             use_llm = llm_enabled
         # use_llm=True always constructs the LLM scorer; it will fall back to rules

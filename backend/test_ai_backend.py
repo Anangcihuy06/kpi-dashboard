@@ -69,9 +69,9 @@ def test_ai_formula_generator():
     print("=" * 60)
     
     # Check if AI service is available
-    api_key = os.getenv("OPENROUTER_API_KEY")
+    api_key = os.getenv("ZAI_API_KEY")
     if not api_key:
-        print("[WARNING] OPENROUTER_API_KEY not found in environment variables")
+        print("[WARNING] ZAI_API_KEY not found in environment variables")
         print("   AI formula generation will use fallback mode")
     
     # Test AI scorer initialization
@@ -138,7 +138,7 @@ def test_ai_formula_generator():
             print(f"   Warnings: {response.validation.get('warnings', [])}")
     else:
         print(f"   [WARNING] Error: {response.error}")
-        print(f"   Fallback mode activated (this is expected if OPENROUTER_API_KEY is not set)")
+        print(f"   Fallback mode activated (this is expected if ZAI_API_KEY is not set)")
     
     print("\n" + "=" * 60)
     print("[OK] AI formula generator test PASSED")
@@ -186,7 +186,7 @@ async def test_async_ai_api():
     
     if not scorer.enabled:
         print("⚠️  AI service not enabled, skipping async test")
-        print("   Set OPENROUTER_API_KEY environment variable to enable AI service")
+        print("   Set ZAI_API_KEY environment variable to enable AI service")
         return
     
     request = AIFormulaRequest(

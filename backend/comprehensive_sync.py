@@ -17,7 +17,7 @@ import concurrent.futures
 from typing import List, Dict, Any, Optional
 
 def _sync_feature_scorer(db):
-    """Build a FeatureScorer using config-matrix variables; enables LLM when OPENROUTER_API_KEY is set."""
+    """Build a FeatureScorer using config-matrix variables; enables LLM when ZAI_API_KEY is set."""
     cfg = resolve_feature_config(db)
     return FeatureScorer(config=cfg)
 

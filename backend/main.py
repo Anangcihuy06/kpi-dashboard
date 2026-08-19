@@ -1782,7 +1782,7 @@ def rescore_features(payload: RescoreRequest, background_tasks: BackgroundTasks)
             bg_db.close()
 
     background_tasks.add_task(_run_rescore)
-    return {"status": "success", "message": "Re-scoring dijalankan di background", "mode": "llm" if os.getenv("OPENROUTER_API_KEY") else "rules"}
+    return {"status": "success", "message": "Re-scoring dijalankan di background", "mode": "llm" if os.getenv("ZAI_API_KEY") else "rules"}
 
 @app.get("/api/v1/jobs/{job_id}")
 def get_job_status_endpoint(job_id: str, db: Session = Depends(get_db)):
