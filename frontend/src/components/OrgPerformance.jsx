@@ -17,6 +17,23 @@ const fmt = (n, digits = 0) =>
     maximumFractionDigits: digits,
   });
 
+const AVATAR_COLORS = ["#4f8cff", "#12ccab", "#8b5cf6", "#f59e0b", "#ef4444", "#0ea5e9", "#14b8a6", "#6366f1"];
+
+const avatarColor = (name) => {
+  let h = 0;
+  const s = name || "";
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+};
+
+const initialsOf = (name, nik) => {
+  const src = (name || "").trim();
+  if (!src) return (nik || "").slice(0, 2).toUpperCase() || "?";
+  const parts = src.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+};
+
 function buildOrgTree(members) {
   const byId = {};
   members.forEach(m => { byId[m.user_id] = { ...m, children: [] }; });
@@ -436,6 +453,27 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
               ) : (
                 <div style={{ width: 28, flexShrink: 0 }} />
               )}
+
+              <div
+                title={node.full_name || node.nik}
+                style={{
+                  width: 30,
+                  height: 30,
+                  borderRadius: "50%",
+                  background: avatarColor(node.full_name),
+                  color: "#fff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: 700,
+                  fontSize: 12,
+                  flexShrink: 0,
+                  textTransform: "uppercase",
+                  boxShadow: "0 1px 3px rgba(15,23,42,0.2)",
+                }}
+              >
+                {initialsOf(node.full_name, node.nik)}
+              </div>
 
               <div style={{ flex: "1 1 auto", minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
