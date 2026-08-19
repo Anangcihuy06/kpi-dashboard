@@ -5,6 +5,7 @@ import time
 import logging
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from hashlib import sha256
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("feature_analyzer")
@@ -63,6 +64,72 @@ DEFAULT_FEATURE_CONFIG = {
     ],
 }
 
+# Keyword groups used by the deterministic scorer. Overridable wholesale via env
+# FEATURE_RULE_KEYWORDS_JSON ({"group_name": ["kw1", "kw2", ...]}) so rules can
+# be tuned in production without a code change. Each group falls back to the
+# built-in defaults below.
+_DEFAULT_KEYWORDS = {
+    "routine": [
+        'upload gc', 'upload bca', 'generate report', 'test support', 'private event support',
+        'public event support', 'update banner', 'good morning', 'create username', 'password for test',
+        'configure and prepare for test', 'prod - test', 'minor fix', 'text change',
+    ],
+    "rebuild": [
+        'build ulang', 'rebuild', '16kb', '16 kb', 'arm compatibility', 'native-bridge',
+        'jni', 'ndk', 'recompile', 'page size alignment', 'memory alignment',
+    ],
+    "core": [
+        'squash', 'refactor core', 'architecture overhaul', 'framework upgrade',
+        'zero-downtime', 'migration', 'blue-green',
+    ],
+    "db_migration": [
+        'schema migration', 'alter table', 'indexing', 'postgresql query optimization',
+        'foreign key', 'database constraint', 'db setup',
+    ],
+    "zero_downtime": [
+        'zero-downtime deployment', 'nginx blue-green config', 'pipeline automation',
+        'sentry security monitoring',
+    ],
+    "security": [
+        'owasp testing', 'penetration scanning', 'xss mitigation', 'csrf protection',
+        'security hardening',
+    ],
+    "high_impact_business": [
+        'doku', 'kredivo', 'payment', 'booking', 'overtime', 'roster',
+        'leave submission', 'quota management',
+    ],
+    "medium_impact_business": ['reporting', 'report', 'event support', 'travel fair'],
+    "low_impact_business": ['theme option', 'styling', 'logo', 'aria-label'],
+    "high_scope": ['api integration', 'data sync', 'deployment', 'db setup'],
+    "medium_scope": ['doku', 'kredivo', 'payment gateway', 'prometheus', 'expiry check'],
+    "low_scope": ['overtime order', 'leave request', 'roster alert', 'report generate'],
+    "high_risk": ['overtime', 'leave submission', 'roster', 'api integration', 'data sync', 'payment gateway'],
+}
+
+_OVERRIDE_KEYWORDS = None
+
+
+def _load_keyword_config() -> dict:
+    global _OVERRIDE_KEYWORDS
+    if _OVERRIDE_KEYWORDS is None:
+        raw = _get_env("FEATURE_RULE_KEYWORDS_JSON", "")
+        parsed = {}
+        if raw:
+            try:
+                parsed = json.loads(raw)
+            except Exception:  # noqa: BLE001
+                logger.warning("FEATURE_RULE_KEYWORDS_JSON is invalid JSON; using built-in defaults")
+        _OVERRIDE_KEYWORDS = parsed if isinstance(parsed, dict) else {}
+    return _OVERRIDE_KEYWORDS
+
+
+def _kw(name: str, default: list) -> list:
+    """Return the configured keyword list for a group, else the default."""
+    override = _load_keyword_config().get(name)
+    if isinstance(override, list) and override:
+        return [str(k).lower() for k in override]
+    return default
+
 PROMPT_VERSION = "v1"
 
 
@@ -85,6 +152,11 @@ def kpi_points_from_total(total_score: float, config: Optional[dict] = None) -> 
         if total_score >= min_total:
             return float(points)
     return cfg["point_map"][-1][1] if cfg["point_map"] else 1.0
+
+
+def _summary_hash(summary: str) -> str:
+    """Stable content hash for a summary, used as persistent-cache key."""
+    return sha256((summary or "").strip().encode("utf-8")).hexdigest()
 
 
 def analyze_multi_factor(issue_data: dict, config: Optional[dict] = None) -> dict:
@@ -122,21 +194,17 @@ def analyze_multi_factor(issue_data: dict, config: Optional[dict] = None) -> dic
     is_qa = summary.startswith('qa:') or 'qa test' in combined_text or 'test case' in combined_text or summary.startswith('testing')
 
     # 1. Check Routine operational task
-    routine_keywords = [
-        'upload gc', 'upload bca', 'generate report', 'test support', 'private event support',
-        'public event support', 'update banner', 'good morning', 'create username', 'password for test',
-        'configure and prepare for test', 'prod - test', 'minor fix', 'text change'
-    ]
+    routine_keywords = _kw("routine", _DEFAULT_KEYWORDS["routine"])
     is_routine = any(kw in combined_text for kw in routine_keywords)
 
     # 2. Check Rebuild / Core Engineering
-    is_rebuild = any(kw in combined_text for kw in ['build ulang', 'rebuild', '16kb', '16 kb', 'arm compatibility', 'native-bridge', 'jni', 'ndk', 'recompile', 'page size alignment', 'memory alignment'])
-    is_core = any(kw in combined_text for kw in ['squash', 'refactor core', 'architecture overhaul', 'framework upgrade', 'zero-downtime', 'migration', 'blue-green'])
+    is_rebuild = any(kw in combined_text for kw in _kw("rebuild", _DEFAULT_KEYWORDS["rebuild"]))
+    is_core = any(kw in combined_text for kw in _kw("core", _DEFAULT_KEYWORDS["core"]))
 
     # Deep Analysis of Description & Summary for Architectural Complexity
-    has_db_migration = any(kw in combined_text for kw in ['schema migration', 'alter table', 'indexing', 'postgresql query optimization', 'foreign key', 'database constraint', 'db setup'])
-    has_zero_downtime = any(kw in combined_text for kw in ['zero-downtime deployment', 'nginx blue-green config', 'pipeline automation', 'sentry security monitoring'])
-    has_security_remediation = any(kw in combined_text for kw in ['owasp testing', 'penetration scanning', 'xss mitigation', 'csrf protection', 'security hardening'])
+    has_db_migration = any(kw in combined_text for kw in _kw("db_migration", _DEFAULT_KEYWORDS["db_migration"]))
+    has_zero_downtime = any(kw in combined_text for kw in _kw("zero_downtime", _DEFAULT_KEYWORDS["zero_downtime"]))
+    has_security_remediation = any(kw in combined_text for kw in _kw("security", _DEFAULT_KEYWORDS["security"]))
 
     # === DIMENSION 1: Technical Complexity (0-max_c) ===
     if is_routine:
@@ -177,11 +245,11 @@ def analyze_multi_factor(issue_data: dict, config: Optional[dict] = None) -> dic
         impact = max_i
     elif has_db_migration or has_security_remediation:
         impact = 4
-    elif any(kw in combined_text for kw in ['doku', 'kredivo', 'payment', 'booking', 'overtime', 'roster', 'leave submission', 'quota management']):
+    elif any(kw in combined_text for kw in _kw("high_impact_business", _DEFAULT_KEYWORDS["high_impact_business"])):
         impact = 4
-    elif any(kw in combined_text for kw in ['reporting', 'report', 'event support', 'travel fair']):
+    elif any(kw in combined_text for kw in _kw("medium_impact_business", _DEFAULT_KEYWORDS["medium_impact_business"])):
         impact = 3
-    elif any(kw in combined_text for kw in ['theme option', 'styling', 'logo', 'aria-label']):
+    elif any(kw in combined_text for kw in _kw("low_impact_business", _DEFAULT_KEYWORDS["low_impact_business"])):
         impact = 2
     else:
         impact = 2
@@ -197,11 +265,11 @@ def analyze_multi_factor(issue_data: dict, config: Optional[dict] = None) -> dic
         scope = 4
     elif has_db_migration:
         scope = 3
-    elif any(kw in combined_text for kw in ['api integration', 'data sync', 'deployment', 'db setup']):
+    elif any(kw in combined_text for kw in _kw("high_scope", _DEFAULT_KEYWORDS["high_scope"])):
         scope = 4
-    elif any(kw in combined_text for kw in ['doku', 'kredivo', 'payment gateway', 'prometheus', 'expiry check']):
+    elif any(kw in combined_text for kw in _kw("medium_scope", _DEFAULT_KEYWORDS["medium_scope"])):
         scope = 3
-    elif any(kw in combined_text for kw in ['overtime order', 'leave request', 'roster alert', 'report generate']):
+    elif any(kw in combined_text for kw in _kw("low_scope", _DEFAULT_KEYWORDS["low_scope"])):
         scope = 2
     else:
         scope = 2
@@ -215,7 +283,7 @@ def analyze_multi_factor(issue_data: dict, config: Optional[dict] = None) -> dic
         risk = max_r
     elif has_db_migration or has_security_remediation:
         risk = 2
-    elif any(kw in combined_text for kw in ['overtime', 'leave submission', 'roster', 'api integration', 'data sync', 'payment gateway']):
+    elif any(kw in combined_text for kw in _kw("high_risk", _DEFAULT_KEYWORDS["high_risk"])):
         risk = 2
     else:
         risk = 1
@@ -271,6 +339,9 @@ class LLMFeatureScorer:
         self.config = _normalise_config(config)
         self.timeout = timeout
         self.cache: Dict[str, dict] = {}
+        # Sliding-window rate limit + per-run budget (env: LLM_RPM, LLM_MAX_ISSUES_PER_SYNC)
+        self._call_times: List[float] = []
+        self._llm_calls = 0
 
     def _payload_for(self, issue_data: dict) -> dict:
         fields = issue_data.get('fields', {}) if issue_data else {}
@@ -370,30 +441,125 @@ class LLMFeatureScorer:
         content = data["choices"][0]["message"]["content"]
         return self._parse_json(content)
 
+    # -- rate limit / budget -------------------------------------------------
+    def _rate_limit(self):
+        """Sliding-window throttle for LLM calls (env LLM_RPM, default 10)."""
+        rpm = int(_get_env("LLM_RPM", "10") or "10")
+        if rpm <= 0:
+            return
+        now = time.time()
+        self._call_times = [t for t in self._call_times if now - t < 60.0]
+        if len(self._call_times) >= rpm:
+            wait = 60.0 - (now - self._call_times[0])
+            if wait > 0:
+                time.sleep(wait)
+            now = time.time()
+        self._call_times.append(now)
+
+    def _budget_exhausted(self) -> bool:
+        limit = int(_get_env("LLM_MAX_ISSUES_PER_SYNC", "0") or "0")
+        return limit > 0 and self._llm_calls >= limit
+
+    # -- persistent cache ----------------------------------------------------
+    def _db_get(self, issue_key: str, summary_hash: str):
+        try:
+            import models
+            from database import SessionLocal
+            from sqlalchemy import and_
+            s = SessionLocal()
+            try:
+                return s.query(models.FeatureScoreCache).filter(
+                    and_(
+                        models.FeatureScoreCache.issue_key == issue_key,
+                        models.FeatureScoreCache.summary_hash == summary_hash,
+                    )
+                ).first()
+            finally:
+                s.close()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"FeatureScoreCache read failed: {e}")
+            return None
+
+    def _db_set(self, issue_key: str, summary_hash: str, score: dict):
+        try:
+            import models
+            from database import SessionLocal
+            from sqlalchemy import and_
+            s = SessionLocal()
+            try:
+                row = s.query(models.FeatureScoreCache).filter(
+                    and_(
+                        models.FeatureScoreCache.issue_key == issue_key,
+                        models.FeatureScoreCache.summary_hash == summary_hash,
+                    )
+                ).first()
+                if row is None:
+                    row = models.FeatureScoreCache(
+                        issue_key=issue_key,
+                        summary_hash=summary_hash,
+                        score=score,
+                        model=score.get("model"),
+                        score_type=score.get("score_type"),
+                    )
+                    s.add(row)
+                else:
+                    row.score = score
+                    row.model = score.get("model")
+                    row.score_type = score.get("score_type")
+                s.commit()
+            except Exception:  # noqa: BLE001
+                s.rollback()
+            finally:
+                s.close()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"FeatureScoreCache write failed: {e}")
+
     def score(self, issue_data: dict) -> dict:
         """Score one issue. Returns the standard detail dict + score_type/model."""
-        cache_key = (issue_data.get('key') or '') + '|' + str(issue_data.get('fields', {}).get('summary', ''))
-        if cache_key in self.cache:
-            cached = dict(self.cache[cache_key])
+        issue_key = issue_data.get('key') or ''
+        summary = str(issue_data.get('fields', {}).get('summary', '') or '')
+        summary_hash = _summary_hash(summary)
+        mem_key = f"{issue_key}|{summary_hash}"
+
+        if mem_key in self.cache:
+            cached = dict(self.cache[mem_key])
             cached["score_type"] = "llm_cached"
             return cached
 
         fallback = analyze_multi_factor(issue_data, config=self.config)
+
+        # Persistent cache (survives restarts; a rescore of unchanged issues
+        # never pays the LLM again).
+        row = self._db_get(issue_key, summary_hash)
+        if row is not None and row.score:
+            res = dict(row.score)
+            res["score_type"] = row.score_type or "llm_cached"
+            self.cache[mem_key] = res
+            return res
+
+        # Per-run LLM budget (env LLM_MAX_ISSUES_PER_SYNC).
+        if self._budget_exhausted():
+            fallback["score_type"] = "rules_budget"
+            return fallback
+
         payload = self._payload_for(issue_data)
         last_err = None
         for attempt in range(3):
             try:
+                self._rate_limit()
+                self._llm_calls += 1
                 parsed = self._call_once(payload)
                 res = self._normalise_result(parsed, fallback)
                 res["score_type"] = "llm"
                 res["model"] = self.model
                 res["prompt_version"] = PROMPT_VERSION
-                self.cache[cache_key] = res
+                self.cache[mem_key] = res
+                self._db_set(issue_key, summary_hash, res)
                 return res
             except Exception as e:  # noqa: BLE001
                 last_err = e
                 time.sleep(1.5 * (attempt + 1))
-        logger.warning(f"LLM scoring failed ({last_err}), using rules fallback for {issue_data.get('key')}")
+        logger.warning(f"LLM scoring failed ({last_err}), using rules fallback for {issue_key}")
         fallback["score_type"] = "rules_fallback"
         return fallback
 

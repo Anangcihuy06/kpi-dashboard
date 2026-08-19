@@ -1,7 +1,11 @@
 import ast
 import json
+import logging
 import operator
+from functools import lru_cache
 from typing import Dict, Any, List
+
+logger = logging.getLogger("KPIEngine")
 
 class SafeMathEvaluator(ast.NodeVisitor):
     ALLOWED_OPERATORS = {
@@ -113,6 +117,10 @@ def _preprocess_if_calls(formula_str: str) -> str:
     `if` is a reserved Python keyword, so `if(x > 1, 10, 0)` fails ast.parse.
     We rewrite it to `(10 if (x > 1) else 0)` so the SafeMathEvaluator can handle
     it through ast.IfExp.
+
+    Cached: the same formula string is parsed tens of thousands of times during
+    a full-year KPI run, so we only preprocess (and parse) each distinct string
+    once.
     """
     out = []
     i = 0
@@ -147,6 +155,16 @@ def _preprocess_if_calls(formula_str: str) -> str:
     return "".join(out)
 
 
+_preprocess_if_calls = lru_cache(maxsize=1024)(_preprocess_if_calls)
+
+
+@lru_cache(maxsize=1024)
+def _parse_formula(formula_str: str):
+    """Cache the (preprocessed, parsed) AST for a formula string."""
+    processed = _preprocess_if_calls(formula_str)
+    return ast.parse(processed, mode='eval')
+
+
 def _split_top_level_commas(s: str) -> list:
     """Split a string on commas that are not nested inside () [] {}."""
     parts = []
@@ -166,15 +184,20 @@ def _split_top_level_commas(s: str) -> list:
     return parts
 
 
-def evaluate_kpi_formula(formula_str: str, context: Dict[str, float]) -> float:
+def evaluate_kpi_formula(formula_str: str, context: Dict[str, float], log_context: Dict[str, Any] = None, raise_on_error: bool = False) -> float:
     try:
-        # Pre-process formula: strip spaces and check safety
-        processed = _preprocess_if_calls(formula_str)
-        tree = ast.parse(processed, mode='eval')
+        tree = _parse_formula(formula_str)
         evaluator = SafeMathEvaluator(context)
         return float(evaluator.visit(tree))
     except Exception as e:
-        print(f"[KPI Engine Error] Gagal mengevaluasi formula '{formula_str}': {str(e)}")
+        # Never crash the whole calc over one bad formula, but ALWAYS surface it
+        # (old code printed and vanished; a typo silently zeroed a user's score).
+        extra = f" ({log_context})" if log_context else ""
+        logger.error(
+            f"[KPI Engine Error] Gagal mengevaluasi formula '{formula_str}'{extra}: {str(e)}"
+        )
+        if raise_on_error:
+            raise
         return 0.0
 
 

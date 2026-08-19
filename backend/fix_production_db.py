@@ -26,6 +26,14 @@ def setup_production_database():
         print("2. Creating database tables...")
         Base.metadata.create_all(bind=engine)
         print("✅ Database tables created")
+
+        # Unique constraints + query-path indexes (dedup leftovers first).
+        # Same code path as main.py lifespan so deploy == local boot.
+        print("2b. Running DB maintenance (unique constraints + indexes)...")
+        from db_maintenance import run_db_maintenance
+        for line in run_db_maintenance(engine):
+            print(line)
+        print("✅ DB maintenance done")
         
         # Verify critical tables exist
         print("3. Verifying critical tables...")

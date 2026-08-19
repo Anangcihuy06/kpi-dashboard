@@ -179,6 +179,11 @@ async def lifespan(app: FastAPI):
                 conn.execute(text("CREATE INDEX IF NOT EXISTS ix_emp_identity_user_source ON employee_identity (user_id, source)"))
                 conn.execute(text("CREATE INDEX IF NOT EXISTS ix_raw_jira_assignee_resolved ON raw_jira_issues (assignee_account_id, resolved_date)"))
             print("Performance indexes ensured")
+
+            # Unique constraints (dedup leftovers) + extra query-path indexes.
+            # Single source of truth shared with fix_production_db.py.
+            from db_maintenance import ensure_constraints_and_indexes
+            ensure_constraints_and_indexes(engine)
         except Exception as mig_e:
             print(f"Warning: auto-migration skipped: {mig_e}")
 
@@ -327,6 +332,73 @@ def db_diagnostics():
         diagnostics["status"] = "error"
         diagnostics["error"] = str(e)
         return diagnostics, 500
+
+
+@app.get("/api/v1/db/index-diagnostics")
+def db_index_diagnostics():
+    """List expected vs actual indexes (verifies the AUTO_INDEX maintenance)."""
+    from database import engine
+    from sqlalchemy import inspect
+    from db_maintenance import UNIQUE_INDEXES, EXTRA_INDEXES
+
+    inspector = inspect(engine)
+    actual = {}
+    for table in inspector.get_table_names():
+        actual[table] = [i.get("name") for i in inspector.get_indexes(table)]
+
+    expected = {name: f"{table}({', '.join(cols)})"
+                for name, table, cols in (UNIQUE_INDEXES + EXTRA_INDEXES)}
+    missing = {name: spec for name, spec in expected.items()
+               if name not in {idx for lst in actual.values() for idx in lst}}
+
+    return {
+        "status": "ok" if not missing else "missing_indexes",
+        "expected": expected,
+        "actual": actual,
+        "missing": missing,
+    }
+
+
+@app.get("/api/v1/kpi/formula-errors")
+def kpi_formula_errors(year: int = None, limit: int = 100, db: Session = Depends(get_db)):
+    """List daily rows whose kpi_breakdown recorded formula evaluation errors.
+
+    Lets operators find mis-configured formula rules instead of users silently
+    scoring 0.0 because of a typo in the Configurator matrix.
+    """
+    from datetime import datetime as _dt
+    if not year:
+        year = _dt.now().year
+    start = _dt(year, 1, 1)
+    end = _dt(year, 12, 31, 23, 59, 59)
+
+    rows = (
+        db.query(models.KPIEmployeeDaily)
+        .filter(
+            models.KPIEmployeeDaily.date >= start,
+            models.KPIEmployeeDaily.date <= end,
+        )
+        .order_by(models.KPIEmployeeDaily.date.desc())
+        .limit(limit)
+        .all()
+    )
+    matches = []
+    for r in rows:
+        breakdown = r.kpi_breakdown or {}
+        if isinstance(breakdown, str):
+            try:
+                import json as _json
+                breakdown = _json.loads(breakdown)
+            except Exception:
+                breakdown = {}
+        errs = breakdown.get("formula_errors") if isinstance(breakdown, dict) else None
+        if errs:
+            matches.append({
+                "user_id": r.user_id,
+                "date": r.date.strftime("%Y-%m-%d") if r.date else None,
+                "errors": errs,
+            })
+    return {"year": year, "found": len(matches), "errors": matches[:limit]}
 
 # Force database initialization endpoint
 @app.post("/api/v1/db/initialize")
@@ -1779,8 +1851,16 @@ def rescore_features(payload: RescoreRequest, background_tasks: BackgroundTasks)
     """Re-score stored Jira issues with the configured FeatureScorer (rules or LLM)
     and refresh the precomputed maxima/metrics. Runs in the background."""
     def _run_rescore():
-        from database import SessionLocal
+        from database import SessionLocal, engine as _engine
+        from locks import AppLock
         from feature_analyzer import FeatureScorer, resolve_feature_config, stored_feature_weight
+        # A rescore both re-writes complexity scores and re-runs the precompute
+        # (company maxima + daily aggregates), so it must not overlap a running
+        # KPI calc on another worker/instance.
+        _lock = AppLock(_engine, "KPI_CALC")
+        if not _lock.try_acquire():
+            logger.warning("Rescore skipped: another KPI calc/rescore holds the DB lock")
+            return
         bg_db = SessionLocal()
         try:
             cfg = resolve_feature_config(bg_db)
@@ -1841,6 +1921,10 @@ def rescore_features(payload: RescoreRequest, background_tasks: BackgroundTasks)
             bg_db.rollback()
         finally:
             bg_db.close()
+            try:
+                _lock.release()
+            except Exception:
+                pass
 
     background_tasks.add_task(_run_rescore)
     return {"status": "success", "message": "Re-scoring dijalankan di background", "mode": "llm" if os.getenv("ZAI_API_KEY") else "rules"}

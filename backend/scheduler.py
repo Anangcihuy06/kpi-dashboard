@@ -1,15 +1,17 @@
 import requests
 from datetime import datetime
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from database import SessionLocal
+from database import SessionLocal, engine
 import models
 from engine import DynamicKPIEngine
 from sync_service import sync_attendance_for_sprint, get_system_token
 from multi_board_sync import sync_all_boards_sprints, get_user_active_sprint
+from locks import AppLock
 import logging
 import os
 
@@ -24,6 +26,10 @@ KPI_CALC_LOCK = threading.Lock()
 # Configurable scheduler intervals (can be overridden via environment variables)
 SYNC_SPRINTS_INTERVAL_MINUTES = int(os.getenv("SYNC_SPRINTS_INTERVAL_MINUTES", "60"))
 SYNC_KPI_CALCULATION_INTERVAL_MINUTES = int(os.getenv("SYNC_KPI_CALCULATION_INTERVAL_MINUTES", "60"))
+
+# Concurrency budget for the in-process worker pools.
+KPI_CALC_WORKERS = int(os.getenv("KPI_CALC_WORKERS", "5"))
+SYNC_USER_WORKERS = int(os.getenv("SYNC_USER_WORKERS", "3"))
 
 scheduler = BackgroundScheduler()
 
@@ -252,6 +258,12 @@ def sync_data_only_job():
     Sync only data from Jira/GitLab into the local DB without calculating KPI.
     Used by the 'Sync Data' button in the Configurator.
     """
+    # Cross-instance guard so two workers never run a full data sync at once.
+    _sync_lock = AppLock(engine, "DATA_SYNC")
+    if not _sync_lock.try_acquire():
+        logger.warning("sync_data_only_job skipped: another instance holds the DATA_SYNC DB lock")
+        return {"status": "error", "message": "Sinkronisasi data sedang berjalan oleh instance lain. Tunggu selesai, lalu coba lagi."}
+
     db = SessionLocal()
     try:
         settings = db.query(models.IntegrationSetting).first()
@@ -274,18 +286,39 @@ def sync_data_only_job():
         start_date = datetime(datetime.now().year, 1, 1, 0, 0, 0)
         end_date = datetime(datetime.now().year, 12, 31, 23, 59, 59)
 
+        # Parallel per-user sync. Each worker uses its OWN session because
+        # SQLAlchemy Session is not thread-safe and a shared session would
+        # poison every thread on the first rollback.
+        def _sync_one(user):
+            from database import SessionLocal as _SL
+            s = _SL()
+            try:
+                result = sync_user_comprehensive(s, user, settings, start_date, end_date)
+                return user, result
+            except Exception as e:
+                logger.error(f"Sync Data: failed for user {user.full_name}: {e}")
+                try:
+                    s.rollback()
+                except Exception:
+                    pass
+                return user, None
+            finally:
+                s.close()
+
         synced_users = 0
         total_records = 0
-        for u in users:
-            try:
-                result = sync_user_comprehensive(db, u, settings, start_date, end_date)
-                if result.get("status") == "success":
+        with ThreadPoolExecutor(max_workers=SYNC_USER_WORKERS) as pool:
+            futures = [pool.submit(_sync_one, u) for u in users]
+            for fut in futures:
+                user, result = fut.result()
+                if result and result.get("status") == "success":
                     synced_users += 1
                     total_records += result.get("total_records", 0)
-                logger.info(f"Sync Data: user {u.full_name} -> {result.get('status')} ({result.get('total_records', 0)} records)")
-            except Exception as e:
-                logger.error(f"Sync Data: failed for user {u.full_name}: {e}")
-                db.rollback()
+                logger.info(
+                    f"Sync Data: user {user.full_name} -> "
+                    f"{result.get('status') if result else 'error'} "
+                    f"({result.get('total_records', 0) if result else 0} records)"
+                )
 
         # Invalidate cache after sync
         try:
@@ -309,6 +342,10 @@ def sync_data_only_job():
         return {"status": "error", "message": str(e)}
     finally:
         db.close()
+        try:
+            _sync_lock.release()
+        except Exception:
+            pass
 
 
 def _job_was_cancelled(db: Session, job_id: str) -> bool:
@@ -342,6 +379,18 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
     if not KPI_CALC_LOCK.acquire(blocking=False):
         logger.warning("calculate_kpi_only_job skipped: another KPI calc is already running")
         return {"status": "error", "message": "Kalkulasi KPI sedang berjalan. Tunggu kalkulasi yang sedang berjalan selesai, lalu coba lagi."}
+
+    # Cross-instance guard: with more than one uvicorn worker/instance the
+    # threading lock above is invisible to the other process, so we also take a
+    # DB-backed lock. Two Railway workers can never run the calc at the same time.
+    _app_lock = AppLock(engine, "KPI_CALC")
+    if not _app_lock.try_acquire():
+        logger.warning("calculate_kpi_only_job skipped: another instance holds the KPI_CALC DB lock")
+        try:
+            KPI_CALC_LOCK.release()
+        except RuntimeError:
+            pass
+        return {"status": "error", "message": "Kalkulasi KPI sedang berjalan oleh instance lain. Tunggu selesai, lalu coba lagi."}
 
     logger.info(f"Starting KPI calculation-only job for year {year} (local DB only)...")
     db = SessionLocal()
@@ -514,7 +563,7 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
 
         calc_count = 0
         total_dates = 0
-        with ThreadPoolExecutor(max_workers=5) as pool:
+        with ThreadPoolExecutor(max_workers=KPI_CALC_WORKERS) as pool:
             futures = []
             for idx, u in enumerate(users):
                 if _job_was_cancelled(db, job_id):
@@ -571,6 +620,10 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
     finally:
         db.close()
         try:
+            _app_lock.release()
+        except Exception:
+            pass
+        try:
             KPI_CALC_LOCK.release()
         except RuntimeError:
             pass
@@ -582,6 +635,16 @@ def sync_and_calculate_all_users_job(year: int = None):
 
     if not KPI_CALC_LOCK.acquire(blocking=False):
         logger.info("sync_and_calculate_all_users_job skipped: another KPI calc is already running")
+        return
+
+    # Cross-instance guard (see calculate_kpi_only_job).
+    _app_lock = AppLock(engine, "KPI_CALC")
+    if not _app_lock.try_acquire():
+        logger.info("sync_and_calculate_all_users_job skipped: another instance holds the KPI_CALC DB lock")
+        try:
+            KPI_CALC_LOCK.release()
+        except RuntimeError:
+            pass
         return
 
     logger.info(f"Starting background KPI calculation for year {year}...")
@@ -676,6 +739,10 @@ def sync_and_calculate_all_users_job(year: int = None):
     finally:
         db.close()
         try:
+            _app_lock.release()
+        except Exception:
+            pass
+        try:
             KPI_CALC_LOCK.release()
         except RuntimeError:
             pass
@@ -762,8 +829,14 @@ def sync_attendance_nightly_job():
                     existing.status = "PRESENT"
                     existing.is_late = is_late
                 else:
-                    default_sprint = db.query(models.Sprint).first()
-                    sprint_id = default_sprint.id if default_sprint else "cd7c558a-dfb9-49b9-8438-5b7f58aae49f"
+                    # Resolve a real sprint at query time (never a hardcoded UUID).
+                    default_sprint = (
+                        db.query(models.Sprint)
+                        .filter(models.Sprint.status == "ACTIVE")
+                        .order_by(models.Sprint.start_date.desc())
+                        .first()
+                    ) or db.query(models.Sprint).order_by(models.Sprint.start_date.desc()).first()
+                    sprint_id = default_sprint.id if default_sprint else None
                     att = models.AttendanceRecord(
                         user_id=user.id,
                         date=d_obj,

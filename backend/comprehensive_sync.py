@@ -35,8 +35,11 @@ def fetch_project_commits(project_id, author_query, gitlab_url, headers, start_d
             batch = response.json()
             if isinstance(batch, list):
                 return batch
-    except Exception:
-        pass
+            logger.warning(f"GitLab commits: unexpected payload for project {project_id} ({author_query})")
+        else:
+            logger.warning(f"GitLab commits: HTTP {response.status_code} for project {project_id} ({author_query})")
+    except Exception as e:
+        logger.warning(f"GitLab commits: request failed for project {project_id} ({author_query}): {e}")
     return []
 logger = logging.getLogger("ComprehensiveSync")
 
@@ -602,110 +605,123 @@ def sync_gitlab_merge_requests(db: Session, user: models.User, settings: models.
             if mrs and len(mrs) > 0:
                 logger.info(f"CONSOLE: GITLAB MR DATA STRUCTURE for {user.full_name}:\n{json.dumps(mrs[0], indent=2)}")
             
+            # Cache resolved project DB ids per external id so many MRs of the
+            # same project do not trigger a fresh HTTP fetch + upsert each time.
+            _project_db_cache = {}
+
             for mr in mrs:
                 mr_id = str(mr.get("id"))
                 project_id = str(mr.get("project_id"))
-                
-                # Get project info
-                project_url = f"{gitlab_url}/api/v4/projects/{project_id}"
-                project_response = requests.get(project_url, headers={"PRIVATE-TOKEN": gitlab_token}, timeout=10)
-                
-                if project_response.status_code == 200:
-                    project = project_response.json()
+
+                project_db_id = _project_db_cache.get(project_id)
+                if project_db_id is None:
+                    # Get project info
+                    project_url = f"{gitlab_url}/api/v4/projects/{project_id}"
+                    project_response = requests.get(project_url, headers={"PRIVATE-TOKEN": gitlab_token}, timeout=10)
                     
-                    # Ensure project exists
-                    existing_project = db.query(models.Project).filter(
-                        and_(
-                            models.Project.source == "gitlab",
-                            models.Project.external_project_id == project_id
-                        )
-                    ).first()
-                    
-                    if not existing_project:
-                        project_obj = models.Project(
-                            source="gitlab",
-                            external_project_id=project_id,
-                            project_name=project.get("name"),
-                            project_url=project.get("web_url"),
-                            is_active=True
-                        )
-                        db.add(project_obj)
-                        db.commit()
-                        db.refresh(project_obj)
-                        project_db_id = project_obj.id
+                    if project_response.status_code == 200:
+                        project = project_response.json()
+                        
+                        # Ensure project exists
+                        existing_project = db.query(models.Project).filter(
+                            and_(
+                                models.Project.source == "gitlab",
+                                models.Project.external_project_id == project_id
+                            )
+                        ).first()
+                        
+                        if not existing_project:
+                            project_obj = models.Project(
+                                source="gitlab",
+                                external_project_id=project_id,
+                                project_name=project.get("name"),
+                                project_url=project.get("web_url"),
+                                is_active=True
+                            )
+                            db.add(project_obj)
+                            db.commit()
+                            db.refresh(project_obj)
+                            project_db_id = project_obj.id
+                        else:
+                            project_db_id = existing_project.id
+                        _project_db_cache[project_id] = project_db_id
                     else:
-                        project_db_id = existing_project.id
+                        project_db_id = None
+
+                if project_db_id is None:
+                    logger.warning(f"GitLab MR {mr_id}: could not resolve project {project_id}, skipping")
+                    continue
                     
-                    # Store raw MR data
-                    existing_mr = db.query(models.RawGitLabMergeRequest).filter(
-                        and_(
-                            models.RawGitLabMergeRequest.external_mr_id == mr_id,
-                            models.RawGitLabMergeRequest.project_id == project_db_id
-                        )
-                    ).first()
-                    
-                    created_date = datetime.fromisoformat(mr.get("created_at").replace("Z", "+00:00"))
-                    merged_date = None
-                    if mr.get("merged_at"):
-                        merged_date = datetime.fromisoformat(mr.get("merged_at").replace("Z", "+00:00"))
-                    
-                    mr_state = mr.get("state")  # opened, closed, merged
-                    activity_type = "mr_merged" if mr_state == "merged" else "mr_created"
-                    activity_date = merged_date if merged_date else created_date
-                    
-                    if not existing_mr:
-                        new_mr = models.RawGitLabMergeRequest(
-                            external_mr_id=mr_id,
-                            project_id=project_db_id,
-                            author_email=mr.get("author", {}).get("email"),
-                            author_name=mr.get("author", {}).get("name"),
-                            title=mr.get("title"),
-                            description=mr.get("description"),
-                            state=mr_state,
-                            created_at=created_date,
-                            updated_at=datetime.fromisoformat(mr.get("updated_at").replace("Z", "+00:00")),
-                            merged_at=merged_date,
-                            web_url=mr.get("web_url"),
-                            raw_data=mr
-                        )
-                        db.add(new_mr)
-                        try:
-                            db.commit()
-                            mrs_synced += 1
-                        except Exception:
-                            db.rollback()
-                    
-                    # Create normalized activity
-                    activity = models.Activity(
-                        user_id=user.id,
-                        source="gitlab",
-                        activity_type=activity_type,
-                        project_id=project_db_id,
-                        reference_id=mr_id,
-                        activity_date=activity_date.date(),
-                        activity_at=activity_date,
-                        activity_metadata={
-                            "title": mr.get("title"),
-                            "state": mr_state,
-                            "web_url": mr.get("web_url")
-                        }
+                # Store raw MR data
+                existing_mr = db.query(models.RawGitLabMergeRequest).filter(
+                    and_(
+                        models.RawGitLabMergeRequest.external_mr_id == mr_id,
+                        models.RawGitLabMergeRequest.project_id == project_db_id
                     )
-                    
-                    # Check for existing activity
-                    existing_activity = db.query(models.Activity).filter(
-                        and_(
-                            models.Activity.user_id == user.id,
-                            models.Activity.source == "gitlab",
-                            models.Activity.reference_id == mr_id
-                        )
-                    ).first()
-                    
-                    if not existing_activity:
-                        db.add(activity)
-                        try:
-                            db.commit()
-                        except Exception:
-                            db.rollback()
+                ).first()
+
+                created_date = datetime.fromisoformat(mr.get("created_at").replace("Z", "+00:00"))
+                merged_date = None
+                if mr.get("merged_at"):
+                    merged_date = datetime.fromisoformat(mr.get("merged_at").replace("Z", "+00:00"))
+
+                mr_state = mr.get("state")  # opened, closed, merged
+                activity_type = "mr_merged" if mr_state == "merged" else "mr_created"
+                activity_date = merged_date if merged_date else created_date
+
+                if not existing_mr:
+                    new_mr = models.RawGitLabMergeRequest(
+                        external_mr_id=mr_id,
+                        project_id=project_db_id,
+                        author_email=mr.get("author", {}).get("email"),
+                        author_name=mr.get("author", {}).get("name"),
+                        title=mr.get("title"),
+                        description=mr.get("description"),
+                        state=mr_state,
+                        created_at=created_date,
+                        updated_at=datetime.fromisoformat(mr.get("updated_at").replace("Z", "+00:00")),
+                        merged_at=merged_date,
+                        web_url=mr.get("web_url"),
+                        raw_data=mr
+                    )
+                    db.add(new_mr)
+                    try:
+                        db.commit()
+                        mrs_synced += 1
+                    except Exception:
+                        db.rollback()
+
+                # Create normalized activity
+                activity = models.Activity(
+                    user_id=user.id,
+                    source="gitlab",
+                    activity_type=activity_type,
+                    project_id=project_db_id,
+                    reference_id=mr_id,
+                    activity_date=activity_date.date(),
+                    activity_at=activity_date,
+                    activity_metadata={
+                        "title": mr.get("title"),
+                        "state": mr_state,
+                        "web_url": mr.get("web_url")
+                    }
+                )
+
+                # Check for existing activity
+                existing_activity = db.query(models.Activity).filter(
+                    and_(
+                        models.Activity.user_id == user.id,
+                        models.Activity.source == "gitlab",
+                        models.Activity.reference_id == mr_id
+                    )
+                ).first()
+
+                if not existing_activity:
+                    db.add(activity)
+                    try:
+                        db.commit()
+                    except Exception:
+                        db.rollback()
             
             db.commit()
             logger.info(f"Synced {mrs_synced} new merge requests for {user.full_name}")
@@ -1481,6 +1497,7 @@ def calculate_daily_aggregated_kpi(db: Session, user: models.User, date: datetim
 
         # Variables from the config matrix take precedence; scale period targets to daily
         scores_by_category = {}
+        formula_errors = []
         for m_def in metrics_defs:
             eval_context = dict(daily_raw)
             if m_def.variables:
@@ -1499,7 +1516,20 @@ def calculate_daily_aggregated_kpi(db: Session, user: models.User, date: datetim
                     except Exception:
                         pass
 
-            raw_score = evaluate_kpi_formula(m_def.formula_expression, eval_context)
+            try:
+                raw_score = evaluate_kpi_formula(
+                    m_def.formula_expression, eval_context,
+                    log_context={"metric_key": m_def.metric_key, "user_id": user.id,
+                                 "date": date.strftime("%Y-%m-%d")},
+                    raise_on_error=True,
+                )
+            except Exception as e:
+                formula_errors.append({
+                    "metric_key": m_def.metric_key,
+                    "formula": m_def.formula_expression,
+                    "error": str(e),
+                })
+                raw_score = 0.0
             cap_score = float(m_def.cap_score or 100.0)
             capped = min(max(raw_score, 0.0), cap_score)
             weight = float(m_def.weight)
@@ -1569,6 +1599,8 @@ def calculate_daily_aggregated_kpi(db: Session, user: models.User, date: datetim
             overall_score=overall_score,
             raw_activity_count=len(activities)
         )
+        if formula_errors:
+            daily_kpi.kpi_breakdown = {"formula_errors": formula_errors}
         db.add(daily_kpi)
     else:
         # Update existing record
@@ -1589,6 +1621,10 @@ def calculate_daily_aggregated_kpi(db: Session, user: models.User, date: datetim
         daily_kpi.raw_activity_count = len(activities)
         daily_kpi.project_id = relevant_project_id
         daily_kpi.sprint_id = relevant_sprint_id
+        if formula_errors:
+            breakdown = dict(daily_kpi.kpi_breakdown or {})
+            breakdown["formula_errors"] = formula_errors
+            daily_kpi.kpi_breakdown = breakdown
     
     if not (preloaded and preloaded.get("no_commit")):
         db.commit()

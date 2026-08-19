@@ -83,6 +83,10 @@ class Project(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
+    __table_args__ = (
+        UniqueConstraint("source", "external_project_id", name="uq_project_source_external"),
+    )
+
 class Sprint(Base):
     __tablename__ = "sprints"
 
@@ -147,6 +151,10 @@ class SyncState(Base):
     retry_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("source", "entity", name="uq_sync_state_source_entity"),
+    )
 
 class SyncJob(Base):
     """Track background sync jobs for frontend polling"""
@@ -404,6 +412,10 @@ class KPIEmployeeDaily(Base):
     project = relationship("Project")
     sprint = relationship("Sprint")
 
+    __table_args__ = (
+        UniqueConstraint("user_id", "date", name="uq_kpi_employee_daily_user_date"),
+    )
+
 # ─────────────────────────────────────────────────────────────
 # EXISTING TABLES (Enhanced for compatibility)
 # ─────────────────────────────────────────────────────────────
@@ -572,4 +584,40 @@ class UserYearlyMetrics(Base):
 
     user = relationship("User")
     __table_args__ = (UniqueConstraint("user_id", "year", "period", name="uq_user_yearly_metrics"),)
+
+class AppLock(Base):
+    """DB-backed advisory lock row (see locks.py).
+
+    Enables cross-instance mutual exclusion (two Railway workers never run the
+    same heavy job at the same time) on both SQLite and Postgres.
+    """
+    __tablename__ = "app_locks"
+
+    lock_name = Column(String(150), primary_key=True)
+    owner = Column(String(100), nullable=True)
+    acquired_at = Column(String(30), nullable=True)
+    heartbeat_at = Column(String(30), nullable=True)
+
+class FeatureScoreCache(Base):
+    """Persistent cache of feature-complexity scoring.
+
+    Keyed by (issue_key, summary_hash) so a rescore never pays the LLM again
+    for a summary that has not changed, and the cache survives restarts (the
+    previous in-memory dict was lost on every reload).
+    """
+    __tablename__ = "feature_score_cache"
+
+    id = Column(String(50), primary_key=True, default=generate_uuid)
+    issue_key = Column(String(100), nullable=False, index=True)
+    summary_hash = Column(String(64), nullable=False)
+    score = Column(JSON, nullable=True)
+    model = Column(String(100), nullable=True)
+    score_type = Column(String(30), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("issue_key", "summary_hash", name="uq_feature_score_cache_key_hash"),
+    )
+
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
