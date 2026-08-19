@@ -530,10 +530,18 @@ class AIFormulaRequest(BaseModel):
 
 # Helper: Recursive Subordinates Lookup
 def get_recursive_subordinates(db: Session, supervisor_id: str) -> List[models.User]:
+    return _recursive_subordinates(db, supervisor_id, set())
+
+
+def _recursive_subordinates(db: Session, supervisor_id: str, visited: set) -> List[models.User]:
+    if supervisor_id in visited:
+        return []
+    visited = set(visited)
+    visited.add(supervisor_id)
     direct_subs = db.query(models.User).filter(models.User.supervisor_id == supervisor_id).all()
     all_subs = list(direct_subs)
     for sub in direct_subs:
-        all_subs.extend(get_recursive_subordinates(db, sub.id))
+        all_subs.extend(_recursive_subordinates(db, sub.id, visited))
     return all_subs
 
 # Endpoints
@@ -2004,9 +2012,13 @@ def get_yearly_performance(year: int, user_id: str, background_tasks: Background
 
 
 @app.get("/api/v1/kpi/team-yearly")
-def get_team_yearly_performance(year: int, user_id: str, db: Session = Depends(get_db)):
+@cache(expire=60)
+def get_team_yearly_performance(year: int, user_id: str, direct_only: bool = False, db: Session = Depends(get_db)):
     """
     Get accumulated KPI data for a specific year (Jan 1 - Dec 31) for all subordinates.
+
+    By default returns the full recursive tree below the user. Pass ``direct_only=true``
+    to limit the result to the user's direct reports only.
     """
     current_user = db.query(models.User).filter(models.User.id == user_id).first()
     if not current_user:
@@ -2015,10 +2027,15 @@ def get_team_yearly_performance(year: int, user_id: str, db: Session = Depends(g
     if not (current_user.has_subordinates or "ROLE_ADMIN" in current_user.roles):
         raise HTTPException(status_code=403, detail="Not authorized to view team KPI")
         
-    # Get recursive subordinates for the user
-    users = get_recursive_subordinates(db, user_id)
-    # Filter active users
-    users = [u for u in users if u.is_active]
+    # Get recursive subordinates for the user (or direct reports only)
+    if direct_only:
+        users = db.query(models.User).filter(
+            models.User.supervisor_id == user_id,
+            models.User.is_active == True
+        ).all()
+    else:
+        users = get_recursive_subordinates(db, user_id)
+        users = [u for u in users if u.is_active]
         
     target_user_ids = [u.id for u in users]
     
@@ -2507,6 +2524,8 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
                 "division_name": user.division.name if user.division else None,
                 "group_id": user.group_id,
                 "group_name": user.group_name,
+                "supervisor_id": user.supervisor_id,
+                "has_subordinates": user.has_subordinates,
                 "completed_tasks": completed_tasks_list,
                 "period": {
                     "from_date": from_date.strftime("%Y-%m-%d"),

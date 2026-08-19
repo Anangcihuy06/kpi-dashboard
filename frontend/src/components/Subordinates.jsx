@@ -94,7 +94,7 @@ export default function Subordinates({ supervisorId }) {
   const fetchTeamScores = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/team-yearly?user_id=${supervisorId}&year=${selectedYear}`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/team-yearly?user_id=${supervisorId}&year=${selectedYear}&direct_only=true`, {
         cache: 'no-store'
       });
       if (!response.ok) throw new Error("Gagal mengambil report tim");

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Award, Users, Settings, LogOut, KeyRound, Info } from "lucide-react";
 import { toast } from "sonner";
-import Dashboard from "./components/Dashboard";
+import OrgPerformance from "./components/OrgPerformance";
 import Subordinates from "./components/Subordinates";
 import Configurator from "./components/Configurator";
 
@@ -226,11 +226,11 @@ export default function App() {
               onClick={() => setActiveTab("dashboard")}
               role="link"
               tabIndex={0}
-              aria-label="My Performance"
-              title="Ringkasan performa KPI pribadi Anda untuk tahun terpilih"
+              aria-label="Dashboard"
+              title="Ringkasan performa seluruh tim di bawah kendali Anda"
             >
               <Award size={18} />
-              <span>My Performance</span>
+              <span>Dashboard</span>
             </div>
           </li>
 
@@ -332,7 +332,7 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="main-content">
-        {activeTab === "dashboard" && <Dashboard userId={user.id} isSelf={true} />}
+        {activeTab === "dashboard" && <OrgPerformance userId={user.id} />}
         {activeTab === "subordinates" && <Subordinates supervisorId={user.id} />}
         {activeTab === "configurator" && <Configurator />}
       </main>
