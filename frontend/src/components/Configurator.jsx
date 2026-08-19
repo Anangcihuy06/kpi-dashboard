@@ -456,8 +456,9 @@ export default function Configurator() {
     <div>
       <div className="header-ui">
         <div>
+          <span className="hero-eyebrow">Administration & Configuration</span>
           <h2>Matriks Configurator & Rule Builder</h2>
-          <p style={{ color: "var(--color-text-muted)", fontSize: "14px" }}>
+          <p style={{ color: "var(--color-text-muted)", fontSize: "14px", margin: 0 }}>
             Tentukan konfigurasi matriks KPI divisi, rumusan formula dinamis, dan koneksi server integrasi.
           </p>
         </div>
@@ -524,7 +525,11 @@ export default function Configurator() {
               </button>
             </div>
             {calcLoading && (
-              <div style={{ marginTop: "10px", width: "100%", maxWidth: "360px" }}>
+              <div style={{ marginTop: "10px", width: "100%", maxWidth: "380px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                  <span className="status-pill syncing"><RefreshCw size={11} className="animate-spin" /> Sedang Menghitung</span>
+                  <span className="table-meta num">{calcProgress}%</span>
+                </div>
                 <div style={{
                   height: "8px", background: "#e2e8f0", borderRadius: "4px", overflow: "hidden"
                 }}>
@@ -534,8 +539,8 @@ export default function Configurator() {
                     transition: "width 0.8s ease-in-out"
                   }} />
                 </div>
-                <div style={{ marginTop: "6px", fontSize: "12px", color: "var(--color-text-muted)" }}>
-                  Kalkulasi berjalan: {calcProgress}%
+                <div className="table-meta" style={{ marginTop: "6px" }}>
+                  Kalkulasi hanya memproses tanggal yang belum terhitung, lalu memperbarui agregat tahunan.
                 </div>
               </div>
             )}
@@ -646,9 +651,9 @@ export default function Configurator() {
                   <thead>
                     <tr>
                       <th>Key Indikator</th>
-                      <th style={{ width: "80px" }}>Bobot</th>
+                      <th data-align="right" style={{ width: "80px" }}>Bobot</th>
                       <th>Formula Ekspresi</th>
-                      <th style={{ width: "80px" }}>Cap</th>
+                      <th data-align="right" style={{ width: "80px" }}>Cap</th>
                       <th>Variables (JSON)</th>
                       <th>Actions</th>
                     </tr>
@@ -664,13 +669,13 @@ export default function Configurator() {
                             onChange={(e) => handleMetricChange(idx, "metric_key", e.target.value)}
                           />
                         </td>
-                        <td>
+                        <td data-align="right">
                           <input
                             type="number"
                             step="0.05"
                             min="0"
                             max="1"
-                            className="table-input"
+                            className="table-input num"
                             value={metric.weight}
                             onChange={(e) => handleMetricChange(idx, "weight", e.target.value)}
                           />
@@ -683,10 +688,10 @@ export default function Configurator() {
                             onChange={(e) => handleMetricChange(idx, "formula_expression", e.target.value)}
                           />
                         </td>
-                        <td>
+                        <td data-align="right">
                           <input
                             type="number"
-                            className="table-input"
+                            className="table-input num"
                             value={metric.cap_score}
                             onChange={(e) => handleMetricChange(idx, "cap_score", e.target.value)}
                           />
@@ -746,15 +751,24 @@ export default function Configurator() {
                 </table>
               </div>
 
+              <div style={{ marginTop: "24px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
+              <span className="table-meta" style={{ fontSize: "12px" }}>
+                Total bobot:{" "}
+                <strong className={`num ${Math.abs((metrics.reduce((s, m) => s + (parseFloat(m.weight) || 0), 0)) - 1) <= 0.01 ? "text-success" : "text-danger"}`}>
+                  {(metrics.reduce((s, m) => s + (parseFloat(m.weight) || 0), 0) * 100).toFixed(0)}%
+                </strong>{" "}
+                (harus 100%)
+              </span>
               <button
                 className="btn-primary"
                 onClick={handleSaveRules}
                 disabled={saveLoading}
-                style={{ marginTop: "24px" }}
+                style={{ width: "auto", padding: "0 24px" }}
               >
                 {saveLoading && <RefreshCw className="animate-spin" size={16} />}
                 Simpan & Terapkan Perubahan (Buat Versi Baru)
               </button>
+            </div>
             </div>
 
             {/* Live Formula Tester Side Panel */}
@@ -797,21 +811,29 @@ export default function Configurator() {
 
               {testResult && (
                 <div className="tester-box">
-                  <h4 style={{ fontSize: "14px", marginBottom: "8px" }}>Hasil Evaluasi:</h4>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                    <h4 style={{ fontSize: "14px", margin: 0 }}>Hasil Evaluasi</h4>
+                    <span className={`status-pill ${testResult.success ? "live" : "stale"}`}>
+                      {testResult.success ? "Formula Valid" : "Gagal Parsing"}
+                    </span>
+                  </div>
                   {testResult.success ? (
                     <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "#15803d", fontWeight: 700, fontSize: "18px" }}>
                       <CheckCircle size={20} />
-                      <span>Output: {testResult.value}</span>
+                      <span className="num">Output: {testResult.value}</span>
                     </div>
                   ) : (
                     <div style={{ display: "flex", alignItems: "flex-start", gap: "8px", color: "#b91c1c", fontSize: "13px" }}>
                       <AlertCircle size={18} style={{ flexShrink: 0, marginTop: "2px" }} />
                       <div>
-                        <span style={{ fontWeight: 700 }}>Syntax Error / Parsing Gagal:</span>
-                        <p style={{ fontFamily: "monospace", marginTop: "4px" }}>{testResult.error}</p>
+                        <span style={{ fontWeight: 700 }}>Detail Kesalahan:</span>
+                        <p style={{ fontFamily: "var(--font-mono)", marginTop: "4px", marginBottom: 0 }}>{testResult.error}</p>
                       </div>
                     </div>
                   )}
+                  <p className="table-meta" style={{ marginTop: 10, marginBottom: 0 }}>
+                    Nilai dihitung menggunakan evaluator AST aman — tidak menggunakan eval().
+                  </p>
                 </div>
               )}
             </div>
@@ -885,6 +907,9 @@ export default function Configurator() {
                 onChange={(e) => setJiraToken(e.target.value)}
                 placeholder={jiraToken ? "••••••••••••••••" : "Masukkan API Token Jira Baru"}
               />
+              <p style={{ fontSize: "11px", color: "var(--color-text-muted)", marginTop: "8px" }}>
+                * Token disimpan dalam database dalam keadaan terenkripsi (AES). Token yang ada tidak akan pernah ditampilkan ulang.
+              </p>
             </div>
 
             <div className="form-group">
@@ -962,15 +987,15 @@ export default function Configurator() {
       
       {/* Panduan Formula Modal */}
       {showGuide && (
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.5)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
-          <div style={{ background: "#fff", borderRadius: "12px", width: "100%", maxWidth: "600px", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)" }}>
-            <div style={{ padding: "20px 24px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, backgroundColor: "#fff", zIndex: 10 }}>
-              <h3 style={{ margin: 0, fontSize: "18px", color: "var(--color-primary)", display: "flex", alignItems: "center", gap: "8px" }}>
-                <AlertCircle size={20} /> Panduan Penulisan Formula
+        <div className="modal-backdrop-ui" onClick={() => setShowGuide(false)}>
+          <div className="modal-ui" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-ui-header">
+              <h3 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <AlertCircle size={20} style={{ color: "var(--color-secondary)" }} /> Panduan Penulisan Formula
               </h3>
-              <button onClick={() => setShowGuide(false)} style={{ background: "transparent", border: "none", fontSize: "24px", cursor: "pointer", color: "#64748b" }}>&times;</button>
+              <button className="modal-ui-close" onClick={() => setShowGuide(false)} aria-label="Tutup panduan">&times;</button>
             </div>
-            <div style={{ padding: "24px", fontSize: "14px", color: "#334155", lineHeight: "1.6" }}>
+            <div className="modal-ui-body" style={{ fontSize: "14px", color: "#334155", lineHeight: "1.6" }}>
               <p style={{ marginBottom: "16px" }}>Bapak/Ibu dapat menulis formula penilaian menggunakan ekspresi matematika standar. Sistem akan mengevaluasi formula tersebut berdasarkan data historis/otomatis yang ditarik dari Jira, GitLab, dan HRIS.</p>
               
               <h4 style={{ color: "var(--color-primary)", marginBottom: "8px", fontSize: "15px" }}>Pengaturan Indikator (Bobot & Cap)</h4>
@@ -1015,7 +1040,7 @@ export default function Configurator() {
                 <code>max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)</code>
               </div>
             </div>
-            <div style={{ padding: "16px 24px", borderTop: "1px solid #e2e8f0", textAlign: "right", backgroundColor: "#f8fafc", borderRadius: "0 0 12px 12px" }}>
+            <div className="modal-ui-footer">
               <button onClick={() => setShowGuide(false)} className="btn-primary" style={{ padding: "8px 24px", fontSize: "14px" }}>Tutup</button>
             </div>
           </div>
@@ -1023,87 +1048,50 @@ export default function Configurator() {
       )}
 
       {showAIPrompt && (
-        <div style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: "rgba(0, 0, 0, 0.5)",
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          zIndex: 1000,
-        }}>
-          <div style={{
-            background: "white",
-            borderRadius: "16px",
-            padding: "24px",
-            width: "90%",
-            maxWidth: "500px",
-            boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)"
-          }}>
-            <div style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              marginBottom: "16px"
-            }}>
-              <h2 style={{
-                fontSize: "18px",
-                fontWeight: 700,
-                color: "#0f172a",
-                margin: 0,
-                display: "flex",
-                alignItems: "center",
-                gap: "8px"
-              }}>
-                <Sparkles size={20} /> Buat Indikator dengan AI
-              </h2>
+        <div className="modal-backdrop-ui">
+          <div className="modal-ui" style={{ maxWidth: "520px" }}>
+            <div className="modal-ui-header">
+              <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
+                <Sparkles size={20} style={{ color: "var(--color-secondary)" }} /> Buat Indikator dengan AI
+              </h3>
               <button
+                className="modal-ui-close"
                 onClick={() => {
                   setShowAIPrompt(false);
                   setIndicatorDescription("");
                 }}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  cursor: "pointer",
-                  padding: "4px",
-                  color: "#64748b"
-                }}
-              >
-                <ShieldAlert size={20} />
-              </button>
+                aria-label="Tutup"
+              >&times;</button>
             </div>
 
-            <div style={{ marginBottom: "16px" }}>
-              <label style={{
-                display: "block",
-                fontSize: "14px",
-                fontWeight: 600,
-                color: "#374151",
-                marginBottom: "8px"
-              }}>
-                Deskripsi Indikator KPI
-              </label>
-              <textarea
-                value={indicatorDescription}
-                onChange={(e) => setIndicatorDescription(e.target.value)}
-                placeholder="Contoh: Indikator kehadiran dengan target 22 hari kerja per bulan, penalti 0.5 poin untuk keterlambatan di atas 15 menit"
-                rows={4}
-                style={{
-                  width: "100%",
-                  padding: "12px",
-                  border: "1px solid #d1d5db",
-                  borderRadius: "8px",
+            <div className="modal-ui-body">
+              <div style={{ marginBottom: "16px" }}>
+                <label style={{
+                  display: "block",
                   fontSize: "14px",
-                  fontFamily: "inherit",
-                  resize: "vertical",
-                  boxSizing: "border-box"
-                }}
-              />
-            </div>
+                  fontWeight: 600,
+                  color: "#374151",
+                  marginBottom: "8px"
+                }}>
+                  Deskripsi Indikator KPI
+                </label>
+                <textarea
+                  value={indicatorDescription}
+                  onChange={(e) => setIndicatorDescription(e.target.value)}
+                  placeholder="Contoh: Indikator kehadiran dengan target 22 hari kerja per bulan, penalti 0.5 poin untuk keterlambatan di atas 15 menit"
+                  rows={4}
+                  style={{
+                    width: "100%",
+                    padding: "12px",
+                    border: "1px solid #d1d5db",
+                    borderRadius: "8px",
+                    fontSize: "14px",
+                    fontFamily: "inherit",
+                    resize: "vertical",
+                    boxSizing: "border-box"
+                  }}
+                />
+              </div>
 
             <div style={{
               background: "#fef3c7",
@@ -1170,6 +1158,7 @@ export default function Configurator() {
                 )}
               </button>
             </div>
+          </div>
           </div>
         </div>
       )}

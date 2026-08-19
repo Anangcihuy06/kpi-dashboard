@@ -145,30 +145,35 @@ export default function App() {
             alt="ATI Business Group Logo"
             className="login-header-logo"
           />
+          <span className="hero-eyebrow" style={{ justifyContent: "center", marginBottom: 8 }}>Secure Company Portal</span>
           <h2 className="form-title">KPI Dashboard Portal</h2>
           <p className="form-subtitle">Autentikasi menggunakan akun ATI Business Group Anda</p>
 
           <form onSubmit={handleRealLogin}>
             <div className="form-group">
-              <label className="form-label">Username / NIK</label>
+              <label className="form-label" htmlFor="login-username">Username / NIK</label>
               <input
+                id="login-username"
                 type="text"
                 className="form-input"
                 value={usernameInput}
                 onChange={handleUsernameChange}
                 placeholder="01.05.13.500"
+                autoComplete="username"
                 required
               />
             </div>
 
-            <div className="form-group" style={{ marginBottom: "32px" }}>
-              <label className="form-label">Password</label>
+            <div className="form-group" style={{ marginBottom: "24px" }}>
+              <label className="form-label" htmlFor="login-password">Password</label>
               <input
+                id="login-password"
                 type="password"
                 className="form-input"
                 value={passwordInput}
                 onChange={(e) => setPasswordInput(e.target.value)}
                 placeholder="••••••••"
+                autoComplete="current-password"
                 required
               />
             </div>
@@ -181,6 +186,10 @@ export default function App() {
                 </span>
               ) : "Sign In ke Portal"}
             </button>
+
+            <p className="text-xs text-muted" style={{ marginTop: 16, lineHeight: 1.6 }}>
+              Data performa Anda disinkronkan otomatis dari Jira, GitLab, dan HRIS setiap beberapa menit.
+            </p>
           </form>
         </div>
       </div>
@@ -215,6 +224,10 @@ export default function App() {
             <div
               className={`menu-item ${activeTab === "dashboard" ? "active" : ""}`}
               onClick={() => setActiveTab("dashboard")}
+              role="link"
+              tabIndex={0}
+              aria-label="My Performance"
+              title="Ringkasan performa KPI pribadi Anda untuk tahun terpilih"
             >
               <Award size={18} />
               <span>My Performance</span>
@@ -226,6 +239,10 @@ export default function App() {
               <div
                 className={`menu-item ${activeTab === "subordinates" ? "active" : ""}`}
                 onClick={() => setActiveTab("subordinates")}
+                role="link"
+                tabIndex={0}
+                aria-label="Hierarki Tim"
+                title="Kelola dan evaluasi KPI seluruh anggota tim di bawah kendali Anda"
               >
                 <Users size={18} />
                 <span>Hierarki Tim (Sub)</span>
@@ -238,6 +255,10 @@ export default function App() {
               <div
                 className={`menu-item ${activeTab === "configurator" ? "active" : ""}`}
                 onClick={() => setActiveTab("configurator")}
+                role="link"
+                tabIndex={0}
+                aria-label="Matrix Config"
+                title="Atur matriks KPI, formula dinamis, dan integrasi Jira/GitLab"
               >
                 <Settings size={18} />
                 <span>Matrix Config</span>
@@ -286,15 +307,23 @@ export default function App() {
                 }}
               />
             </div>
-            <div className="user-details">
-              <h5>{user.fullName}</h5>
-              <p>Role: {user.roles.join(", ")}</p>
+            <div className="user-details" style={{ minWidth: 0 }}>
+              <h5 style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.fullName}</h5>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 2 }}>
+                {user.roles.slice(0, 2).map(r => (
+                  <span key={r} className="status-pill live" style={{ fontSize: "9px", padding: "1px 7px", textTransform: "none", letterSpacing: 0 }}>
+                    {r.replace(/^ROLE_/, "")}
+                  </span>
+                ))}
+              </div>
+              {user.nik && <p className="table-meta" style={{ marginTop: 3 }}>NIK {user.nik}</p>}
             </div>
           </div>
 
           <button
             className="btn-logout"
             onClick={handleLogout}
+            title="Keluar dari portal KPI"
           >
             <LogOut size={14} /> Log Out
           </button>

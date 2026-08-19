@@ -220,6 +220,13 @@ export default function Subordinates({ supervisorId }) {
     return `${diffDays} hari yang lalu`;
   };
 
+  // Precise, locale-aware number formatting (id-ID)
+  const fmt = (n, digits = 0) =>
+    Number(n || 0).toLocaleString("id-ID", {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    });
+
   if (selectedSubId) {
     return (
       <div>
@@ -239,34 +246,37 @@ export default function Subordinates({ supervisorId }) {
     <div>
       <div className="header-ui">
         <div>
+          <span className="hero-eyebrow">Team Oversight</span>
           <h2>Hierarki Tim & Subordinat</h2>
-          <p style={{ color: "var(--color-text-muted)", fontSize: "14px" }}>
+          <p style={{ color: "var(--color-text-muted)", fontSize: "14px", margin: 0 }}>
             Kelola dan evaluasi KPI dari seluruh anggota tim di bawah kendali Anda.
           </p>
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            marginTop: "8px",
-            fontSize: "12px",
-            color: "var(--color-text-muted)"
-          }}>
-            <RefreshCw size={12} className={syncStatus.is_syncing ? "animate-spin" : ""} />
-            <span>Data tim disinkronisasi: <strong>{formatLastSyncTime()}</strong></span>
-            <span style={{ color: "#888" }}>(otomatis setiap {syncStatus.sync_interval_minutes} menit)</span>
+          <div className="status-strip">
+            <span className={`status-pill ${syncStatus.is_syncing ? "syncing" : "live"}`}>
+              <RefreshCw size={11} className={syncStatus.is_syncing ? "animate-spin" : ""} />
+              {syncStatus.is_syncing ? "Sinkronisasi berjalan" : "Data terbaru"}
+            </span>
+            <span>Terakhir diperbarui: <strong>{formatLastSyncTime()}</strong></span>
+            <span className="table-meta">· otomatis setiap {syncStatus.sync_interval_minutes} menit</span>
           </div>
         </div>
 
-        <div className="filter-group" style={{ display: "flex", gap: "10px", alignItems: "center", justifyContent: "flex-end" }}>
-          <select
-            className="select-control"
-            value={selectedYear}
-            onChange={(e) => setSelectedYear(Number(e.target.value))}
-          >
-            {[2025, 2026, 2027].map(y => (
-              <option key={y} value={y}>Tahun {y}</option>
-            ))}
-          </select>
+        <div className="filter-group" style={{ display: "flex", gap: "10px", alignItems: "flex-end", justifyContent: "flex-end" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            <label className="form-label" style={{ fontWeight: 600, fontSize: "11px", color: "var(--color-text-muted)" }}>
+              Periode Evaluasi
+            </label>
+            <select
+              className="select-control"
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(Number(e.target.value))}
+              aria-label="Pilih tahun evaluasi"
+            >
+              {[2025, 2026, 2027].map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </div>
           <button
             className={attendanceSyncing ? "btn-outline" : "btn-primary"}
             onClick={() => syncAttendanceForYear(selectedYear)}
@@ -277,7 +287,7 @@ export default function Subordinates({ supervisorId }) {
               alignItems: "center",
               gap: "6px",
               padding: "0 16px",
-              height: "38px",
+              height: "48px",
               fontSize: "12px",
               fontWeight: 600,
               whiteSpace: "nowrap",
@@ -292,45 +302,45 @@ export default function Subordinates({ supervisorId }) {
 
       {/* Team Aggregated Stat Cards */}
       <div className="stats-grid">
-        <div className="stat-card">
+        <div className="stat-card ui-tooltip" data-metric-desc="Rata-rata weighted score seluruh anggota tim aktif untuk tahun terpilih.">
           <div className="stat-icon" style={{ background: "linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%)", color: "#15803d" }}>
             <BarChart2 size={24} />
           </div>
           <div className="stat-info">
-            <h4>{averageTeamScore}</h4>
+            <h4 className="num">{fmt(averageTeamScore, 2)}</h4>
             <p>Average Team Score</p>
           </div>
         </div>
 
-        <div className="stat-card">
+        <div className="stat-card ui-tooltip" data-metric-desc="Jumlah anggota tim aktif yang tercatat di bawah kendali Anda.">
           <div className="stat-icon" style={{ background: "linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%)", color: "#0369a1" }}>
             <Users size={24} />
           </div>
           <div className="stat-info">
-            <h4>{subordinates.length} Orang</h4>
+            <h4 className="num">{fmt(subordinates.length)} <span style={{ fontSize: "14px", fontWeight: 500 }}>Orang</span></h4>
             <p>Total Anggota Tim</p>
           </div>
         </div>
 
         {/* Attendance Team Stat */}
-        <div className="stat-card">
+        <div className="stat-card ui-tooltip" data-metric-desc="Rata-rata rasio kehadiran (hari hadir / target hari kerja) seluruh anggota tim.">
           <div className="stat-icon" style={{ background: "linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)", color: "#166534" }}>
             <UserCheck size={24} />
           </div>
           <div className="stat-info">
-            <h4>{avgAttendancePct}%</h4>
+            <h4 className="num">{fmt(avgAttendancePct, 1)}%</h4>
             <p>Avg Kehadiran Tim</p>
           </div>
         </div>
 
         {/* Late Percentage Team Stat */}
-        <div className="stat-card">
+        <div className="stat-card ui-tooltip" data-metric-desc="Rata-rata persentase keterlambatan untuk periode terpilih (GOOD &lt;15%).">
           <div className="stat-icon" style={{ background: parseFloat(avgLatePct) >= 20 ? "linear-gradient(135deg, #fee2e2 0%, #fecaca 100%)" : "linear-gradient(135deg, #fef9c3 0%, #fef08a 100%)", color: parseFloat(avgLatePct) >= 20 ? "#b91c1c" : "#a16207" }}>
             <Clock size={24} />
           </div>
           <div className="stat-info">
             <h4 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              {avgLatePct}%
+              <span className="num">{fmt(avgLatePct, 1)}%</span>
               <span className={`badge ${getLateBadgeClass(parseFloat(avgLatePct))}`} style={{ fontSize: "9px" }}>
                 {parseFloat(avgLatePct) >= 30 ? "CRITICAL" : parseFloat(avgLatePct) >= 15 ? "WARNING" : "GOOD"}
               </span>
@@ -339,13 +349,15 @@ export default function Subordinates({ supervisorId }) {
           </div>
         </div>
 
-        <div className="stat-card" style={{ gridColumn: "span 2" }}>
+        <div className="stat-card ui-tooltip" data-metric-desc="Anggota dengan weighted score tertinggi pada periode terpilih." style={{ gridColumn: "span 2" }}>
           <div className="stat-icon" style={{ background: "linear-gradient(135deg, #fee2e2 0%, #fecaca 100%)", color: "#b91c1c" }}>
             <Award size={24} />
           </div>
           <div className="stat-info">
-            <h4>{topPerformer ? topPerformer.full_name : "N/A"}</h4>
-            <p>Top Performer {topPerformer ? `(${topPerformer.final_score})` : ""}</p>
+            <h4 style={{ fontSize: "20px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {topPerformer ? topPerformer.full_name : "N/A"}
+            </h4>
+            <p>Top Performer ({fmt(topPerformer?.final_score || 0, 1)} poin)</p>
           </div>
         </div>
       </div>
@@ -361,10 +373,11 @@ export default function Subordinates({ supervisorId }) {
               className="form-input"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              aria-label="Cari anggota tim"
               style={{ paddingLeft: "48px" }}
             />
           </div>
-          <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--color-text-muted)" }}>
+          <span className="text-sm text-muted" style={{ fontWeight: 600 }}>
             Menampilkan {filteredSubs.length} dari {subordinates.length} Karyawan
           </span>
         </div>
@@ -377,24 +390,35 @@ export default function Subordinates({ supervisorId }) {
                 <th>Nama Karyawan</th>
                 <th>NIK</th>
                 <th>Role</th>
-                <th>Hadir</th>
-                <th>Telat</th>
-                <th>Late %</th>
-                <th>KPI Score</th>
+                <th data-align="right">Hadir</th>
+                <th data-align="right">Telat</th>
+                <th data-align="right">Late %</th>
+                <th data-align="right">KPI Score</th>
                 <th>Tindakan</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="9" style={{ textAlign: "center", padding: "40px" }}>
-                    Memuat daftar anggota tim...
+                  <td colSpan="9" style={{ padding: 0 }}>
+                    <div style={{ padding: "32px", display: "flex", alignItems: "center", justifyContent: "center", gap: "16px" }}>
+                      <RefreshCw className="animate-spin" size={20} style={{ color: "var(--color-secondary)" }} />
+                      <span className="text-sm text-muted">Memuat daftar anggota tim...</span>
+                    </div>
                   </td>
                 </tr>
               ) : filteredSubs.length === 0 ? (
                 <tr>
-                  <td colSpan="9" style={{ textAlign: "center", padding: "40px" }}>
-                    Tidak ada anggota tim yang cocok dengan pencarian.
+                  <td colSpan="9">
+                    <div className="empty-state">
+                      <div className="empty-icon"><Search size={24} /></div>
+                      <h4>{subordinates.length === 0 ? "Belum Ada Anggota Tim" : "Tidak Ada Hasil Pencarian"}</h4>
+                      <p>
+                        {subordinates.length === 0
+                          ? "Anggota tim akan muncul otomatis setelah data diperbarui dari HRIS."
+                          : `Tidak ada anggota tim yang cocok dengan kata kunci "${searchQuery}".`}
+                      </p>
+                    </div>
                   </td>
                 </tr>
               ) : (
@@ -430,35 +454,35 @@ export default function Subordinates({ supervisorId }) {
                             Bawahan
                           </span>
                         </td>
-                        <td>
+                        <td data-align="right" className="num">
                           {attInfo ? (
                             <span style={{ fontWeight: 700, color: "#15803d" }}>
-                              {attInfo.attendance_days}/{attInfo.target_days}
+                              {fmt(attInfo.attendance_days)}/{fmt(attInfo.target_days)}
                             </span>
                           ) : (
                             <span style={{ color: "var(--color-text-muted)" }}>—</span>
                           )}
                         </td>
-                        <td>
+                        <td data-align="right" className="num">
                           {attInfo ? (
                             <span style={{ fontWeight: 700, color: attInfo.late_count > 0 ? "#b91c1c" : "#15803d" }}>
-                              {attInfo.late_count}x
+                              {fmt(attInfo.late_count)}x
                             </span>
                           ) : (
                             <span style={{ color: "var(--color-text-muted)" }}>—</span>
                           )}
                         </td>
-                        <td>
+                        <td data-align="right" className="num">
                           {attInfo ? (
                             <span className={`badge ${getLateBadgeClass(attInfo.late_percentage)}`}>
-                              {attInfo.late_percentage.toFixed(1)}%
+                              {fmt(attInfo.late_percentage, 1)}%
                             </span>
                           ) : (
                             <span style={{ color: "var(--color-text-muted)" }}>—</span>
                           )}
                         </td>
-                        <td style={{ fontWeight: 800, fontSize: "16px", color: "var(--color-primary)" }}>
-                          {scoreInfo.overall !== undefined ? scoreInfo.overall : "N/A"}
+                        <td data-align="right" className="num" style={{ fontWeight: 800, fontSize: "16px", color: "var(--color-primary)" }}>
+                          {scoreInfo.overall !== undefined ? fmt(scoreInfo.overall, 1) : "N/A"}
                         </td>
                         <td>
                           {!sub.email ? (
@@ -494,11 +518,11 @@ export default function Subordinates({ supervisorId }) {
                             {/* Summary Detail */}
                             <div style={{ padding: "20px 24px", display: "flex", gap: "24px", borderBottom: "1px solid #f1f5f9", alignItems: "stretch", flexWrap: "wrap" }}>
                               <div className="stat-card" style={{ flex: "1 1 220px", minHeight: "90px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-                                <h4 style={{ fontSize: "12px", fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "8px" }}>Jira Completed</h4>
-                                <p style={{ fontSize: "20px", fontWeight: "800", color: "var(--color-primary)", margin: 0 }}>
-                                  {sub.summary?.total_issues_completed || 0} <span style={{ fontSize: "13px", fontWeight: "500", color: "#475569" }}>Tiket</span>
-                                  <span style={{ fontSize: "12px", fontWeight: "500", color: "#64748b", marginLeft: "8px" }}>({sub.summary?.total_story_points || 0} Pts)</span>
-                                </p>
+                                <span className="metric-label" style={{ marginBottom: 8 }}>Jira Completed</span>
+                                <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: 0 }}>
+                                  <span className="metric-value">{fmt(sub.summary?.total_issues_completed || 0)}</span>
+                                  <span className="table-meta">tiket · {fmt(sub.summary?.total_story_points || 0)} pts</span>
+                                </div>
                               </div>
                               <div className="stat-card" style={{ flex: "3 1 450px", minHeight: "90px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
                                 <h4 style={{ fontSize: "12px", fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "8px" }}>Email Kantor (untuk Sinkronisasi Git/Jira)</h4>
