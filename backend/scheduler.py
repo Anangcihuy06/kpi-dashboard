@@ -324,11 +324,14 @@ def _job_was_cancelled(db: Session, job_id: str) -> bool:
     return job is not None and job.status == "FAILED"
 
 
-def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=None):
+def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=None, force: bool = False):
     """
     Calculate KPI using data already present in the local DB.
     Does NOT call any external Jira/GitLab sync.
     Used by the 'Hitung KPI' button in the Configurator.
+
+    By default only dates that do not yet have a KPIEmployeeDaily row are
+    computed (incremental). Pass force=True to recalculate the whole year.
     """
     if not year:
         year = datetime.now().year
@@ -467,6 +470,14 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
                     except Exception:
                         pass
 
+                # Incremental: only calculate dates with no KPIEmployeeDaily row
+                # yet. force=True recalculates the whole year (dates overlap, so
+                # rows are updated in place).
+                if force:
+                    dates_to_calc = sorted(all_dates)
+                else:
+                    dates_to_calc = sorted(d for d in all_dates if d not in daily_by_date)
+
                 preloaded = {
                     "activities_by_date": activities_by_date,
                     "attendance_by_date": attendance_by_date,
@@ -478,14 +489,14 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
                     "no_commit": True,
                 }
 
-                for d_idx, d in enumerate(sorted(all_dates)):
+                num_dates = max(len(dates_to_calc), 1)
+                for d_idx, d in enumerate(dates_to_calc):
                     if _cancelled["flag"]:
                         break
                     calculate_daily_aggregated_kpi(sdb, user, dt.combine(d, dt.min.time()), preloaded=preloaded)
                     # Progress inside the date loop keeps updated_at fresh even when
                     # a single user takes many minutes.
                     if progress_cb and total_users > 0:
-                        num_dates = max(len(all_dates), 1)
                         with _progress_lock:
                             done_users = _computed["users"]
                         fraction = (done_users + (d_idx + 1) / num_dates) / total_users
@@ -493,7 +504,7 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
 
                 # One commit per user instead of one per date
                 sdb.commit()
-                return (user.full_name, len(all_dates))
+                return (user.full_name, len(dates_to_calc))
             except Exception as e:
                 logger.error(f"Calculate KPI: failed for user {user.id}: {e}")
                 sdb.rollback()
@@ -530,8 +541,14 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
             return {"status": "cancelled", "message": "Kalkulasi dibatalkan karena job baru dimulai"}
 
         # Precompute per-user yearly aggregates + company maxima
+        from precompute_metrics import PrecomputeCancelled
         try:
-            compute_all_year_metrics(db, year)
+            compute_all_year_metrics(
+                db, year,
+                is_cancelled=(lambda: _job_was_cancelled(db, job_id)) if job_id else None,
+            )
+        except PrecomputeCancelled:
+            return {"status": "cancelled", "message": "Kalkulasi dibatalkan karena job baru dimulai"}
         except Exception as e:
             logger.error(f"Precompute metrics failed for year {year}: {e}")
             db.rollback()

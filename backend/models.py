@@ -564,6 +564,10 @@ class UserYearlyMetrics(Base):
     complexity_sp = Column(Float, nullable=False, default=0.0)
     issues_completed = Column(Integer, nullable=False, default=0)
     founder_credit = Column(Float, nullable=False, default=0.0)
+    # Highest resolved_date already folded into the totals above. NULL = not
+    # accumulated yet (full recompute on next run). DateTime (not Date) so the
+    # exact timestamp is kept and later increments never re-count those rows.
+    last_processed_date = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     user = relationship("User")

@@ -13,10 +13,9 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
+from sqlalchemy import and_, func
 
 import models
-from feature_analyzer import calculate_feature_weight
 
 logger = logging.getLogger("precompute_metrics")
 
@@ -26,46 +25,28 @@ COMPLETED_STATUSES = {
 }
 
 
-def _resolve_dt(ji):
-    """Mirror the request-path date fallback logic exactly."""
-    r_dt_naive = None
-    if ji.resolved_date:
-        r_dt = ji.resolved_date
-        r_dt_naive = r_dt.replace(tzinfo=None) if hasattr(r_dt, "replace") else r_dt
-    elif ji.raw_data and "fields" in (ji.raw_data or {}):
-        fields = ji.raw_data["fields"]
-        r_date_str = fields.get("resolutiondate") or fields.get("updated") or fields.get("created")
-        if r_date_str:
-            try:
-                clean_date = r_date_str.split(".")[0]
-                if "T" in clean_date:
-                    r_dt_naive = datetime.strptime(clean_date, "%Y-%m-%dT%H:%M:%S")
-                else:
-                    r_dt = datetime.fromisoformat(clean_date.replace("Z", "+00:00"))
-                    r_dt_naive = r_dt.replace(tzinfo=None)
-            except Exception:
-                r_dt_naive = None
-    if not r_dt_naive and (ji.updated_date or ji.created_date):
-        r_dt = ji.updated_date or ji.created_date
-        r_dt_naive = r_dt.replace(tzinfo=None) if hasattr(r_dt, "replace") else r_dt
-    return r_dt_naive
+class PrecomputeCancelled(Exception):
+    """Raised when a running KPI calc job is cancelled during the precompute phase."""
 
 
-def _issue_complexity(ji):
-    """Use the persisted complexity_score, falling back to the rules scorer."""
-    if ji.complexity_score is not None:
-        return float(ji.complexity_score)
-    return float(calculate_feature_weight(ji.raw_data or {}))
+def compute_user_year_metrics(db: Session, user, year: int, last_processed_date=None):
+    """Aggregate one user's yearly delivery metrics via a single SQL query.
 
+    Replaces the old row-by-row Python loop (which loaded every RawJiraIssue
+    including its raw_data JSON and ran feature analysis per issue). The whole
+    year now resolves to one GROUP-aggregate: minutes -> seconds.
 
-def compute_user_year_metrics(db: Session, user, year: int) -> dict:
-    """Aggregate one user's yearly delivery metrics. Idempotent upsert."""
+    When last_processed_date is given, only rows resolved after it are summed,
+    so stored totals can be incremented instead of recomputed from scratch.
+    Returns (metrics_dict, max_processed_datetime).
+    """
     from_date = datetime(year, 1, 1)
     to_date = datetime(year, 12, 31, 23, 59, 59)
 
     raw_sp = 0.0
     complexity_sp = 0.0
     issues_completed = 0
+    max_date = last_processed_date
 
     jira_ident = db.query(models.EmployeeIdentity).filter(
         and_(
@@ -75,53 +56,35 @@ def compute_user_year_metrics(db: Session, user, year: int) -> dict:
     ).first()
 
     if jira_ident and jira_ident.external_user_id:
-        raw_issues = db.query(models.RawJiraIssue).filter(
-            models.RawJiraIssue.assignee_account_id == jira_ident.external_user_id
-        ).all()
-        for ji in raw_issues:
-            r_dt_naive = _resolve_dt(ji)
-            if not (r_dt_naive and from_date <= r_dt_naive <= to_date):
-                continue
-            status_lower = (ji.status or "").lower()
-            if status_lower not in COMPLETED_STATUSES:
-                continue
-            issues_completed += 1
-            raw_sp += float(ji.story_points or 0.0)
-            complexity_sp += _issue_complexity(ji)
+        q = db.query(
+            func.coalesce(func.sum(models.RawJiraIssue.story_points), 0),
+            func.coalesce(func.sum(func.coalesce(models.RawJiraIssue.complexity_score, 0.0)), 0),
+            func.count(),
+            func.max(models.RawJiraIssue.resolved_date),
+        ).filter(
+            models.RawJiraIssue.assignee_account_id == jira_ident.external_user_id,
+            models.RawJiraIssue.resolved_date >= from_date,
+            models.RawJiraIssue.resolved_date <= to_date,
+            func.lower(models.RawJiraIssue.status).in_([s for s in COMPLETED_STATUSES]),
+        )
+        if last_processed_date is not None:
+            q = q.filter(models.RawJiraIssue.resolved_date > last_processed_date)
+        sp_sum, cx_sum, cnt, mdate = q.one()
+        raw_sp = float(sp_sum or 0.0)
+        complexity_sp = float(cx_sum or 0.0)
+        issues_completed = int(cnt or 0)
+        if mdate is not None and (max_date is None or mdate > max_date):
+            max_date = mdate
 
     from founder_engine import get_founder_credits_for_user
     founder_credit = float(get_founder_credits_for_user(user.id, target_year=year) or 0.0)
-
-    row = db.query(models.UserYearlyMetrics).filter(
-        and_(
-            models.UserYearlyMetrics.user_id == user.id,
-            models.UserYearlyMetrics.year == year,
-            models.UserYearlyMetrics.period == "YEARLY",
-        )
-    ).first()
-    if row:
-        row.raw_sp = raw_sp
-        row.complexity_sp = complexity_sp
-        row.issues_completed = issues_completed
-        row.founder_credit = founder_credit
-    else:
-        row = models.UserYearlyMetrics(
-            user_id=user.id,
-            year=year,
-            period="YEARLY",
-            raw_sp=raw_sp,
-            complexity_sp=complexity_sp,
-            issues_completed=issues_completed,
-            founder_credit=founder_credit,
-        )
-        db.add(row)
 
     return {
         "raw_sp": raw_sp,
         "complexity_sp": complexity_sp,
         "issues_completed": issues_completed,
         "founder_credit": founder_credit,
-    }
+    }, max_date
 
 
 def _upsert_maxima(db, year, group_id, division_id, maxima, commit=False):
@@ -155,13 +118,18 @@ def _upsert_maxima(db, year, group_id, division_id, maxima, commit=False):
         db.commit()
 
 
-def compute_all_year_metrics(db: Session, year: int, users=None, commit: bool = True) -> dict:
+def compute_all_year_metrics(db: Session, year: int, users=None, commit: bool = True, is_cancelled=None, force: bool = False) -> dict:
     """Compute UserYearlyMetrics for all active users + CompanyMaxima.
 
-    Maxima are persisted at two scopes:
-      - company-wide (group_id = NULL): benchmark across all active users
-      - per group (group_id = user.group_id): benchmark scoped to each group's
-        indicator matrix, so a group's relative score is compared to its peers.
+    Uses SQL aggregation (seconds instead of minutes). Runs incrementally when a
+    UserYearlyMetrics.last_processed_date marker exists: only rows resolved after
+    the marker are summed and added to the stored totals. A NULL marker forces a
+    full recompute (replacing stored totals). Pass force=True to ignore the
+    marker (used after a rescore, since backfilled values affect old dates too).
+
+    is_cancelled: optional callable -> bool, polled between users so a
+    background job that was cancelled during the precompute phase stops early
+    (raises PrecomputeCancelled) instead of resurrecting itself as COMPLETED.
     """
     if users is None:
         users = db.query(models.User).filter(models.User.is_active == True).all()
@@ -176,9 +144,57 @@ def compute_all_year_metrics(db: Session, year: int, users=None, commit: bool = 
 
     per_user = {}
     for u in users:
+        if is_cancelled and is_cancelled():
+            logger.warning(f"Precompute cancelled for year {year}")
+            db.rollback()
+            raise PrecomputeCancelled(f"precompute cancelled for year {year}")
         try:
-            m = compute_user_year_metrics(db, u, year)
-            per_user[u.id] = {"user": u, "metrics": m, "group_id": u.group_id, "division_id": u.division_id}
+            existing = db.query(models.UserYearlyMetrics).filter(
+                and_(
+                    models.UserYearlyMetrics.user_id == u.id,
+                    models.UserYearlyMetrics.year == year,
+                    models.UserYearlyMetrics.period == "YEARLY",
+                )
+            ).first()
+            last = (None if force else existing.last_processed_date) if existing else None
+            m, max_date = compute_user_year_metrics(db, u, year, last_processed_date=last)
+            if existing:
+                if last is None:
+                    # Full recompute: replace stored totals.
+                    existing.raw_sp = m["raw_sp"]
+                    existing.complexity_sp = m["complexity_sp"]
+                    existing.issues_completed = m["issues_completed"]
+                else:
+                    # Incremental: add only the delta since the marker.
+                    existing.raw_sp = float(existing.raw_sp or 0.0) + m["raw_sp"]
+                    existing.complexity_sp = float(existing.complexity_sp or 0.0) + m["complexity_sp"]
+                    existing.issues_completed = int(existing.issues_completed or 0) + m["issues_completed"]
+                existing.founder_credit = m["founder_credit"]
+                if max_date is not None:
+                    existing.last_processed_date = max_date
+            else:
+                existing = models.UserYearlyMetrics(
+                    user_id=u.id,
+                    year=year,
+                    period="YEARLY",
+                    raw_sp=m["raw_sp"],
+                    complexity_sp=m["complexity_sp"],
+                    issues_completed=m["issues_completed"],
+                    founder_credit=m["founder_credit"],
+                    last_processed_date=max_date,
+                )
+                db.add(existing)
+            per_user[u.id] = {
+                "user": u,
+                "metrics": {
+                    "raw_sp": float(existing.raw_sp or 0.0),
+                    "complexity_sp": float(existing.complexity_sp or 0.0),
+                    "issues_completed": int(existing.issues_completed or 0),
+                    "founder_credit": float(existing.founder_credit or 0.0),
+                },
+                "group_id": u.group_id,
+                "division_id": u.division_id,
+            }
         except Exception as e:  # noqa: BLE001
             logger.error(f"compute_user_year_metrics failed for {u.id} year {year}: {e}")
             db.rollback()

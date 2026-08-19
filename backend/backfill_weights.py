@@ -64,7 +64,7 @@ try:
         elif ji.updated_date:
             years.add(ji.updated_date.year)
     for y in years:
-        compute_all_year_metrics(db, y)
+        compute_all_year_metrics(db, y, force=True)
 except Exception as e:
     print(f"Precompute refresh skipped: {e}")
 

@@ -165,6 +165,12 @@ async def lifespan(app: FastAPI):
                     conn.execute(text("ALTER TABLE company_maxima ADD COLUMN division_id VARCHAR(50)"))
                 print("Migrated: company_maxima.division_id")
 
+            uym_cols = _existing_cols("user_yearly_metrics")
+            if uym_cols and "last_processed_date" not in uym_cols:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE user_yearly_metrics ADD COLUMN last_processed_date TIMESTAMP"))
+                print("Migrated: user_yearly_metrics.last_processed_date")
+
             # Performance indexes for KPI calculation hot paths
             with engine.begin() as conn:
                 conn.execute(text("CREATE INDEX IF NOT EXISTS ix_kpi_daily_user_date ON kpi_employee_daily (user_id, date)"))
@@ -1681,8 +1687,12 @@ def _safe_mark_job_failed(db, job_id, error):
             pass
 
 @app.post("/api/v1/kpi/calculate/{year}")
-async def calculate_kpi_only(year: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    """Calculate KPI using local DB data only (no external sync)."""
+async def calculate_kpi_only(year: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), force: bool = False):
+    """Calculate KPI using local DB data only (no external sync).
+
+    By default only dates that are not already calculated are processed
+    (incremental). Pass ?force=true to recalculate the whole year.
+    """
     from sync_engine import create_sync_job, update_job_progress, mark_job_completed, mark_job_failed, mark_stale_jobs_failed, cancel_running_jobs
     mark_stale_jobs_failed(db, "KPI_CALC_ONLY")
     cancel_running_jobs(db, "KPI_CALC_ONLY")
@@ -1696,7 +1706,7 @@ async def calculate_kpi_only(year: int, background_tasks: BackgroundTasks, db: S
             update_job_progress(bg_db, jid, 10, "RUNNING")
             def _progress_cb(pct):
                 update_job_progress(bg_db, jid, int(pct), "RUNNING")
-            result = calculate_kpi_only_job(year, job_id=jid, progress_cb=_progress_cb)
+            result = calculate_kpi_only_job(year, job_id=jid, progress_cb=_progress_cb, force=force)
             try:
                 _company_maxima_cache.clear()
             except Exception:
@@ -1812,10 +1822,11 @@ def rescore_features(payload: RescoreRequest, background_tasks: BackgroundTasks)
             bg_db.commit()
             logger.info(f"Rescore completed: {updated} issues scored ({scorer.mode} mode)")
 
-            # Refresh precomputed aggregates for the target year
+            # Refresh precomputed aggregates for the target year (full recompute,
+            # because backfilled complexity values change old dates too).
             try:
                 from precompute_metrics import compute_all_year_metrics
-                compute_all_year_metrics(bg_db, target_year)
+                compute_all_year_metrics(bg_db, target_year, force=True)
             except Exception as e:
                 logger.error(f"Precompute after rescore failed: {e}")
 
