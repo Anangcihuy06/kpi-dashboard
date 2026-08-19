@@ -332,12 +332,12 @@ class LLMFeatureScorer:
 
     DEFAULT_BASE_URL = "https://api.z.ai/api/coding/paas/v4/chat/completions"
 
-    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, config: Optional[dict] = None, timeout: int = 30):
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, config: Optional[dict] = None, timeout: Optional[int] = None):
         self.api_key = api_key or _get_env("ZAI_API_KEY")
         self.model = model or _get_env("ZAI_MODEL") or "glm-5.3"
         self.base_url = _get_env("ZAI_BASE_URL") or self.DEFAULT_BASE_URL
         self.config = _normalise_config(config)
-        self.timeout = timeout
+        self.timeout = timeout or int(_get_env("ZAI_TIMEOUT_SECONDS", "120") or "120")
         self.cache: Dict[str, dict] = {}
         # Sliding-window rate limit + per-run budget (env: LLM_RPM, LLM_MAX_ISSUES_PER_SYNC)
         self._call_times: List[float] = []

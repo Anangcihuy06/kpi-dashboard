@@ -188,6 +188,8 @@ export default function Configurator() {
     }
 
     setAiLoading(true);
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), 120000);
     try {
       const request = {
         user_id: currentUser.id || "unknown",
@@ -206,7 +208,8 @@ export default function Configurator() {
       const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/ai/generate-formula", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(request)
+        body: JSON.stringify(request),
+        signal: controller.signal
       });
 
       const data = await response.json();
@@ -229,8 +232,9 @@ export default function Configurator() {
         throw new Error(data.error || "Gagal generate formula");
       }
     } catch (error) {
-      toast.error(error.message || "Terjadi kesalahan saat generate formula");
+      toast.error(error.name === "AbortError" ? "Request timeout, coba lagi." : (error.message || "Terjadi kesalahan saat generate formula"));
     } finally {
+      clearTimeout(abortTimer);
       setAiLoading(false);
     }
   };

@@ -143,6 +143,8 @@ const AIIndicatorCreator = ({
 
     setIsGenerating(true);
     setAiResponse(null);
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), 120000);
     
     try {
       const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/ai/generate-formula`, {
@@ -160,7 +162,8 @@ const AIIndicatorCreator = ({
           group_name: selectedGroupId ? getGroupName(selectedGroupId) : null,
           creation_scope: selectedScope,
           indicator_description: indicatorDescription
-        })
+        }),
+        signal: controller.signal
       });
 
       const data = await response.json();
@@ -183,8 +186,9 @@ const AIIndicatorCreator = ({
         toast.error('Failed to generate formula: ' + (data.error || data.message || 'Unknown error'));
       }
     } catch (error) {
-      toast.error('Error generating formula: ' + error.message);
+      toast.error(error.name === 'AbortError' ? 'Request timeout, coba lagi.' : ('Error generating formula: ' + error.message));
     } finally {
+      clearTimeout(abortTimer);
       setIsGenerating(false);
     }
   };

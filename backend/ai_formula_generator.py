@@ -2,6 +2,7 @@
 import os
 import json
 import logging
+import time
 import httpx
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel
@@ -256,11 +257,16 @@ class AIFeatureScorer:
     
     def _call_ai_api(self, prompt: str) -> Dict[str, Any]:
         """
-        Call Z.AI Coding Plan API for formula generation
-        
+        Call Z.AI Coding Plan API for formula generation.
+
+        Configurable via env:
+            ZAI_TIMEOUT_SECONDS  (default 120) - per-request HTTP timeout
+            ZAI_MAX_TOKENS       (default 2500) - max generated tokens
+            ZAI_MAX_ATTEMPTS     (default 3)    - retries on timeout/429/5xx
+
         Args:
             prompt: AI prompt
-        
+
         Returns:
             API response data
         """
@@ -268,7 +274,11 @@ class AIFeatureScorer:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        
+
+        timeout = float(os.getenv("ZAI_TIMEOUT_SECONDS", "120"))
+        max_tokens = int(os.getenv("ZAI_MAX_TOKENS", "2500"))
+        max_attempts = int(os.getenv("ZAI_MAX_ATTEMPTS", "3"))
+
         data = {
             "model": self.model,
             "messages": [
@@ -282,43 +292,64 @@ class AIFeatureScorer:
                 }
             ],
             "temperature": 0.3,  # Low temperature for consistent results
-            "max_tokens": 8000,
+            "max_tokens": max_tokens,
             "response_format": {"type": "json_object"}
         }
-        
-        try:
-            with httpx.Client(timeout=30.0) as client:
-                response = client.post(
-                    self.base_url,
-                    headers=headers,
-                    json=data
-                )
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    
-                    try:
-                        formula_data = json.loads(content)
-                        return {"status": "success", "data": formula_data}
-                    except json.JSONDecodeError:
-                        logger.error(f"AI response not valid JSON: {content}")
-                        return {"status": "error", "error": "AI response not valid JSON"}
-                
-                elif response.status_code == 401:
-                    logger.error("AI API authentication failed")
-                    return {"status": "error", "error": "AI API authentication failed"}
-                
-                else:
-                    logger.error(f"AI API error: {response.status_code}")
-                    return {"status": "error", "error": f"AI API error: {response.status_code}"}
-                    
-        except httpx.TimeoutException:
-            logger.error("AI API request timeout")
-            return {"status": "error", "error": "AI API request timeout"}
-        except Exception as e:
-            logger.error(f"AI API call failed: {str(e)}")
-            return {"status": "error", "error": str(e)}
+
+        last_error = "AI API request failed"
+        for attempt in range(1, max_attempts + 1):
+            try:
+                with httpx.Client(timeout=timeout) as client:
+                    response = client.post(
+                        self.base_url,
+                        headers=headers,
+                        json=data
+                    )
+
+                    if response.status_code == 200:
+                        result = response.json()
+                        content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+                        try:
+                            formula_data = json.loads(content)
+                            return {"status": "success", "data": formula_data}
+                        except json.JSONDecodeError:
+                            logger.error(f"AI response not valid JSON: {content}")
+                            return {"status": "error", "error": "AI response not valid JSON"}
+
+                    elif response.status_code == 401:
+                        logger.error("AI API authentication failed")
+                        return {"status": "error", "error": "AI API authentication failed"}
+
+                    elif response.status_code in (429, 500, 502, 503, 504):
+                        last_error = f"AI API error: {response.status_code}"
+                        logger.warning(f"{last_error} (attempt {attempt}/{max_attempts}), retrying...")
+                        if attempt < max_attempts:
+                            time.sleep(2 * attempt)
+                            continue
+                        return {"status": "error", "error": last_error}
+
+                    else:
+                        logger.error(f"AI API error: {response.status_code}")
+                        return {"status": "error", "error": f"AI API error: {response.status_code}"}
+
+            except httpx.TimeoutException:
+                last_error = "AI API request timeout"
+                logger.warning(f"{last_error} (attempt {attempt}/{max_attempts}), retrying...")
+                if attempt < max_attempts:
+                    time.sleep(2 * attempt)
+                    continue
+                return {"status": "error", "error": last_error}
+
+            except Exception as e:
+                last_error = str(e)
+                logger.error(f"AI API call failed: {str(e)} (attempt {attempt}/{max_attempts})")
+                if attempt < max_attempts:
+                    time.sleep(2 * attempt)
+                    continue
+                return {"status": "error", "error": str(e)}
+
+        return {"status": "error", "error": last_error}
     
     def _validate_formula(self, formula: str, context: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -331,8 +362,6 @@ class AIFeatureScorer:
         Returns:
             Validation result
         """
-        from engine import SafeMathEvaluator
-        
         try:
             # Extract variables from formula
             variables_in_formula = self._extract_variables_from_formula(formula)
@@ -357,8 +386,8 @@ class AIFeatureScorer:
             
             # Try to evaluate the formula
             try:
-                evaluator = SafeMathEvaluator(sample_context)
-                result = evaluator.evaluate(formula)
+                from engine import evaluate_kpi_formula
+                result = evaluate_kpi_formula(formula, sample_context, raise_on_error=True)
                 eval_result = "success"
                 eval_error = None
             except Exception as e:
