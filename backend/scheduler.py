@@ -425,62 +425,19 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
                         w = cscore if cscore is not None else 0.0
                         complexity_by_date[rdate] = complexity_by_date.get(rdate, 0.0) + float(w)
 
-                    # 4b. Backfill complexity_score for issues missing it, ONCE, so
-                    #     later runs only ever do the cheap aggregate query above.
-                    #     Use parallel scoring (score_issues_batch) with chunked batches
-                    #     to avoid single-threaded stalls when thousands of issues need scoring.
-                    from feature_analyzer import score_issues_batch, resolve_feature_config
-                    cfg = resolve_feature_config(sdb)
-                    scorer_config = cfg if cfg else None
-                    null_issues_q = sdb.query(
-                        models.RawJiraIssue.id,
-                        models.RawJiraIssue.issue_key,
-                        models.RawJiraIssue.resolved_date,
-                        models.RawJiraIssue.raw_data
-                    ).filter(
+                    # 4b. Skip inline backfill to avoid blocking workers on large NULL sets.
+                    #     Complexity scores should be populated by sync; for NULL issues,
+                    #     we treat as 0 for now. Run /api/v1/kpi/rescore later to backfill.
+                    null_count = sdb.query(models.RawJiraIssue).filter(
                         models.RawJiraIssue.assignee_account_id == ji_ident.external_user_id,
                         models.RawJiraIssue.resolved_date >= start_date,
                         models.RawJiraIssue.resolved_date <= end_date,
                         models.RawJiraIssue.complexity_score.is_(None)
-                    ).yield_per(200)
-                    chunk_size = 100
-                    chunk = []
-                    backfill_count = 0
-                    for null_id, null_key, null_date, null_raw in null_issues_q:
-                        if not null_date:
-                            continue
-                        chunk.append({"id": null_id, "key": null_key, "raw_data": null_raw})
-                        if len(chunk) >= chunk_size:
-                            results = score_issues_batch(chunk, config=scorer_config, workers=5)
-                            for item, res in zip(chunk, results):
-                                if item["id"] in res:
-                                    w = float(res[item["id"]].get("kpi_points", 0))
-                                    rdate = null_date.date() if hasattr(null_date, 'date') else null_date
-                                    complexity_by_date[rdate] = complexity_by_date.get(rdate, 0.0) + w
-                                    sdb.execute(
-                                        text("UPDATE raw_jira_issues SET complexity_score = :score WHERE id = :id"),
-                                        {"score": w, "id": item["id"]}
-                                    )
-                                    backfill_count += 1
-                            sdb.commit()
-                            chunk = []
-                    if chunk:
-                        results = score_issues_batch(chunk, config=scorer_config, workers=5)
-                        for item, res in zip(chunk, results):
-                            if item["id"] in res:
-                                w = float(res[item["id"]].get("kpi_points", 0))
-                                rdate = null_date.date() if hasattr(null_date, 'date') else null_date
-                                complexity_by_date[rdate] = complexity_by_date.get(rdate, 0.0) + w
-                                sdb.execute(
-                                    text("UPDATE raw_jira_issues SET complexity_score = :score WHERE id = :id"),
-                                    {"score": w, "id": item["id"]}
-                                )
-                                backfill_count += 1
-                        sdb.commit()
-                    if backfill_count > 0:
-                        logger.info(
-                            f"Calculate KPI: backfilled complexity_score for "
-                            f"{backfill_count} issues of user {user.id}"
+                    ).count()
+                    if null_count > 0:
+                        logger.warning(
+                            f"Calculate KPI: user {user.id} has {null_count} NULL complexity issues "
+                            f"(treated as 0). Run /api/v1/kpi/rescore to backfill."
                         )
 
                 # 5. Rule + metrics resolved ONCE (not per date!)
