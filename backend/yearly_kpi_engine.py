@@ -7,6 +7,12 @@ from engine import evaluate_kpi_formula
 
 logger = logging.getLogger(__name__)
 
+# Functions allowed by the safe formula evaluator (engine.SafeMathEvaluator).
+# They appear as ast.Name nodes in the formula AST, so they must be excluded
+# from the "missing variables" check or every formula using min()/max() logs a
+# misleading warning.
+ALLOWED_FORMULA_FUNCTIONS = ("min", "max", "abs", "round", "if")
+
 # Map config metric_key -> aggregated raw input metric shown as "Nilai Raw"
 METRIC_RAW_KEY_MAP = {
     "feature_complexity": "complexity_sp",
@@ -189,7 +195,9 @@ class YearlyKPIEngine:
                     from engine import _preprocess_if_calls
                     tree = ast.parse(_preprocess_if_calls(m_def.formula_expression), mode='eval')
                     for node in ast.walk(tree):
-                        if isinstance(node, ast.Name) and node.id not in eval_context:
+                        if (isinstance(node, ast.Name)
+                                and node.id not in eval_context
+                                and node.id not in ALLOWED_FORMULA_FUNCTIONS):
                             missing_vars.append(node.id)
                     
                     if missing_vars:

@@ -1607,8 +1607,16 @@ async def sync_year(year: int, background_tasks: BackgroundTasks, db: Session = 
             mark_job_completed(bg_db, jid, {"message": "Sync completed successfully"})
         except Exception as e:
             print(f"Error in background calculation: {str(e)}")
-            mark_job_failed(bg_db, jid, str(e))
+            try:
+                bg_db.rollback()
+            except Exception:
+                pass
+            _safe_mark_job_failed(bg_db, jid, str(e))
         finally:
+            try:
+                bg_db.rollback()
+            except Exception:
+                pass
             bg_db.close()
             
     background_tasks.add_task(run_calculation, job_id)
@@ -1635,12 +1643,42 @@ async def sync_data_only(background_tasks: BackgroundTasks, db: Session = Depend
             mark_job_completed(bg_db, jid, result or {"message": "Sync data completed"})
         except Exception as e:
             print(f"Error in background data sync: {str(e)}")
-            mark_job_failed(bg_db, jid, str(e))
+            try:
+                bg_db.rollback()
+            except Exception:
+                pass
+            _safe_mark_job_failed(bg_db, jid, str(e))
         finally:
+            try:
+                bg_db.rollback()
+            except Exception:
+                pass
             bg_db.close()
 
     background_tasks.add_task(run_sync, job_id)
     return {"status": "success", "message": "Sync data dari Jira/GitLab berjalan di background", "job_id": job_id}
+
+def _safe_mark_job_failed(db, job_id, error):
+    """Mark a job FAILED even when the session is broken/poisoned.
+
+    A DB network error leaves the session with an invalid transaction, so the
+    failure-marking query itself raises PendingRollbackError. Here we reset the
+    session (rollback) before retrying and swallow the error so a poisoned
+    session can never turn a background failure into an unhandled ASGI 500.
+    """
+    try:
+        db.rollback()
+    except Exception:
+        pass
+    try:
+        from sync_engine import mark_job_failed
+        mark_job_failed(db, job_id, error)
+    except Exception as e:
+        print(f"Failed to mark job {job_id} as failed: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
 @app.post("/api/v1/kpi/calculate/{year}")
 async def calculate_kpi_only(year: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
@@ -1669,13 +1707,25 @@ async def calculate_kpi_only(year: int, background_tasks: BackgroundTasks, db: S
                 # do not resurrect it as COMPLETED.
                 return
             if status == "error":
-                mark_job_failed(bg_db, jid, (result or {}).get("message", "Kalkulasi KPI gagal"))
+                _safe_mark_job_failed(bg_db, jid, (result or {}).get("message", "Kalkulasi KPI gagal"))
                 return
             mark_job_completed(bg_db, jid, result or {"message": "KPI calculation completed"})
         except Exception as e:
             print(f"Error in background KPI calculation: {str(e)}")
-            mark_job_failed(bg_db, jid, str(e))
+            # The session may be left with an invalid transaction after a DB
+            # network error. Roll back BEFORE reusing it, otherwise the failure
+            # marking itself raises PendingRollbackError and the job stays
+            # RUNNING forever (frontend polls a 200 OK that never changes).
+            try:
+                bg_db.rollback()
+            except Exception:
+                pass
+            _safe_mark_job_failed(bg_db, jid, str(e))
         finally:
+            try:
+                bg_db.rollback()
+            except Exception:
+                pass
             bg_db.close()
 
     background_tasks.add_task(run_calc, job_id)
@@ -2535,8 +2585,12 @@ def trigger_comprehensive_sync(request: ComprehensiveSyncRequest, background_tas
                 
             except Exception as e:
                 logger.error(f"Error in comprehensive sync: {str(e)}")
-                mark_job_failed(_db, j_id, str(e))
+                _safe_mark_job_failed(_db, j_id, str(e))
         finally:
+            try:
+                _db.rollback()
+            except Exception:
+                pass
             _db.close()
     
     background_tasks.add_task(run_comprehensive_sync, job_id, target_user_ids, from_date, to_date)

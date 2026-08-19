@@ -85,10 +85,10 @@ def update_job_progress(db: Session, job_id: str, progress: int, status: str = "
     So we always issue a commit if progress/status changed, OR if the last
     heartbeat is older than 30 seconds.
     """
-    job = db.query(models.SyncJob).filter(models.SyncJob.id == job_id).first()
-    if not job:
-        return
     try:
+        job = db.query(models.SyncJob).filter(models.SyncJob.id == job_id).first()
+        if not job:
+            return
         now = datetime.now()
         last = job.updated_at or job.created_at
         changed = job.progress != progress or job.status != status
@@ -100,26 +100,39 @@ def update_job_progress(db: Session, job_id: str, progress: int, status: str = "
             job.updated_at = now
             db.commit()
     except Exception:
+        # Broken session must not poison the shared bg_db that every worker
+        # thread reports progress through; roll back and continue.
         db.rollback()
 
 def mark_job_completed(db: Session, job_id: str, result: dict = None):
     """Mark job as completed"""
-    job = db.query(models.SyncJob).filter(models.SyncJob.id == job_id).first()
-    if job:
-        job.status = "COMPLETED"
-        job.progress = 100
-        job.result = result
-        job.completed_at = datetime.now()
-        db.commit()
+    try:
+        job = db.query(models.SyncJob).filter(models.SyncJob.id == job_id).first()
+        if job:
+            job.status = "COMPLETED"
+            job.progress = 100
+            job.result = result
+            job.completed_at = datetime.now()
+            db.commit()
+    except Exception:
+        # A broken session (e.g. previous network error) must never prevent the
+        # job from being marked. Roll back so the session is reusable.
+        db.rollback()
+        raise
 
 def mark_job_failed(db: Session, job_id: str, error: str):
     """Mark job as failed"""
-    job = db.query(models.SyncJob).filter(models.SyncJob.id == job_id).first()
-    if job:
-        job.status = "FAILED"
-        job.error_message = error
-        job.completed_at = datetime.now()
-        db.commit()
+    try:
+        job = db.query(models.SyncJob).filter(models.SyncJob.id == job_id).first()
+        if job:
+            job.status = "FAILED"
+            job.error_message = error
+            job.completed_at = datetime.now()
+            db.commit()
+    except Exception:
+        # Broken session: roll back so callers can retry or close cleanly.
+        db.rollback()
+        raise
 
 def mark_single_stale_job_failed(db: Session, job: models.SyncJob):
     """Mark THIS job FAILED if it is stuck PENDING/RUNNING and too old.
