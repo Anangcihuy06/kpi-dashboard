@@ -3,7 +3,7 @@ import { Users, Search, ArrowLeft, ChevronDown, ChevronUp, BarChart2, Award, Inf
 import { toast } from "sonner";
 import Dashboard from "./Dashboard";
 
-export default function Subordinates({ supervisorId }) {
+export default function Subordinates({ supervisorId, initialMemberId, onResetTarget }) {
   const [subordinates, setSubordinates] = useState([]);
   const [selectedSubId, setSelectedSubId] = useState(null);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -16,6 +16,13 @@ export default function Subordinates({ supervisorId }) {
   const [editingEmails, setEditingEmails] = useState({});
   const [emailSaving, setEmailSaving] = useState({});
   const [attendanceSyncing, setAttendanceSyncing] = useState(false);
+
+  // Drill-in target passthrough from the org Dashboard (hierarchy tree).
+  useEffect(() => {
+    if (initialMemberId) {
+      setSelectedSubId(initialMemberId);
+    }
+  }, [initialMemberId]);
 
   useEffect(() => {
     fetchSyncStatus();
@@ -232,7 +239,7 @@ export default function Subordinates({ supervisorId }) {
       <div>
         <button
           className="btn-outline"
-          onClick={() => setSelectedSubId(null)}
+          onClick={() => { setSelectedSubId(null); if (onResetTarget) onResetTarget(); }}
           style={{ marginBottom: "20px", display: "flex", alignItems: "center", gap: "8px" }}
         >
           <ArrowLeft size={16} /> Kembali ke Daftar Tim

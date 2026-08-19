@@ -35,6 +35,7 @@ export default function App() {
   const [user, setUser] = useState(null); // Logged in user profile
   const [token, setToken] = useState("");
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [subTargetId, setSubTargetId] = useState(null);
 
   // Load session from localStorage on mount — verify locally (no HRIS call needed)
   useEffect(() => {
@@ -238,7 +239,7 @@ export default function App() {
             <li>
               <div
                 className={`menu-item ${activeTab === "subordinates" ? "active" : ""}`}
-                onClick={() => setActiveTab("subordinates")}
+                onClick={() => { setActiveTab("subordinates"); setSubTargetId(null); }}
                 role="link"
                 tabIndex={0}
                 aria-label="Subordinate"
@@ -332,8 +333,8 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="main-content">
-        {activeTab === "dashboard" && <OrgPerformance userId={user.id} />}
-        {activeTab === "subordinates" && <Subordinates supervisorId={user.id} />}
+        {activeTab === "dashboard" && <OrgPerformance userId={user.id} onOpenMemberDetail={(id) => { setSubTargetId(id); setActiveTab("subordinates"); }} />}
+        {activeTab === "subordinates" && <Subordinates supervisorId={user.id} initialMemberId={subTargetId} onResetTarget={() => setSubTargetId(null)} />}
         {activeTab === "configurator" && <Configurator />}
       </main>
     </div>

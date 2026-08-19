@@ -41,7 +41,7 @@ function flattenTree(nodes, depth = 1) {
   return out;
 }
 
-export default function OrgPerformance({ userId }) {
+export default function OrgPerformance({ userId, onOpenMemberDetail }) {
   const [members, setMembers] = useState([]);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [loading, setLoading] = useState(true);
@@ -468,7 +468,7 @@ export default function OrgPerformance({ userId }) {
 
               <button
                 className="btn-outline"
-                onClick={() => setDetailMember(node.user_id)}
+                onClick={() => (onOpenMemberDetail ? onOpenMemberDetail(node.user_id) : setDetailMember(node.user_id))}
                 style={{ padding: "6px 14px", fontSize: 12, whiteSpace: "nowrap" }}
               >
                 Detail
