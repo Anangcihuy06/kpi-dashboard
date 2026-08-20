@@ -168,16 +168,13 @@ export default function Configurator() {
   };
 
   const addMetricRow = () => {
-    const userRole = currentUser.roles?.[0] || "EMPLOYEE";
-    const hasPermission = userRole === "ROLE_ADMIN" || (userRole === "MANAGER" && selectedGroupId);
-
-    if (!hasPermission) {
+    const permissionLevel = getUserPermissionLevel();
+    if (permissionLevel === "EMPLOYEE") {
       toast.error("Hanya manager dan admin yang dapat menambahkan indikator KPI.", {
-        description: userRole === "EMPLOYEE" ? "Hubungi manager Anda untuk perubahan indikator." : "Pilih grup terlebih dahulu."
+        description: "Hubungi manager Anda untuk perubahan indikator."
       });
       return;
     }
-
     setShowAIPrompt(true);
   };
 
@@ -194,7 +191,7 @@ export default function Configurator() {
       const request = {
         user_id: currentUser.id || "unknown",
         user_name: currentUser.fullName || currentUser.name || "Unknown User",
-        user_role: currentUser.roles?.[0] || "EMPLOYEE",
+        user_role: getUserPermissionLevel(),
         has_subordinates: currentUser.hasSubordinates || false,
         division_id: currentUser.division_id,
         division_name: divisions.find(d => d.id === currentUser.division_id)?.name || "Unknown",
@@ -246,15 +243,12 @@ export default function Configurator() {
   // Helper functions for role checking
   const getUserPermissionLevel = () => {
     if (currentUser.roles?.includes("ROLE_ADMIN")) return "ADMIN";
-    if (currentUser.roles?.includes("MANAGER") || currentUser.hasSubordinates) return "MANAGER";
+    if (currentUser.roles?.includes("MANAGER") || currentUser.roles?.includes("SUPERVISOR") || currentUser.hasSubordinates) return "MANAGER";
     return "EMPLOYEE";
   };
 
   const canCreateIndicators = () => {
-    const permissionLevel = getUserPermissionLevel();
-    if (permissionLevel === "EMPLOYEE") return false;
-    if (permissionLevel === "MANAGER" && !selectedGroupId) return false;
-    return true;
+    return getUserPermissionLevel() !== "EMPLOYEE";
   };
 
   const getPermissionMessage = () => {
@@ -265,14 +259,6 @@ export default function Configurator() {
         title: "Permission Required",
         message: "Hanya manager dan admin yang dapat menambahkan indikator KPI.",
         submessage: "Hubungi manager Anda untuk perubahan indikator."
-      };
-    }
-    if (permissionLevel === 'MANAGER' && !selectedGroupId) {
-      return {
-        icon: <ShieldAlert size={24} />,
-        title: "Group Selection Required",
-        message: "Pilih grup terlebih dahulu untuk menambahkan indikator.",
-        submessage: "Anda hanya dapat membuat indikator untuk grup Anda sendiri."
       };
     }
     return null;

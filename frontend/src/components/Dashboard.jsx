@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import {
-  ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer, LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar
 } from "recharts";
 import { Award, TrendingUp, GitMerge, CheckSquare, Calendar, RefreshCw, Clock, UserCheck, Info } from "lucide-react";
@@ -208,13 +208,76 @@ export default function Dashboard({ userId, isSelf }) {
     return "badge-success";
   };
 
-  // Data for radar chart
-  const radarData = [
-    { subject: 'DELIVERY', Skor: scores.delivery || 0, fullMark: 120 },
-    { subject: 'ENGINEERING', Skor: scores.engineering || 0, fullMark: 120 },
-    { subject: 'EFFORT', Skor: scores.effort || 0, fullMark: 120 },
-    { subject: 'QUALITY', Skor: scores.quality || 0, fullMark: 120 }
+  // Matrix-driven category data from kpi_scores.details (configured KPI rules)
+  const matrixDetails = scores.details || [];
+  const METRIC_LABELS = {
+    feature_complexity: "Feature Complexity",
+    attendance: "Kehadiran",
+    engineering: "Engineering",
+    delivery: "Delivery",
+    quality: "Quality",
+  };
+  const CHART_COLORS = ["#6366f1", "#f59e0b", "#10b981", "#ef4444", "#06b6d4", "#8b5cf6", "#f97316", "#14b8a6"];
+  const humanizeKey = (key) =>
+    METRIC_LABELS[key] ||
+    String(key || "")
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+  // Sub-indicators that back the feature_complexity metric (C/I/S/R/O + Delivery)
+  const tasks = data.completed_tasks || [];
+  const avgFactor = (key) => (tasks.length ? tasks.reduce((s, t) => s + (Number(t[key]) || 0), 0) / tasks.length : 0);
+  const SUB_FACTORS = [
+    { key: "complexity", label: "Complexity", max: 5, color: "#6366f1" },
+    { key: "impact", label: "Impact", max: 5, color: "#f59e0b" },
+    { key: "scope", label: "Scope", max: 5, color: "#10b981" },
+    { key: "risk", label: "Risk", max: 3, color: "#ef4444" },
+    { key: "ownership", label: "Ownership", max: 2, color: "#06b6d4" },
+    { key: "points", label: "Delivery", max: 25, color: "#8b5cf6" }
   ];
+  const matrixChartData = matrixDetails.flatMap((d, i) => {
+    const baseColor = CHART_COLORS[i % CHART_COLORS.length];
+    const weight = Number(d.weight) || 0;
+    if (d.metric_key === "feature_complexity") {
+      return SUB_FACTORS.map(({ key, label, max, color }) => {
+        const raw = key === "points"
+          ? (tasks.length ? tasks.reduce((s, t) => s + (Number(t.points) || 0), 0) / tasks.length : 0)
+          : avgFactor(key);
+        const score = max > 0 ? parseFloat(((raw / max) * 100).toFixed(1)) : 0;
+        return {
+          name: label,
+          key: `sub_${key}`,
+          metric: d.metric_key,
+          weight,
+          cap: max,
+          raw,
+          score,
+          weighted: weight * score,
+          color
+        };
+      });
+    }
+    const capped = Number(d.capped_score ?? d.calculated_score ?? d.raw_score ?? 0);
+    return [{
+      name: humanizeKey(d.metric_key),
+      key: d.metric_key,
+      metric: d.metric_key,
+      weight,
+      cap: Number(d.cap_score) || 100,
+      score: capped,
+      weighted: Number(d.weighted_score) || 0,
+      color: baseColor
+    }];
+  });
+
+  // Radar chart backing: one subject per configured metric rule, score = capped score (0-100)
+  const radarData = matrixDetails.map((d) => {
+    const capped = Number(d.capped_score ?? d.calculated_score ?? d.raw_score ?? 0);
+    return {
+      subject: humanizeKey(d.metric_key),
+      Skor: capped,
+      fullMark: 100
+    };
+  });
 
   return (
     <div>
@@ -337,13 +400,13 @@ export default function Dashboard({ userId, isSelf }) {
 
         {/* Radar Metrics Breakdown */}
         <div className="card" style={{ height: "400px" }}>
-          <h3 style={{ marginBottom: "20px" }}>Proporsi Skor Matriks</h3>
+          <h3 style={{ marginBottom: "20px" }}>Proporsi Skor Matrix</h3>
           <div style={{ width: "100%", height: "280px", display: "flex", justifyContent: "center" }}>
             <ResponsiveContainer width="100%" height="100%">
               <RadarChart cx="50%" cy="50%" outerRadius="70%" data={radarData}>
                 <PolarGrid />
                 <PolarAngleAxis dataKey="subject" fontSize={11} />
-                <PolarRadiusAxis angle={30} domain={[0, 120]} />
+                <PolarRadiusAxis angle={30} domain={[0, 100]} />
                 <Radar
                   name="Skor Indikator"
                   dataKey="Skor"
@@ -359,8 +422,44 @@ export default function Dashboard({ userId, isSelf }) {
             </ResponsiveContainer>
           </div>
           <div className="table-meta" style={{ marginTop: 12 }}>
-            Skor per pilar indikator (DELIVERY, ENGINEERING, EFFORT, QUALITY) dinormalisasi ke skala 0–120.
+            Skor per kategori diambil dari config matrix (KPI rules) yang terpasang, satu sumbu per metric rule dengan cap score-nya.
           </div>
+        </div>
+      </div>
+
+      {/* Matrix Metrics Chart */}
+      <div className="card" style={{ marginBottom: "24px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", marginBottom: "20px", flexWrap: "wrap" }}>
+          <h3 style={{ margin: 0 }}>Skor per Kategori (Matrix)</h3>
+          <span className="status-pill primary">Rata-rata {radarData.length ? fmt(radarData.reduce((s, d) => s + d.Skor, 0) / radarData.length, 1) : 0} / 100</span>
+        </div>
+        <div style={{ width: "100%", height: "300px" }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={matrixChartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="name" stroke="var(--color-text-muted)" fontSize={12} tickLine={false} />
+              <YAxis domain={[0, 100]} stroke="var(--color-text-muted)" fontSize={12} tickLine={false} />
+              <Tooltip
+                contentStyle={{ borderRadius: "12px", border: "1px solid #cbd5e1", fontFamily: "var(--font-body)" }}
+                formatter={(value, name, props) => {
+                  const p = props.payload || {};
+                  const detail = p.raw != null
+                    ? `avg ${fmt(p.raw, 2)} / ${p.cap} (${fmt(value, 1)}%)`
+                    : `${fmt(value, 1)}/100 · bobot ${fmt(p.weight * 100, 1)}%`;
+                  return [detail, p.name];
+                }}
+              />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="score" name="Skor Kategori" radius={[6, 6, 0, 0]} maxBarSize={48}>
+                {matrixChartData.map((d) => (
+                  <Cell key={d.key} fill={d.color} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="table-meta" style={{ marginTop: 12 }}>
+          Skor per metric rule dari config matrix. Kategori Feature Complexity dijabarkan ke sub-indikator (C: Complexity, I: Impact, S: Scope, R: Risk, O: Ownership, Delivery) dari rata-rata task terselesaikan — menyesuaikan otomatis dengan rule yang dikonfigurasi di Configurator.
         </div>
       </div>
 

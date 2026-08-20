@@ -15,6 +15,39 @@ from division_variables import (
 
 logger = logging.getLogger("ai_formula_generator")
 
+# Minimal .env reader (no python-dotenv dependency). Reads backend/.env so
+# ZAI_* work locally; real environment variables always take precedence
+# (Railway sets them natively in production).
+_DOTENV_CACHE = None
+
+
+def _load_dotenv_once() -> dict:
+    global _DOTENV_CACHE
+    if _DOTENV_CACHE is not None:
+        return _DOTENV_CACHE
+    data = {}
+    try:
+        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    data[k.strip()] = v.strip()
+    except Exception:  # noqa: BLE001
+        pass
+    _DOTENV_CACHE = data
+    return data
+
+
+def _get_env(key: str, default: str = "") -> str:
+    val = os.getenv(key)
+    if val:
+        return val
+    return _load_dotenv_once().get(key, default)
+
 # AI Request/Response Models
 class AIFormulaRequest(BaseModel):
     user_id: str
@@ -55,9 +88,9 @@ class AIFeatureScorer:
             api_key: Z.AI API key (defaults to environment variable)
             model: Model to use (defaults to glm-5.3)
         """
-        self.api_key = api_key or os.getenv("ZAI_API_KEY")
-        self.base_url = os.getenv("ZAI_BASE_URL") or self.DEFAULT_BASE_URL
-        self.model = model or os.getenv("ZAI_MODEL") or "glm-5.3"
+        self.api_key = api_key or _get_env("ZAI_API_KEY")
+        self.base_url = _get_env("ZAI_BASE_URL") or self.DEFAULT_BASE_URL
+        self.model = model or _get_env("ZAI_MODEL") or "glm-5.3"
         self.enabled = bool(self.api_key and self.api_key.strip())
         
         if not self.enabled:
@@ -275,9 +308,9 @@ class AIFeatureScorer:
             "Content-Type": "application/json",
         }
 
-        timeout = float(os.getenv("ZAI_TIMEOUT_SECONDS", "120"))
-        max_tokens = int(os.getenv("ZAI_MAX_TOKENS", "2500"))
-        max_attempts = int(os.getenv("ZAI_MAX_ATTEMPTS", "3"))
+        timeout = float(_get_env("ZAI_TIMEOUT_SECONDS", "120"))
+        max_tokens = int(_get_env("ZAI_MAX_TOKENS", "2500"))
+        max_attempts = int(_get_env("ZAI_MAX_ATTEMPTS", "3"))
 
         data = {
             "model": self.model,
@@ -322,10 +355,14 @@ class AIFeatureScorer:
                         return {"status": "error", "error": "AI API authentication failed"}
 
                     elif response.status_code in (429, 500, 502, 503, 504):
+                        # Long backoff (2^n seconds) so rate limits / transient
+                        # upstream issues recover before the final attempt.
                         last_error = f"AI API error: {response.status_code}"
                         logger.warning(f"{last_error} (attempt {attempt}/{max_attempts}), retrying...")
                         if attempt < max_attempts:
-                            time.sleep(2 * attempt)
+                            sleep_seconds = min(2 ** attempt, 30)
+                            logger.info(f"AI API backoff: sleeping {sleep_seconds}s before retry")
+                            time.sleep(sleep_seconds)
                             continue
                         return {"status": "error", "error": last_error}
 

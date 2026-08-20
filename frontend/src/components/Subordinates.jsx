@@ -16,6 +16,7 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
   const [editingEmails, setEditingEmails] = useState({});
   const [emailSaving, setEmailSaving] = useState({});
   const [attendanceSyncing, setAttendanceSyncing] = useState(false);
+  const [calcProgress, setCalcProgress] = useState({ progress: 0, total: 0 });
 
   // Drill-in target passthrough from the org Dashboard (hierarchy tree).
   useEffect(() => {
@@ -101,35 +102,27 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
 
   const fetchTeamScores = async (force = false) => {
     try {
-      const url = `${import.meta.env.VITE_API_URL}/api/v1/kpi/team-yearly?user_id=${supervisorId}&year=${selectedYear}&direct_only=true`;
+      const url = `${import.meta.env.VITE_API_URL}/api/v1/kpi/team-yearly?user_id=${supervisorId}&year=${selectedYear}&direct_only=true${force ? '&force_refresh=true' : ''}`;
       const response = await fetch(url, {
         cache: 'no-store'
       });
       
       if (response.status === 202) {
-        // Background calculation in progress, keep data as-is and show status
+        // Background calculation in progress — render partial rows as they arrive,
+        // then keep polling this same endpoint until it returns a full result.
         const data = await response.json();
-        if (data.job_id) {
-          // Poll job status every 5s without blocking
-          const poll = setInterval(async () => {
-            try {
-              const statusRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/jobs/${data.job_id}`);
-              if (statusRes.ok) {
-                const statusData = await statusRes.json();
-                if (statusData.status === "COMPLETED") {
-                  clearInterval(poll);
-                  await fetchTeamScores(false); // Fetch fresh data after completion
-                } else if (statusData.status === "FAILED") {
-                  clearInterval(poll);
-                  console.error("KPI calculation failed");
-                }
-              }
-            } catch (e) {
-              console.error("Error polling job status:", e);
-            }
-          }, 5000);
+        const partial = data.partial_data || [];
+        if (partial.length > 0) {
+          setSubordinates(partial);
         }
-        return; // Don't show loading, data will refresh when job completes
+        const progress = data.progress || 0;
+        const total = data.total || 0;
+        setCalcProgress({ progress, total });
+        // Poll again without blocking the UI
+        setTimeout(async () => {
+          await fetchTeamScores(force);
+        }, 3000);
+        return; // Don't toggle loading — keep showing whatever we have
       }
       
       if (!response.ok) throw new Error("Gagal mengambil report tim");
@@ -137,6 +130,7 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
       
       if (data.status === "success") {
         setSubordinates(data.data || []);
+        setCalcProgress({ progress: data.data?.length || 0, total: data.data?.length || 0 });
       } else {
         setSubordinates([]);
       }
@@ -291,6 +285,12 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
               <RefreshCw size={11} className={syncStatus.is_syncing ? "animate-spin" : ""} />
               {syncStatus.is_syncing ? "Sinkronisasi berjalan" : "Data terbaru"}
             </span>
+            {calcProgress.total > 0 && calcProgress.progress < calcProgress.total && (
+              <span className="status-pill syncing">
+                <RefreshCw size={11} className="animate-spin" />
+                Menghitung KPI {calcProgress.progress}/{calcProgress.total}
+              </span>
+            )}
             <span>Terakhir diperbarui: <strong>{formatLastSyncTime()}</strong></span>
             <span className="table-meta">· otomatis setiap {syncStatus.sync_interval_minutes} menit</span>
           </div>

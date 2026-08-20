@@ -202,8 +202,8 @@ export default function App() {
   // - Subordinates menu visible to anyone who is a manager/supervisor or has subordinates
   const hasSubordinatesMenu = user.hasSubordinates || user.roles.includes("ROLE_ADMIN") || user.roles.includes("MANAGER") || user.roles.includes("SUPERVISOR");
 
-  // - Configurator menu visible to MANAGER or ROLE_ADMIN
-  const hasConfiguratorMenu = user.roles.includes("ROLE_ADMIN") || user.roles.includes("MANAGER");
+  // - Configurator menu visible to MANAGER/SUPERVISOR/ROLE_ADMIN or anyone with subordinates
+  const hasConfiguratorMenu = user.roles.includes("ROLE_ADMIN") || user.roles.includes("MANAGER") || user.roles.includes("SUPERVISOR") || user.hasSubordinates;
 
   return (
     <div className="app-container">

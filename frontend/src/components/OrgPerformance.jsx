@@ -266,12 +266,64 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
       Score: parseFloat((monthly[k].sum / monthly[k].n).toFixed(2))
     }));
 
-  const catData = [
-    { name: "Delivery", value: parseFloat(avg("delivery").toFixed(1)) },
-    { name: "Engineering", value: parseFloat(avg("engineering").toFixed(1)) },
-    { name: "Effort", value: parseFloat(avg("effort").toFixed(1)) },
-    { name: "Quality", value: parseFloat(avg("quality").toFixed(1)) },
+  // Matrix-driven: aggregate capped score per configured metric rule across all members
+  const CHART_COLORS = ["#6366f1", "#f59e0b", "#10b981", "#ef4444", "#06b6d4", "#8b5cf6", "#f97316", "#14b8a6"];
+  const SUB_COLORS = ["#6366f1", "#f59e0b", "#10b981", "#ef4444", "#06b6d4", "#8b5cf6"];
+  const SUB_FACTORS = [
+    { key: "complexity", label: "Complexity", max: 5 },
+    { key: "impact", label: "Impact", max: 5 },
+    { key: "scope", label: "Scope", max: 5 },
+    { key: "risk", label: "Risk", max: 3 },
+    { key: "ownership", label: "Ownership", max: 2 },
+    { key: "points", label: "Delivery", max: 25 }
   ];
+  const humanizeKey = (key) =>
+    ({ feature_complexity: "Feature Complexity", attendance: "Kehadiran", engineering: "Engineering", delivery: "Delivery", quality: "Quality" })[key] ||
+    String(key || "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  const allSubTasks = members.flatMap(m => m.completed_tasks || []);
+  const avgSub = (key) =>
+    allSubTasks.length ? allSubTasks.reduce((s, t) => s + (Number(t[key]) || 0), 0) / allSubTasks.length : 0;
+  const ruleAgg = {};
+  members.forEach(m => {
+    ((m.kpi_scores?.details) || []).forEach(d => {
+      const key = d.metric_key || "other";
+      if (!ruleAgg[key]) ruleAgg[key] = { sum: 0, wsum: 0, n: 0, weight: Number(d.weight) || 0, color: CHART_COLORS[Object.keys(ruleAgg).length % CHART_COLORS.length] };
+      ruleAgg[key].sum += Number(d.capped_score ?? d.calculated_score ?? d.raw_score ?? 0);
+      ruleAgg[key].n += 1;
+      ruleAgg[key].wsum += Number(d.weighted_score) || 0;
+    });
+  });
+  const allTasksCount = allSubTasks.length;
+  const catData = Object.keys(ruleAgg).flatMap((key, idx) => {
+    const agg = ruleAgg[key];
+    if (key === "feature_complexity") {
+      return SUB_FACTORS.map(({ key: fkey, label, max }, j) => {
+        const raw = fkey === "points"
+          ? (allTasksCount ? allSubTasks.reduce((s, t) => s + (Number(t.points) || 0), 0) / allTasksCount : 0)
+          : avgSub(fkey);
+        return {
+          name: label,
+          key: `sub_${fkey}`,
+          metric: key,
+          weight: agg.weight,
+          cap: max,
+          raw,
+          value: max > 0 ? parseFloat(((raw / max) * 100).toFixed(1)) : 0,
+          wavg: agg.wavg,
+          color: SUB_COLORS[j % SUB_COLORS.length]
+        };
+      });
+    }
+    return [{
+      name: humanizeKey(key),
+      key,
+      metric: key,
+      weight: agg.weight,
+      value: agg.n ? parseFloat((agg.sum / agg.n).toFixed(1)) : 0,
+      wavg: agg.wavg,
+      color: agg.color
+    }];
+  });
 
   const leaderboard = [...members]
     .sort((a, b) => (Number(b.kpi_scores?.overall) || 0) - (Number(a.kpi_scores?.overall) || 0))
@@ -380,17 +432,26 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
           </div>
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={catData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id="catFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--color-secondary)" stopOpacity={0.9} />
-                  <stop offset="100%" stopColor="var(--color-secondary)" stopOpacity={0.35} />
-                </linearGradient>
-              </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.25)" vertical={false} />
               <XAxis dataKey="name" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} width={40} />
-              <Tooltip cursor={{ fill: "rgba(148,163,184,0.08)" }} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", boxShadow: "0 8px 24px rgba(15,23,42,0.08)", fontSize: 13 }} />
-              <Bar dataKey="value" name="Score" fill="url(#catFill)" radius={[6, 6, 0, 0]} maxBarSize={48} />
+              <YAxis domain={[0, 100]} tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} width={40} />
+              <Tooltip
+                cursor={{ fill: "rgba(148,163,184,0.08)" }}
+                contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", boxShadow: "0 8px 24px rgba(15,23,42,0.08)", fontSize: 13 }}
+                formatter={(value, name, props) => {
+                  const p = props.payload || {};
+                  const detail = p.raw != null
+                    ? `avg ${fmt(p.raw, 2)} / ${p.cap} (${fmt(value, 1)}%)`
+                    : `${fmt(value, 1)}/100 · bobot ${fmt(p.weight * 100, 1)}%`;
+                  return [detail, p.name];
+                }}
+              />
+              <Bar dataKey="value" name="Score" radius={[6, 6, 0, 0]} maxBarSize={48}>
+                {catData.length === 0 && <Cell fill="var(--color-secondary)" />}
+                {catData.map((d) => (
+                  <Cell key={d.key} fill={d.color} />
+                ))}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>

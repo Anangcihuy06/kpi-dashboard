@@ -794,13 +794,12 @@ def verify_local_session(user_id: str, db: Session = Depends(get_db)):
 def sync_attendance_year(
     supervisor_id: str,
     year: int,
-    hris_token: str = None,  # Accept HRIS token from request
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """
     Trigger yearly attendance sync for all subordinates of a supervisor.
-    Uses the supervisor's HRIS token to fetch attendance data for their subordinates.
+    Uses the supervisor's stored HRIS token to fetch attendance data for their subordinates.
     Results cached in SQLite.
     """
     from sync_service import sync_attendance_for_year
@@ -816,14 +815,14 @@ def sync_attendance_year(
         
     job_id = create_sync_job(db, supervisor_id, "ATTENDANCE_SYNC_YEAR")
     
-    def _do_sync(j_id, sub_list, y, token_override):
+    def _do_sync(j_id, sub_list, y):
         from database import SessionLocal
         _db = SessionLocal()
         try:
             update_job_progress(_db, j_id, 10, "RUNNING")
             
-            # First sync attendance using the supervisor's HRIS token
-            sync_attendance_for_year(_db, sub_list, y, token_override=token_override)
+            # Sync attendance using the supervisor's stored HRIS token
+            sync_attendance_for_year(_db, sub_list, y)
             update_job_progress(_db, j_id, 60, "RUNNING")
             
             # Then recalculate KPI for all subordinates
@@ -879,7 +878,7 @@ def sync_attendance_year(
                 pass
             _db.close()
     
-    background_tasks.add_task(_do_sync, job_id, subordinates, year, hris_token)
+    background_tasks.add_task(_do_sync, job_id, subordinates, year)
     
     return {
         "status": "syncing",
@@ -1135,8 +1134,14 @@ def get_ai_division_context(division_id: str, user_id: str, db: Session = Depend
             get_all_divisions
         )
         
-        # Get user's permission level
-        user_role = user.roles[0] if user.roles else "EMPLOYEE"
+        # Get user's permission level — match on the whole role set, not just the first entry
+        user_roles = user.roles or []
+        if "ROLE_ADMIN" in user_roles:
+            user_role = "ADMIN"
+        elif "MANAGER" in user_roles or "SUPERVISOR" in user_roles or user.has_subordinates:
+            user_role = "MANAGER"
+        else:
+            user_role = "EMPLOYEE"
         
         # Get division-specific data
         division_variables = get_division_variables(division.code)
@@ -1146,8 +1151,8 @@ def get_ai_division_context(division_id: str, user_id: str, db: Session = Depend
         # Determine creation scope based on user role
         if "ROLE_ADMIN" in user.roles:
             creation_scopes = ["division", "group", "personal"]
-        elif "MANAGER" in user.roles or user.has_subordinates:
-            creation_scopes = ["group", "personal"]
+        elif "MANAGER" in user.roles or "SUPERVISOR" in user.roles or user.has_subordinates:
+            creation_scopes = ["division", "group", "personal"]
         else:
             creation_scopes = ["personal"]
         
@@ -1188,9 +1193,16 @@ async def ai_generate_formula(request: AIFormulaRequest, db: Session = Depends(g
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
-        # Validate user permissions
-        user_role = user.roles[0] if user.roles else "EMPLOYEE"
-        if user_role == "EMPLOYEE":
+        # Validate user permissions — any manager/supervisor/admin role or having
+        # subordinates grants creation rights (role order from HRIS is not guaranteed)
+        user_roles = user.roles or []
+        is_privileged = (
+            "ROLE_ADMIN" in user_roles
+            or "MANAGER" in user_roles
+            or "SUPERVISOR" in user_roles
+            or user.has_subordinates
+        )
+        if not is_privileged:
             raise HTTPException(status_code=403, detail="Employees cannot create KPI indicators")
         
         # Validate division access
@@ -1813,12 +1825,12 @@ async def sync_year(year: int, background_tasks: BackgroundTasks, db: Session = 
 
 @app.post("/api/v1/sync/data")
 async def sync_data_only(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
     supervisor_id: str = None,
     year: int = None,
     hris_username: str = None,
-    hris_password: str = None,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
+    hris_password: str = None
 ):
     """Sync data from Jira/GitLab into local DB only (no KPI calculation).
     Supports optional HRIS credentials override for testing.
@@ -1920,13 +1932,21 @@ async def calculate_kpi_only(year: int, background_tasks: BackgroundTasks, db: S
     job_id = create_sync_job(db, None, "KPI_CALC_ONLY")
 
     def run_calc(jid):
+        import threading
         from scheduler import calculate_kpi_only_job
         from database import SessionLocal
         bg_db = SessionLocal()
+        # scheduler.py runs per-user work in a ThreadPoolExecutor and calls
+        # progress_cb concurrently from many threads. bg_db is a single
+        # SQLAlchemy session — it is NOT thread-safe, so every write to it must
+        # be serialised or two threads hit each other with commit()/rollback()
+        # at the same time (ISCE "Method rollback() can't be called here").
+        _bg_lock = threading.Lock()
         try:
             update_job_progress(bg_db, jid, 10, "RUNNING")
             def _progress_cb(pct):
-                update_job_progress(bg_db, jid, int(pct), "RUNNING")
+                with _bg_lock:
+                    update_job_progress(bg_db, jid, int(pct), "RUNNING")
             result = calculate_kpi_only_job(year, job_id=jid, progress_cb=_progress_cb, force=force)
             try:
                 _company_maxima_cache.clear()
@@ -1938,9 +1958,11 @@ async def calculate_kpi_only(year: int, background_tasks: BackgroundTasks, db: S
                 # do not resurrect it as COMPLETED.
                 return
             if status == "error":
-                _safe_mark_job_failed(bg_db, jid, (result or {}).get("message", "Kalkulasi KPI gagal"))
+                with _bg_lock:
+                    _safe_mark_job_failed(bg_db, jid, (result or {}).get("message", "Kalkulasi KPI gagal"))
                 return
-            mark_job_completed(bg_db, jid, result or {"message": "KPI calculation completed"})
+            with _bg_lock:
+                mark_job_completed(bg_db, jid, result or {"message": "KPI calculation completed"})
         except Exception as e:
             print(f"Error in background KPI calculation: {str(e)}")
             # The session may be left with an invalid transaction after a DB
@@ -1948,13 +1970,16 @@ async def calculate_kpi_only(year: int, background_tasks: BackgroundTasks, db: S
             # marking itself raises PendingRollbackError and the job stays
             # RUNNING forever (frontend polls a 200 OK that never changes).
             try:
-                bg_db.rollback()
+                with _bg_lock:
+                    bg_db.rollback()
             except Exception:
                 pass
-            _safe_mark_job_failed(bg_db, jid, str(e))
+            with _bg_lock:
+                _safe_mark_job_failed(bg_db, jid, str(e))
         finally:
             try:
-                bg_db.rollback()
+                with _bg_lock:
+                    bg_db.rollback()
             except Exception:
                 pass
             bg_db.close()
@@ -2153,10 +2178,46 @@ def get_yearly_performance(year: int, user_id: str, background_tasks: Background
 
 
 def _run_team_yearly_kpi_job(db: Session, request: 'TimeRangeKPIRequest', user_id: str, job_key: str):
+    """
+    Compute team KPI per-user and update the cached result progressively so the
+    frontend can render each row as soon as its calculation finishes (seamless,
+    no full-page loading while the whole team is being processed).
+    """
     import traceback
     try:
-        kpi_data = get_time_range_kpi(request=request, user_id=user_id, db=db)
-        TEAM_YEARLY_JOBS[job_key] = {"status": "success", "data": kpi_data.get("users", []), "timestamp": datetime.now().isoformat()}
+        total = len(request.user_ids)
+        partial = []
+        # Maxima is cached (30-min TTL), so per-user calls are cheap after the first.
+        for i, uid in enumerate(request.user_ids):
+            try:
+                single_req = TimeRangeKPIRequest(
+                    from_date=request.from_date,
+                    to_date=request.to_date,
+                    user_ids=[uid]
+                )
+                r = get_time_range_kpi(request=single_req, user_id=user_id, db=db)
+                users = r.get("users", [])
+                if users:
+                    partial.append(users[0])
+            except Exception as e:
+                logger.error(f"Error computing team KPI for user {uid}: {e}")
+
+            # Publish whatever rows are done so far — frontend polls this live.
+            TEAM_YEARLY_JOBS[job_key] = {
+                "status": "processing",
+                "data": partial,
+                "total": total,
+                "done": i + 1,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+        TEAM_YEARLY_JOBS[job_key] = {
+            "status": "success",
+            "data": partial,
+            "total": total,
+            "done": total,
+            "timestamp": datetime.now().isoformat(),
+        }
     except Exception as e:
         logger.error(f"Error in team yearly background job: {e}")
         logger.error(traceback.format_exc())
@@ -2224,7 +2285,13 @@ def get_team_yearly_performance(
         else:
             if job["status"] == "processing":
                 response.status_code = 202
-                return {"status": "processing", "message": "Sedang menghitung data KPI tim..."}
+                return {
+                    "status": "processing",
+                    "message": "Sedang menghitung data KPI tim...",
+                    "partial_data": job.get("data", []),
+                    "progress": job.get("done", 0),
+                    "total": job.get("total", 0),
+                }
             elif job["status"] == "success":
                 data = job["data"]
                 return {"status": "success", "data": data}
