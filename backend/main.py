@@ -2255,23 +2255,7 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
                 # Can only query own data unless supervisor, admin, or manager
                 target_user_ids = [user_id]
                 
-        # === FAST FAIL CHECK ===
-        # If there are NO attendance records AND no activities in this year globally for these users,
-        # skip calculation to prevent long loading times when year is empty.
-        # This will just return empty stats.
-        fast_check_att = db.query(models.AttendanceRecord).filter(
-            models.AttendanceRecord.date >= from_date.date().isoformat(),
-            models.AttendanceRecord.date <= to_date.date().isoformat()
-        ).first()
-        fast_check_act = db.query(models.Activity).filter(
-            models.Activity.activity_date >= from_date,
-            models.Activity.activity_date <= to_date
-        ).first()
-        
-        if not fast_check_att and not fast_check_act:
-            logger.info("Fast-fail triggered: No data found for the requested period. Returning empty KPIs.")
-            return {"status": "success", "period": {"start": from_date.isoformat(), "end": to_date.isoformat(), "day_count": 0}, "users": []}
-        
+        # Fast-fail check removed so that users with 0 data still appear in the dashboard/subordinates list.
         # === PASS 1: Calculate 5-Pillar Team Maxima per requested period ===
         maxima = _get_company_maxima(db, from_date, to_date)
         max_raw_sp = maxima["max_raw_sp"]
