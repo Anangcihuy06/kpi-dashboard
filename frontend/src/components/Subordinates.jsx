@@ -62,6 +62,11 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
         { method: "POST" }
       );
       const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.detail || "Gagal sinkronisasi KPI & Attendance");
+        setAttendanceSyncing(false);
+        return;
+      }
       toast.info("[Attendance Sync] Memulai sinkronisasi KPI & Attendance...");
       
       if (data.job_id) {
@@ -73,10 +78,10 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
               const statusData = await statusRes.json();
               if (statusData.status === "COMPLETED" || statusData.status === "FAILED") {
                 clearInterval(poll);
-                await fetchTeamScores(false); // Refresh after completion
+                await fetchTeamScores(true); // Refresh after completion (force recalc)
                 setAttendanceSyncing(false);
                 if (statusData.status === "COMPLETED") {
-                  toast.success("Sinkronisasi KPI & Attendance berhasil!");
+                  toast.success("Sinkronisasi KPI & Attendance berhasil! Skor KPI diperbarui.");
                 } else {
                   toast.error("Sinkronisasi KPI & Attendance gagal.");
                 }
@@ -89,9 +94,9 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
       } else {
         // Fallback
         setTimeout(async () => {
-          await fetchTeamScores(false);
+          await fetchTeamScores(true);
           setAttendanceSyncing(false);
-          toast.success("Sinkronisasi KPI & Attendance selesai!");
+          toast.success("Sinkronisasi KPI & Attendance selesai! Skor KPI diperbarui.");
         }, 3000);
       }
     } catch (err) {
@@ -118,9 +123,10 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
         const progress = data.progress || 0;
         const total = data.total || 0;
         setCalcProgress({ progress, total });
-        // Poll again without blocking the UI
+        // Poll again without blocking the UI — drop the force flag on retries so
+        // the in-progress job is not cancelled & restarted every 3s.
         setTimeout(async () => {
-          await fetchTeamScores(force);
+          await fetchTeamScores(false);
         }, 3000);
         return; // Don't toggle loading — keep showing whatever we have
       }

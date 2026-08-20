@@ -416,7 +416,13 @@ export default function Configurator() {
       const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/calculate/${selectedYear}`, {
         method: "POST"
       });
-      if (!response.ok) throw new Error("Gagal menjalankan kalkulasi");
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        toast.error(errData.detail || "Gagal menjalankan kalkulasi");
+        setCalcLoading(false);
+        setCalcProgress(0);
+        return;
+      }
       const data = await response.json();
 
       if (data.job_id) {

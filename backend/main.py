@@ -790,6 +790,22 @@ def verify_local_session(user_id: str, db: Session = Depends(get_db)):
         }
     }
 
+def _has_kpi_indicator_data(db) -> bool:
+    """
+    True when at least one active KPI rule with metric definitions exists.
+    Without indicators the matrix configurator has nothing to score, so both
+    'Hitung KPI' and 'Sync Attendance' refuse to run and tell the user to add
+    indicators first.
+    """
+    rule = db.query(models.KPIRule.id).filter(models.KPIRule.is_active == True).first()
+    if not rule:
+        return False
+    metric = db.query(models.KPIRuleMetric.id).filter(
+        models.KPIRuleMetric.kpi_rule_id == rule[0]
+    ).first()
+    return metric is not None
+
+
 @app.post("/api/v1/attendance/sync-year")
 def sync_attendance_year(
     supervisor_id: str,
@@ -802,6 +818,12 @@ def sync_attendance_year(
     Uses the supervisor's stored HRIS token to fetch attendance data for their subordinates.
     Results cached in SQLite.
     """
+    if not _has_kpi_indicator_data(db):
+        raise HTTPException(
+            status_code=400,
+            detail="Belum ada indikator KPI yang dikonfigurasi. Tambahkan indikator di Configurator terlebih dahulu, lalu coba lagi."
+        )
+
     from sync_service import sync_attendance_for_year
     from sync_engine import create_sync_job, update_job_progress, mark_job_completed, mark_job_failed
     
@@ -1929,6 +1951,13 @@ async def calculate_kpi_only(year: int, background_tasks: BackgroundTasks, db: S
     from sync_engine import create_sync_job, update_job_progress, mark_job_completed, mark_job_failed, mark_stale_jobs_failed, cancel_running_jobs
     mark_stale_jobs_failed(db, "KPI_CALC_ONLY")
     cancel_running_jobs(db, "KPI_CALC_ONLY")
+
+    if not _has_kpi_indicator_data(db):
+        raise HTTPException(
+            status_code=400,
+            detail="Belum ada indikator KPI yang dikonfigurasi. Tambahkan indikator di Configurator terlebih dahulu, lalu coba lagi."
+        )
+
     job_id = create_sync_job(db, None, "KPI_CALC_ONLY")
 
     def run_calc(jid):
