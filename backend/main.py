@@ -2014,7 +2014,7 @@ def get_yearly_performance(year: int, user_id: str, background_tasks: Background
     return {"status": "success", "data": None, "message": "No data found for the year."}
 
 
-def _run_team_yearly_kpi_job(db: Session, request: TimeRangeKPIRequest, user_id: str, job_key: str):
+def _run_team_yearly_kpi_job(db: Session, request: 'TimeRangeKPIRequest', user_id: str, job_key: str):
     import traceback
     try:
         kpi_data = get_time_range_kpi(request=request, user_id=user_id, db=db)
