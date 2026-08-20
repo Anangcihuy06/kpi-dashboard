@@ -1804,11 +1804,29 @@ async def sync_year(year: int, background_tasks: BackgroundTasks, db: Session = 
     return {"status": "success", "message": f"Sinkronisasi tahun {year} berjalan di background", "job_id": job_id}
 
 @app.post("/api/v1/sync/data")
-async def sync_data_only(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    """Sync data from Jira/GitLab into local DB only (no KPI calculation)."""
+async def sync_data_only(
+    supervisor_id: str = None,
+    year: int = None,
+    hris_username: str = None,
+    hris_password: str = None,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """Sync data from Jira/GitLab into local DB only (no KPI calculation).
+    Supports optional HRIS credentials override for testing.
+    """
     from sync_engine import create_sync_job, update_job_progress, mark_job_completed, mark_job_failed, mark_stale_jobs_failed
+    import os
+    
     mark_stale_jobs_failed(db, "DATA_SYNC_ONLY")
     job_id = create_sync_job(db, None, "DATA_SYNC_ONLY")
+    
+    # Override HRIS credentials if provided
+    old_username = os.getenv("HRIS_SYSTEM_USERNAME")
+    old_password = os.getenv("HRIS_SYSTEM_PASSWORD")
+    if hris_username and hris_password:
+        os.environ["HRIS_SYSTEM_USERNAME"] = hris_username
+        os.environ["HRIS_SYSTEM_PASSWORD"] = hris_password
 
     def run_sync(jid):
         from scheduler import sync_data_only_job
@@ -1816,6 +1834,19 @@ async def sync_data_only(background_tasks: BackgroundTasks, db: Session = Depend
         bg_db = SessionLocal()
         try:
             update_job_progress(bg_db, jid, 10, "RUNNING")
+            
+            # If supervisor_id and year provided, do attendance sync first
+            if supervisor_id and year:
+                from sync_service import sync_attendance_for_year
+                supervisor = bg_db.query(models.User).filter(models.User.id == supervisor_id).first()
+                if supervisor:
+                    subordinates = bg_db.query(models.User).filter(models.User.supervisor_id == supervisor_id).all()
+                    if subordinates:
+                        update_job_progress(bg_db, jid, 20, "RUNNING")
+                        sync_attendance_for_year(bg_db, subordinates, year)
+                        update_job_progress(bg_db, jid, 80, "RUNNING")
+            
+            # Then do regular sync
             result = sync_data_only_job()
             try:
                 _company_maxima_cache.clear()
@@ -1835,6 +1866,13 @@ async def sync_data_only(background_tasks: BackgroundTasks, db: Session = Depend
             except Exception:
                 pass
             bg_db.close()
+            
+            # Restore original credentials
+            if hris_username and hris_password:
+                if old_username is not None:
+                    os.environ["HRIS_SYSTEM_USERNAME"] = old_username
+                if old_password is not None:
+                    os.environ["HRIS_SYSTEM_PASSWORD"] = old_password
 
     background_tasks.add_task(run_sync, job_id)
     return {"status": "success", "message": "Sync data dari Jira/GitLab berjalan di background", "job_id": job_id}
