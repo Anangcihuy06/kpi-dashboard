@@ -108,7 +108,7 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
       
       if (response.status === 202) {
         // Background calculation in progress, poll again after 3 seconds
-        setTimeout(() => fetchTeamScores(force), 3000);
+        setTimeout(() => fetchTeamScores(false), 3000);
         return; // Keep loading true
       }
       
