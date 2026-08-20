@@ -1671,6 +1671,50 @@ class ManualAttendanceInput(BaseModel):
     clock_out: str = None
     status: str = "PRESENT"  # PRESENT, ABSENT, LATE, LEAVE
 
+@app.get("/api/v1/attendance/records")
+def get_attendance_records(user_id: str = None, supervisor_id: str = None, year: int = None, db: Session = Depends(get_db)):
+    """
+    Get raw attendance records from database.
+    Can filter by user_id, supervisor_id (for all subordinates), or year.
+    """
+    query = db.query(models.AttendanceRecord)
+    
+    if user_id:
+        query = query.filter(models.AttendanceRecord.user_id == user_id)
+    elif supervisor_id:
+        # Get all subordinates of this supervisor
+        subordinates = get_recursive_subordinates(db, supervisor_id)
+        subordinate_ids = [s.id for s in subordinates]
+        query = query.filter(models.AttendanceRecord.user_id.in_(subordinate_ids))
+    
+    if year:
+        start_date = f"{year}-01-01"
+        end_date = f"{year}-12-31"
+        query = query.filter(models.AttendanceRecord.date >= start_date, models.AttendanceRecord.date <= end_date)
+    
+    records = query.order_by(models.AttendanceRecord.date).all()
+    
+    result = []
+    for record in records:
+        user = db.query(models.User).filter(models.User.id == record.user_id).first()
+        result.append({
+            "user_id": record.user_id,
+            "user_name": user.full_name if user else "Unknown",
+            "user_nik": user.nik if user else "Unknown",
+            "date": record.date,
+            "status": record.status,
+            "is_late": record.is_late,
+            "clock_in": record.clock_in,
+            "clock_out": record.clock_out,
+            "late_minutes": record.late_minutes,
+            "source": record.source
+        })
+    
+    return {
+        "total_records": len(result),
+        "records": result
+    }
+
 @app.post("/api/v1/attendance/manual")
 def add_manual_attendance(payload: ManualAttendanceInput, db: Session = Depends(get_db)):
     """Add or update a manual attendance record."""
