@@ -86,7 +86,7 @@ def fetch_timesheet_schedules(max_retries=3, retry_delay=2) -> dict:
         try:
             res = requests.get(
                 "https://hris-api.atibusinessgroup.com/api/app/timesheets?page=0&size=100",
-                headers=headers, timeout=8
+                headers=headers, timeout=30
             )
             if res.status_code == 200:
                 data = res.json()
@@ -146,7 +146,7 @@ def fetch_all_subordinates_attendance(token: str, year: int) -> dict:
             f"&startDate={start_str}&endDate={end_str}"
         )
         try:
-            res = requests.get(url, headers=headers, timeout=10)
+            res = requests.get(url, headers=headers, timeout=60)
             if res.status_code != 200:
                 logger.warning(f"[Attendance] attendances-new page={page} → HTTP {res.status_code}: {res.text[:200]}")
                 if res.status_code == 401:
@@ -248,10 +248,21 @@ def parse_attendance_summary(records: list, working_days_count: int) -> dict:
 def sync_attendance_for_year(db: Session, users: list, year: int, token_override: str = None) -> dict:
     """
     Sync attendance for all subordinates using /app/users/attendances-new endpoint.
-    Uses ONE paginated call to get ALL subordinates' data (manager's token required).
+    Uses ONE paginated call to get ALL subordinates' data (supervisor's token required).
     Groups by NIK and maps to user IDs. Caches to KPIEmployeeDaily in SQLite.
     """
-    token = token_override if token_override else get_system_token()
+    # Use provided token or get from supervisor token store (use first user's supervisor)
+    token = token_override
+    if not token and users:
+        first_user = users[0]
+        supervisor_id = first_user.supervisor_id
+        if supervisor_id:
+            from main import _supervisor_token_store
+            stored_data = _supervisor_token_store.get(supervisor_id)
+            if stored_data and stored_data.get("token"):
+                token = stored_data["token"]
+                logger.info(f"[Attendance Year Sync] Using stored HRIS token for supervisor {supervisor_id}")
+    
     if not token:
         logger.warning("[Attendance Year Sync] No token available, skipping")
         return {}

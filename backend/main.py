@@ -731,7 +731,8 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
             "group_id": user.group_id,
             "group_name": user.group_name,
             "supervisor_id": user.supervisor_id
-        }
+        },
+        "hris_token": user_data.get("id_token")  # Include HRIS token in response
     }
 
 class UpdateUserEmailRequest(BaseModel):
@@ -793,12 +794,14 @@ def verify_local_session(user_id: str, db: Session = Depends(get_db)):
 def sync_attendance_year(
     supervisor_id: str,
     year: int,
+    hris_token: str = None,  # Accept HRIS token from request
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """
     Trigger yearly attendance sync for all subordinates of a supervisor.
-    Uses the HRIS admin endpoint per-NIK, paginated. Results cached in SQLite.
+    Uses the supervisor's HRIS token to fetch attendance data for their subordinates.
+    Results cached in SQLite.
     """
     from sync_service import sync_attendance_for_year
     from sync_engine import create_sync_job, update_job_progress, mark_job_completed, mark_job_failed
@@ -813,14 +816,14 @@ def sync_attendance_year(
         
     job_id = create_sync_job(db, supervisor_id, "ATTENDANCE_SYNC_YEAR")
     
-    def _do_sync(j_id, sub_list, y):
+    def _do_sync(j_id, sub_list, y, token_override):
         from database import SessionLocal
         _db = SessionLocal()
         try:
             update_job_progress(_db, j_id, 10, "RUNNING")
             
-            # First sync attendance
-            sync_attendance_for_year(_db, sub_list, y)
+            # First sync attendance using the supervisor's HRIS token
+            sync_attendance_for_year(_db, sub_list, y, token_override=token_override)
             update_job_progress(_db, j_id, 60, "RUNNING")
             
             # Then recalculate KPI for all subordinates
@@ -870,9 +873,14 @@ def sync_attendance_year(
         except Exception as e:
             mark_job_failed(_db, j_id, str(e))
         finally:
+            try:
+                _db.rollback()
+            except Exception:
+                pass
             _db.close()
     
-    background_tasks.add_task(_do_sync, job_id, subordinates, year)
+    background_tasks.add_task(_do_sync, job_id, subordinates, year, hris_token)
+    
     return {
         "status": "syncing",
         "message": f"Sinkronisasi attendance {year} dimulai untuk {len(subordinates)} karyawan",

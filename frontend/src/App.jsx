@@ -99,6 +99,7 @@ export default function App() {
       setToken(data.token);
       localStorage.setItem("kpi_user", JSON.stringify(data.user));
       localStorage.setItem("kpi_token", data.token);
+      localStorage.setItem("hris_token", data.hris_token || ""); // Store HRIS token
       setActiveTab("dashboard");
     } catch (err) {
       clearTimeout(timeoutId);
