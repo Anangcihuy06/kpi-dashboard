@@ -37,7 +37,8 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
 
   useEffect(() => {
     if (supervisorId) {
-      fetchTeamScores();
+      setLoading(true);
+      fetchTeamScores().finally(() => setLoading(false));
     }
   }, [supervisorId, selectedYear]);
 
@@ -60,7 +61,7 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
         { method: "POST" }
       );
       const data = await res.json();
-      toast.info("[Attendance Sync] Memulai sinkronisasi...");
+      toast.info("[Attendance Sync] Memulai sinkronisasi KPI & Attendance...");
       
       if (data.job_id) {
         // Poll job status every 3s
@@ -71,12 +72,12 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
               const statusData = await statusRes.json();
               if (statusData.status === "COMPLETED" || statusData.status === "FAILED") {
                 clearInterval(poll);
-                await fetchTeamScores(true);
+                await fetchTeamScores(false); // Refresh after completion
                 setAttendanceSyncing(false);
                 if (statusData.status === "COMPLETED") {
-                  toast.success("Sinkronisasi kehadiran berhasil!");
+                  toast.success("Sinkronisasi KPI & Attendance berhasil!");
                 } else {
-                  toast.error("Sinkronisasi kehadiran gagal.");
+                  toast.error("Sinkronisasi KPI & Attendance gagal.");
                 }
               }
             }
@@ -87,29 +88,48 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
       } else {
         // Fallback
         setTimeout(async () => {
-          await fetchTeamScores(true);
+          await fetchTeamScores(false);
           setAttendanceSyncing(false);
-          toast.success("Sinkronisasi kehadiran selesai!");
+          toast.success("Sinkronisasi KPI & Attendance selesai!");
         }, 3000);
       }
     } catch (err) {
-      toast.error("Gagal sinkronisasi kehadiran: " + err.message);
+      toast.error("Gagal sinkronisasi KPI & Attendance: " + err.message);
       setAttendanceSyncing(false);
     }
   };
 
   const fetchTeamScores = async (force = false) => {
-    setLoading(true);
     try {
-      const url = `${import.meta.env.VITE_API_URL}/api/v1/kpi/team-yearly?user_id=${supervisorId}&year=${selectedYear}&direct_only=true${force ? '&force_refresh=true' : ''}`;
+      const url = `${import.meta.env.VITE_API_URL}/api/v1/kpi/team-yearly?user_id=${supervisorId}&year=${selectedYear}&direct_only=true`;
       const response = await fetch(url, {
         cache: 'no-store'
       });
       
       if (response.status === 202) {
-        // Background calculation in progress, poll again after 3 seconds
-        setTimeout(() => fetchTeamScores(false), 3000);
-        return; // Keep loading true
+        // Background calculation in progress, keep data as-is and show status
+        const data = await response.json();
+        if (data.job_id) {
+          // Poll job status every 5s without blocking
+          const poll = setInterval(async () => {
+            try {
+              const statusRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/jobs/${data.job_id}`);
+              if (statusRes.ok) {
+                const statusData = await statusRes.json();
+                if (statusData.status === "COMPLETED") {
+                  clearInterval(poll);
+                  await fetchTeamScores(false); // Fetch fresh data after completion
+                } else if (statusData.status === "FAILED") {
+                  clearInterval(poll);
+                  console.error("KPI calculation failed");
+                }
+              }
+            } catch (e) {
+              console.error("Error polling job status:", e);
+            }
+          }, 5000);
+        }
+        return; // Don't show loading, data will refresh when job completes
       }
       
       if (!response.ok) throw new Error("Gagal mengambil report tim");
@@ -122,10 +142,9 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
       }
     } catch (err) {
       console.error(err);
-      setSubordinates([]);
-    } finally {
-      setLoading(false);
+      // Keep existing data on error, don't clear it
     }
+    return Promise.resolve();
   };
 
   const toggleRow = (userId) => {
@@ -423,7 +442,7 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
                     </div>
                   </td>
                 </tr>
-              ) : filteredSubs.length === 0 ? (
+              ) : filteredSubs.length === 0 && !loading ? (
                 <tr>
                   <td colSpan="9">
                     <div className="empty-state">

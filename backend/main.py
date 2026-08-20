@@ -818,7 +818,54 @@ def sync_attendance_year(
         _db = SessionLocal()
         try:
             update_job_progress(_db, j_id, 10, "RUNNING")
+            
+            # First sync attendance
             sync_attendance_for_year(_db, sub_list, y)
+            update_job_progress(_db, j_id, 60, "RUNNING")
+            
+            # Then recalculate KPI for all subordinates
+            from datetime import datetime
+            from_date = datetime(y, 1, 1)
+            to_date = datetime(y, 12, 31, 23, 59, 59)
+            
+            for idx, user in enumerate(sub_list):
+                try:
+                    from comprehensive_sync import calculate_daily_aggregated_kpi
+                    from sqlalchemy import and_
+                    
+                    # Get all dates that have attendance records for this user
+                    att_dates = _db.query(models.AttendanceRecord.date).filter(
+                        and_(
+                            models.AttendanceRecord.user_id == user.id,
+                            models.AttendanceRecord.date >= from_date.date().isoformat(),
+                            models.AttendanceRecord.date <= to_date.date().isoformat()
+                        )
+                    ).distinct().all()
+                    
+                    # Recalculate KPI for each date with attendance
+                    for r in att_dates:
+                        if r[0]:
+                            try:
+                                dt_obj = datetime.strptime(r[0][:10], "%Y-%m-%d") if isinstance(r[0], str) else r[0]
+                                dt_midnight = datetime.combine(dt_obj.date() if hasattr(dt_obj, 'date') else dt_obj, datetime.min.time())
+                                calculate_daily_aggregated_kpi(_db, user, dt_midnight)
+                            except Exception:
+                                pass
+                except Exception as e:
+                    logger.error(f"Error recalculating KPI for {user.full_name}: {e}")
+                
+                # Update progress
+                prog = 60 + int(30 * (idx + 1) / len(sub_list))
+                update_job_progress(_db, j_id, prog, "RUNNING")
+            
+            # Invalidate cache after sync
+            try:
+                from fastapi_cache import FastAPICache, _company_maxima_cache
+                FastAPICache.clear()
+                _company_maxima_cache.clear()
+            except Exception:
+                pass
+                
             mark_job_completed(_db, j_id, {"count": len(sub_list), "year": y})
         except Exception as e:
             mark_job_failed(_db, j_id, str(e))

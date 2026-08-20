@@ -37,9 +37,11 @@ def get_system_token(max_retries=3, retry_delay=1) -> str:
                 "password": password
             }, timeout=8)
             if res.status_code == 200:
-                return res.json().get("id_token", "")
+                token = res.json().get("id_token", "")
+                logger.info(f"HRIS system login successful on attempt {attempt + 1}")
+                return token
             else:
-                logger.warning(f"System login returned status {res.status_code} (attempt {attempt + 1}/{max_retries})")
+                logger.warning(f"System login returned status {res.status_code} (attempt {attempt + 1}/{max_retries}): {res.text[:200]}")
         except Exception as e:
             logger.warning(f"Failed to fetch system login token (attempt {attempt + 1}/{max_retries}): {str(e)}")
             if attempt < max_retries - 1:
@@ -147,6 +149,9 @@ def fetch_all_subordinates_attendance(token: str, year: int) -> dict:
             res = requests.get(url, headers=headers, timeout=10)
             if res.status_code != 200:
                 logger.warning(f"[Attendance] attendances-new page={page} → HTTP {res.status_code}: {res.text[:200]}")
+                if res.status_code == 401:
+                    logger.error("[Attendance] HRIS token invalid or expired")
+                    return {}
                 break
             
             data = res.json()
@@ -162,6 +167,7 @@ def fetch_all_subordinates_attendance(token: str, year: int) -> dict:
                 break
             
             if not records:
+                logger.info(f"[Attendance] No records found on page {page}")
                 break
             
             # Group by NIK, filter to target year
@@ -186,7 +192,7 @@ def fetch_all_subordinates_attendance(token: str, year: int) -> dict:
                 records_by_nik[nik].append(rec)
             
             total_fetched += len(records)
-            logger.info(f"[Attendance] Page {page}: fetched {len(records)} records, total={total_fetched}")
+            logger.info(f"[Attendance] Page {page}: fetched {len(records)} records, total={total_fetched}, unique NIKs={len(records_by_nik)}")
             
             if is_last:
                 break
@@ -221,7 +227,13 @@ def parse_attendance_summary(records: list, working_days_count: int) -> dict:
     
     absent_count = max(0, working_days_count - present_count)
     late_pct = round((late_count / present_count * 100) if present_count > 0 else 0, 2)
-    normal_pct = round(100 - late_pct, 2)
+    normal_pct = round(100 - late_pct, 2) if present_count > 0 else 0.0
+    
+    # Ensure present_count is at least working_days_count to avoid division by zero
+    if present_count == 0:
+        present_count = 0  # Keep 0 if truly no attendance
+        late_pct = 0.0
+        normal_pct = 0.0
     
     return {
         "attendance_days": float(present_count),
@@ -249,9 +261,14 @@ def sync_attendance_for_year(db: Session, users: list, year: int, token_override
     
     # Build NIK → user mapping for fast lookup
     nik_to_user = {u.nik: u for u in users if u.nik}
+    logger.info(f"[Attendance Year Sync] NIK mapping: {len(nik_to_user)} users with NIK out of {len(users)} total users")
     
     logger.info(f"[Attendance Year Sync] Fetching year={year} for {len(users)} users via attendances-new...")
     records_by_nik = fetch_all_subordinates_attendance(token, year)
+    
+    if not records_by_nik:
+        logger.warning("[Attendance Year Sync] No attendance records fetched from HRIS API")
+        return {}
     
     results = {}
     cache_date = datetime(year, 1, 1)
