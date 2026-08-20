@@ -395,7 +395,7 @@ def discover_all_gitlab_projects(db: Session, settings: models.IntegrationSettin
 
 def sync_gitlab_commits(db: Session, user: models.User, settings: models.IntegrationSetting, 
                        start_date: datetime, end_date: datetime) -> int:
-    """Sync GitLab commits for a user across all discovered projects in the entire GitLab server"""
+    """Sync GitLab commits for a user efficiently by querying the Events API first to find active projects"""
     
     gitlab_identity = db.query(models.EmployeeIdentity).filter(
         and_(
@@ -404,100 +404,155 @@ def sync_gitlab_commits(db: Session, user: models.User, settings: models.Integra
         )
     ).first()
     
-    if not gitlab_identity:
-        logger.warning(f"No GitLab identity found for {user.full_name}, skipping commits")
+    if not gitlab_identity or not gitlab_identity.external_user_id:
+        logger.warning(f"No GitLab identity (or external_user_id) found for {user.full_name}, skipping commits")
         return 0
     
     gitlab_token = decrypt_val(settings.gitlab_token_encrypted)
     gitlab_url = settings.gitlab_url.rstrip("/")
     headers = {"PRIVATE-TOKEN": gitlab_token}
     
-    # 1. Run Smart Discovery to make sure all projects across all groups are in DB
-    discover_all_gitlab_projects(db, settings)
-    
-    # 2. Get all active GitLab projects from DB
-    all_projects = db.query(models.Project).filter(
-        and_(
-            models.Project.source == "gitlab",
-            models.Project.is_active == True
-        )
-    ).all()
-    
     commits_synced = 0
     
-    # Formulate author search queries
-    author_queries = set()
-    if user.full_name:
-        author_queries.add(user.full_name)
-        first_name = user.full_name.split()[0]
-        if len(first_name) > 2:
-            author_queries.add(first_name)
-    
-    if gitlab_identity.full_name:
-        author_queries.add(gitlab_identity.full_name)
-        git_first = gitlab_identity.full_name.split()[0]
-        if len(git_first) > 2:
-            author_queries.add(git_first)
-            
-    if gitlab_identity.username:
-        author_queries.add(gitlab_identity.username)
-        
-    if gitlab_identity.email:
-        author_queries.add(gitlab_identity.email)
-        
-    if user.email:
-        author_queries.add(user.email)
-    
     try:
-        start_date_str = start_date.strftime("%Y-%m-%dT00:00:00Z")
-        end_date_str = end_date.strftime("%Y-%m-%dT23:59:59Z")
+        start_date_str = start_date.strftime("%Y-%m-%d")
+        end_date_str = (end_date + timedelta(days=1)).strftime("%Y-%m-%d")
         
-        tasks = []
-        for project_obj in all_projects:
-            for author_query in author_queries:
-                tasks.append((project_obj.external_project_id, project_obj.id, author_query))
-                
-        project_commits_by_db_id = {}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-            future_to_db_id = {
-                executor.submit(fetch_project_commits, pid, author, gitlab_url, headers, start_date_str, end_date_str): pdbid
-                for pid, pdbid, author in tasks
+        # 1. Find projects the user actively pushed to in the date range using Events API
+        active_project_ids = set()
+        user_ext_id = gitlab_identity.external_user_id
+        events_url = f"{gitlab_url}/api/v4/users/{user_ext_id}/events"
+        
+        page = 1
+        while True:
+            params = {
+                "action": "pushed",
+                "after": start_date_str,
+                "before": end_date_str,
+                "per_page": 100,
+                "page": page
             }
-            for future in concurrent.futures.as_completed(future_to_db_id):
-                pdbid = future_to_db_id[future]
-                if pdbid not in project_commits_by_db_id:
-                    project_commits_by_db_id[pdbid] = []
-                batch = future.result()
-                if batch:
-                    project_commits_by_db_id[pdbid].extend(batch)
-        
-        for project_obj in all_projects:
-            project_id = project_obj.external_project_id
-            project_db_id = project_obj.id
-            
-            project_commits = project_commits_by_db_id.get(project_db_id, [])
-            
-            # Deduplicate commits by id
-            seen_commit_ids = set()
-            unique_commits = []
-            for c in project_commits:
-                if c.get("id") not in seen_commit_ids:
-                    seen_commit_ids.add(c.get("id"))
-                    unique_commits.append(c)
-            
-            for commit in unique_commits:
-                commit_id = commit.get("id")
+            res = requests.get(events_url, headers=headers, params=params, timeout=10)
+            if res.status_code != 200:
+                break
+            events = res.json()
+            if not events:
+                break
+            for ev in events:
+                pid = ev.get("project_id")
+                if pid:
+                    active_project_ids.add(str(pid))
+            if len(events) < 100:
+                break
+            page += 1
+            if page > 50: # safety cap
+                break
                 
-                # Check if raw commit already exists
+        if not active_project_ids:
+            logger.info(f"No active push events found for {user.full_name} in the given period.")
+            return 0
+            
+        logger.info(f"Found {len(active_project_ids)} active projects for {user.full_name} via Events API.")
+        
+        # Ensure projects are in DB
+        project_db_ids = {}
+        for ext_pid in active_project_ids:
+            proj = db.query(models.Project).filter(
+                and_(models.Project.source == "gitlab", models.Project.external_project_id == str(ext_pid))
+            ).first()
+            if not proj:
+                p_res = requests.get(f"{gitlab_url}/api/v4/projects/{ext_pid}", headers=headers, timeout=10)
+                if p_res.status_code == 200:
+                    p_data = p_res.json()
+                    proj = models.Project(
+                        source="gitlab",
+                        external_project_id=str(ext_pid),
+                        project_name=p_data.get("path_with_namespace") or p_data.get("name"),
+                        project_url=p_data.get("web_url"),
+                        is_active=True
+                    )
+                    db.add(proj)
+                    db.commit()
+                    db.refresh(proj)
+            if proj:
+                project_db_ids[str(ext_pid)] = proj.id
+        
+        start_dt_str = start_date.strftime("%Y-%m-%dT00:00:00Z")
+        end_dt_str = end_date.strftime("%Y-%m-%dT23:59:59Z")
+        
+        # Author needles for client-side filtering 
+        name_needles = set()
+        emails = set()
+        if user.full_name:
+            name_needles.add(user.full_name.lower())
+            first_name = user.full_name.split()[0]
+            if len(first_name) > 2:
+                name_needles.add(first_name.lower())
+        
+        if gitlab_identity.full_name:
+            name_needles.add(gitlab_identity.full_name.lower())
+            git_first = gitlab_identity.full_name.split()[0]
+            if len(git_first) > 2:
+                name_needles.add(git_first.lower())
+                
+        if gitlab_identity.username:
+            name_needles.add(gitlab_identity.username.lower())
+            
+        if gitlab_identity.email:
+            emails.add(gitlab_identity.email.lower())
+            
+        if user.email:
+            emails.add(user.email.lower())
+        
+        commits_to_insert = []
+        activities_to_insert = []
+        seen_commit_ids = set()
+        
+        # Note: the old code passed author query to fetch_project_commits, here we adapt it
+        def _commit_matches_author(commit: dict, name_needles, emails) -> bool:
+            author_name = (commit.get("author_name") or "").lower()
+            author_email = (commit.get("author_email") or "").lower()
+            if not author_name and not author_email:
+                return False
+            if author_email:
+                if author_email in emails:
+                    return True
+                for needle in name_needles:
+                    if needle and needle in author_email:
+                        return True
+            for needle in name_needles:
+                if needle and needle in author_name:
+                    return True
+            return False
+
+        for ext_pid, project_db_id in project_db_ids.items():
+            # For exact author match in fetch_project_commits we just use None here and filter locally
+            # since active projects are limited.
+            project_commits = fetch_project_commits(ext_pid, None, gitlab_url, headers, start_dt_str, end_dt_str)
+            for commit in project_commits:
+                if not _commit_matches_author(commit, name_needles, emails):
+                    continue
+                commit_id = commit.get("id")
+                if not commit_id or commit_id in seen_commit_ids:
+                    continue
+                seen_commit_ids.add(commit_id)
+                
                 existing_commit = db.query(models.RawGitLabCommit).filter(
                     models.RawGitLabCommit.external_commit_id == commit_id
                 ).first()
                 
+                committed_dt = None
                 if not existing_commit:
                     committed_date_raw = commit.get("committed_date")
-                    committed_dt = datetime.fromisoformat(committed_date_raw.replace("Z", "+00:00")) if committed_date_raw else datetime.now()
+                    if committed_date_raw:
+                        try:
+                            committed_dt = datetime.fromisoformat(committed_date_raw.replace("Z", "+00:00"))
+                        except Exception:
+                            committed_dt = datetime.now()
+                    else:
+                        committed_dt = datetime.now()
                     
-                    new_commit = models.RawGitLabCommit(
+                    commits_to_insert.append(models.RawGitLabCommit(
                         external_commit_id=commit_id,
                         project_id=project_db_id,
                         author_email=commit.get("author_email"),
@@ -508,55 +563,50 @@ def sync_gitlab_commits(db: Session, user: models.User, settings: models.Integra
                         message=commit.get("message"),
                         web_url=commit.get("web_url"),
                         raw_data=commit
+                    ))
+                
+                existing_activity = db.query(models.Activity).filter(
+                    and_(
+                        models.Activity.user_id == user.id,
+                        models.Activity.source == "gitlab",
+                        models.Activity.activity_type == "commit",
+                        models.Activity.reference_id == commit_id
                     )
-                    db.add(new_commit)
-                    try:
-                        db.commit()
-                        commits_synced += 1
-                    except Exception:
-                        db.rollback()
-                    
-                    # Create normalized activity
-                    activity_date = committed_dt.date()
-                    
-                    activity = models.Activity(
+                ).first()
+                
+                if not existing_activity:
+                    if committed_dt is None:
+                        try:
+                            committed_dt = datetime.fromisoformat((commit.get("committed_date") or "").replace("Z", "+00:00"))
+                        except Exception:
+                            committed_dt = datetime.now()
+                    activities_to_insert.append(models.Activity(
                         user_id=user.id,
                         source="gitlab",
                         activity_type="commit",
                         project_id=project_db_id,
                         reference_id=commit_id,
-                        activity_date=activity_date,
+                        activity_date=committed_dt.date(),
                         activity_at=committed_dt,
                         activity_metadata={
                             "message": commit.get("message"),
                             "web_url": commit.get("web_url"),
                             "author_name": commit.get("author_name")
                         }
-                    )
-                    
-                    existing_activity = db.query(models.Activity).filter(
-                        and_(
-                            models.Activity.user_id == user.id,
-                            models.Activity.source == "gitlab",
-                            models.Activity.activity_type == "commit",
-                            models.Activity.reference_id == commit_id
-                        )
-                    ).first()
-                    
-                    if not existing_activity:
-                        db.add(activity)
-                        try:
-                            db.commit()
-                        except Exception:
-                            db.rollback()
-
+                    ))
+        
+        if commits_to_insert:
+            db.add_all(commits_to_insert)
+            commits_synced += len(commits_to_insert)
+        if activities_to_insert:
+            db.add_all(activities_to_insert)
+            
+        db.commit()
         logger.info(f"Smart Discovery: Synced {commits_synced} new commits for {user.full_name}")
         
     except Exception as e:
         logger.error(f"Error syncing GitLab commits for {user.full_name}: {str(e)}")
         db.rollback()
-    
-    return commits_synced
     
     return commits_synced
 
@@ -799,10 +849,6 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                 processed_issues_cache = set()
                 processed_activities_cache = set()
 
-                # Load existing rows for the whole page in one query, then decide
-                # which issues actually need (re)scoring: new rows or changed
-                # summaries are scored; unchanged issues reuse the persisted score
-                # so LLM calls are only paid for new/changed work.
                 page_keys = [i.get("key") for i in issues]
                 existing_by_key = {}
                 if page_keys:
@@ -825,18 +871,22 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                         continue
                     need_score.append(issue)
 
-                # Batch-score only the issues that need it (rules are cheap; LLM
-                # uses bounded concurrency so per-issue network latency isn't serialized).
                 page_scores = {}
                 if need_score:
                     try:
-                        if scorer.llm:
-                            page_scores = score_issues_batch(need_score, scorer, workers=5)
-                        else:
-                            for isc in need_score:
-                                page_scores[isc.get("key")] = scorer.score(isc)
+                        from feature_analyzer import analyze_multi_factor
+                        # Defer LLM scoring to async worker to prevent sync blocking. Use fast local rules initially.
+                        for isc in need_score:
+                            local_res = analyze_multi_factor(isc, config=scorer.config)
+                            local_res["score_type"] = "rules"
+                            if getattr(scorer, "llm", None):
+                                local_res["needs_llm_scoring"] = True
+                            page_scores[isc.get("key")] = local_res
                     except Exception as e:
-                        logger.warning(f"Batch scoring failed for {user.full_name}: {e}")
+                        logger.warning(f"Local rule scoring failed for {user.full_name}: {e}")
+
+                issues_to_insert = []
+                activities_to_insert = []
 
                 for issue in issues:
                     issue_key = issue.get("key")
@@ -849,8 +899,6 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                     except Exception:
                         story_points = 0.0
 
-                    # Resolve the feature score for this issue: reuse persisted detail
-                    # when the summary is unchanged, otherwise use the page result.
                     existing_issue = existing_by_key.get(issue_key)
                     feature_res = page_scores.get(issue_key)
                     if feature_res is None and existing_issue is not None and existing_issue.complexity_detail:
@@ -870,17 +918,16 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                         "score_type": feature_res.get("score_type", "rules"),
                         "model": feature_res.get("model"),
                         "prompt_version": feature_res.get("prompt_version"),
+                        "needs_llm_scoring": feature_res.get("needs_llm_scoring", False)
                     }
                     complexity_score = float(feature_weight)
                 
-                    # Final story points for KPI calculation (max of explicit SP vs feature weight)
                     effective_sp = story_points if story_points > 0 else feature_weight
                 
-                    # Map Jira project to DB Project record
                     proj_info = fields.get("project", {})
                     proj_key = proj_info.get("key", "") if proj_info else ""
                     proj_name = proj_info.get("name", "") if proj_info else ""
-                
+
                     project_db_id = None
                     if proj_key:
                         existing_proj = db.query(models.Project).filter(
@@ -901,7 +948,6 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                             db.commit()
                             project_db_id = new_proj.id
                 
-                    # Store or update raw Jira issue
                     if issue_key in processed_issues_cache:
                         continue
 
@@ -919,7 +965,7 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                             resolved_at = datetime.now()
                 
                     if not existing_issue:
-                        new_issue = models.RawJiraIssue(
+                        issues_to_insert.append(models.RawJiraIssue(
                             issue_key=issue_key,
                             summary=fields.get("summary"),
                             issue_type=fields.get("issuetype", {}).get("name") if fields.get("issuetype") else None,
@@ -930,26 +976,16 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                             complexity_score=complexity_score,
                             complexity_detail=complexity_detail,
                             raw_data=issue
-                        )
-                        db.add(new_issue)
-                        try:
-                            db.commit()
-                            issues_synced += 1
-                            processed_issues_cache.add(issue_key)
-                        except Exception as e:
-                            db.rollback()
+                        ))
+                        issues_synced += 1
+                        processed_issues_cache.add(issue_key)
                     else:
                         processed_issues_cache.add(issue_key)
                         existing_issue.story_points = effective_sp
                         existing_issue.status = fields.get("status", {}).get("name") if fields.get("status") else None
                         existing_issue.complexity_score = complexity_score
                         existing_issue.complexity_detail = complexity_detail
-                        try:
-                            db.commit()
-                        except Exception as e:
-                            db.rollback()
                 
-                    # Create or update activity for issue
                     activity_key = f"{user.id}-jira-issue_completed-{issue_key}"
                     if activity_key in processed_activities_cache:
                         continue
@@ -967,7 +1003,7 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                     status_name = fields.get("status", {}).get("name", "") if fields.get("status") else ""
                 
                     if not existing_activity:
-                        activity = models.Activity(
+                        activities_to_insert.append(models.Activity(
                             user_id=user.id,
                             source="jira",
                             activity_type="issue_completed",
@@ -989,23 +1025,20 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                                 "complexity_score": complexity_score,
                                 "complexity_detail": complexity_detail
                             }
-                        )
-                        db.add(activity)
-                        try:
-                            db.commit()
-                            processed_activities_cache.add(activity_key)
-                        except Exception as e:
-                            db.rollback()
+                        ))
+                        processed_activities_cache.add(activity_key)
                     else:
                         processed_activities_cache.add(activity_key)
                         existing_activity.story_points = effective_sp
                         if project_db_id and not existing_activity.project_id:
                             existing_activity.project_id = project_db_id
-                        try:
-                            db.commit()
-                        except Exception:
-                            db.rollback()
+
+                if issues_to_insert:
+                    db.add_all(issues_to_insert)
+                if activities_to_insert:
+                    db.add_all(activities_to_insert)
                 
+                db.commit()
                 logger.info(f"Synced {issues_synced} new Jira issues ({len(issues)} processed) for {user.full_name}")
                 
                 next_page_token = data.get('nextPageToken')
@@ -1065,6 +1098,9 @@ def sync_jira_worklogs(db: Session, user: models.User, settings: models.Integrat
             issues_data = response.json()
             issues = issues_data.get("issues", [])
             
+            worklogs_to_insert = []
+            activities_to_insert = []
+            
             for issue in issues:
                 issue_key = issue.get("key")
                 worklog = issue.get("fields", {}).get("worklog")
@@ -1086,37 +1122,16 @@ def sync_jira_worklogs(db: Session, user: models.User, settings: models.Integrat
                             ).first()
                             
                             if not existing_worklog:
-                                new_worklog = models.RawJiraWorklog(
+                                worklogs_to_insert.append(models.RawJiraWorklog(
                                     external_worklog_id=worklog_id,
                                     issue_key=issue_key,
                                     account_id=account_id,
                                     started=started,
                                     time_spent_seconds=time_spent,
                                     raw_data=wl
-                                )
-                                db.add(new_worklog)
-                                try:
-                                    db.commit()
-                                    worklogs_synced += 1
-                                except Exception:
-                                    db.rollback()
+                                ))
                             
                             # Create normalized activity
-                            activity = models.Activity(
-                                user_id=user.id,
-                                source="jira",
-                                activity_type="worklog",
-                                reference_id=worklog_id,
-                                activity_date=started.date(),
-                                activity_at=started,
-                                duration_seconds=time_spent,
-                                activity_metadata={
-                                    "issue_key": issue_key,
-                                    "issue_summary": issue.get("fields", {}).get("summary")
-                                }
-                            )
-                            
-                            # Check for existing activity
                             existing_activity = db.query(models.Activity).filter(
                                 and_(
                                     models.Activity.user_id == user.id,
@@ -1127,12 +1142,27 @@ def sync_jira_worklogs(db: Session, user: models.User, settings: models.Integrat
                             ).first()
                             
                             if not existing_activity:
-                                db.add(activity)
-                                try:
-                                    db.commit()
-                                except Exception:
-                                    db.rollback()
-            
+                                activities_to_insert.append(models.Activity(
+                                    user_id=user.id,
+                                    source="jira",
+                                    activity_type="worklog",
+                                    reference_id=worklog_id,
+                                    activity_date=started.date(),
+                                    activity_at=started,
+                                    duration_seconds=time_spent,
+                                    activity_metadata={
+                                        "issue_key": issue_key,
+                                        "issue_summary": issue.get("fields", {}).get("summary")
+                                    }
+                                ))
+                                
+            if worklogs_to_insert:
+                db.add_all(worklogs_to_insert)
+                worklogs_synced += len(worklogs_to_insert)
+            if activities_to_insert:
+                db.add_all(activities_to_insert)
+                
+            db.commit()
             logger.info(f"Synced {worklogs_synced} new worklogs for {user.full_name}")
         else:
             logger.error(f"Failed to fetch worklogs for {user.full_name}: {response.status_code} {response.text}")

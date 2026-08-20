@@ -278,6 +278,14 @@ def sync_data_only_job():
         except Exception as e:
             logger.error(f"Sync Data: sprint sync failed: {e}")
 
+        # 1b. Discover GitLab projects ONCE per job (the per-user commit sync
+        # only re-crawls when the shared 30-min discovery cache is stale).
+        try:
+            from comprehensive_sync import discover_all_gitlab_projects
+            discover_all_gitlab_projects(db, settings)
+        except Exception as e:
+            logger.error(f"Sync Data: GitLab project discovery failed: {e}")
+
         # 2. Sync comprehensive data (GitLab commits/MRs + Jira issues/worklogs) for all active users
         from comprehensive_sync import sync_user_comprehensive
         from datetime import datetime as dt
