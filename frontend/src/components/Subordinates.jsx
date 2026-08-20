@@ -372,7 +372,7 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
             <h4 style={{ fontSize: "20px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {topPerformer ? topPerformer.full_name : "N/A"}
             </h4>
-            <p>Top Performer ({fmt(topPerformer?.final_score || 0, 1)} poin)</p>
+            <p>Top Performer ({fmt(topPerformer?.final_score || 0, 2)} poin)</p>
           </div>
         </div>
       </div>

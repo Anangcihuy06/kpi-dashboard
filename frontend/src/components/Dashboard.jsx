@@ -306,7 +306,7 @@ export default function Dashboard({ userId, isSelf }) {
         <div className="card" style={{ height: "400px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", marginBottom: "20px" }}>
             <h3 style={{ margin: 0 }}>Tren Performa KPI Tahunan</h3>
-            <span className="status-pill live">Rata-rata skor {trendData.length ? fmt(trendData[trendData.length - 1].Score, 1) : "0"} / 100</span>
+            <span className="status-pill live">Rata-rata skor {trendData.length ? fmt(trendData[trendData.length - 1].Score, 2) : "0"} / 100</span>
           </div>
           <div style={{ width: "100%", height: "300px" }}>
             <ResponsiveContainer width="100%" height="100%">
@@ -316,7 +316,7 @@ export default function Dashboard({ userId, isSelf }) {
                 <YAxis domain={[0, 120]} stroke="var(--color-text-muted)" fontSize={12} tickLine={false} />
                 <Tooltip
                   contentStyle={{ borderRadius: "12px", border: "1px solid #cbd5e1", fontFamily: "var(--font-body)" }}
-                  formatter={(value) => [fmt(value, 1), "Skor"]}
+                  formatter={(value) => [fmt(value, 2), "Skor"]}
                 />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
                 <Line
@@ -393,18 +393,18 @@ export default function Dashboard({ userId, isSelf }) {
                       {item.formula}
                     </td>
                     <td data-align="right" className="num" style={{ fontWeight: 600 }}>
-                      {fmt(item.actual_value, 1)}
+                      {fmt(item.actual_value, 2)}
                     </td>
                     <td data-align="right">
                       <span className={`badge ${(item.capped_score || item.calculated_score) >= 100 ? "badge-success" : "badge-primary"}`}>
-                        {fmt(item.capped_score !== undefined ? item.capped_score : item.calculated_score, 1)}
+                        {fmt(item.capped_score !== undefined ? item.capped_score : item.calculated_score, 2)}
                       </span>
                     </td>
                     <td data-align="right" className="num">
                       {(item.weight * 100).toFixed(0)}%
                     </td>
                     <td data-align="right" className="num" style={{ fontWeight: 800, color: "var(--color-primary)" }}>
-                      {fmt(item.weighted_score, 1)}
+                      {fmt(item.weighted_score, 2)}
                     </td>
                   </tr>
                   {item.metric_key === "feature_complexity" && (

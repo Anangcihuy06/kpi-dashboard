@@ -2066,16 +2066,29 @@ def get_team_yearly_performance(
     
     if job_key in TEAM_YEARLY_JOBS:
         job = TEAM_YEARLY_JOBS[job_key]
-        if job["status"] == "processing":
-            response.status_code = 202
-            return {"status": "processing", "message": "Sedang menghitung data KPI tim..."}
-        elif job["status"] == "success":
-            data = job["data"]
+        
+        # Check if job is older than 5 minutes
+        is_stale = False
+        if "timestamp" in job:
+            try:
+                job_time = datetime.fromisoformat(job["timestamp"])
+                if (datetime.now() - job_time).total_seconds() > 300:
+                    is_stale = True
+            except ValueError:
+                pass
+                
+        if is_stale and job["status"] != "processing":
             del TEAM_YEARLY_JOBS[job_key]
-            return {"status": "success", "data": data}
-        elif job["status"] == "error":
-            del TEAM_YEARLY_JOBS[job_key]
-            return {"status": "error", "message": "Gagal menghitung KPI tim"}
+        else:
+            if job["status"] == "processing":
+                response.status_code = 202
+                return {"status": "processing", "message": "Sedang menghitung data KPI tim..."}
+            elif job["status"] == "success":
+                data = job["data"]
+                return {"status": "success", "data": data}
+            elif job["status"] == "error":
+                del TEAM_YEARLY_JOBS[job_key]
+                return {"status": "error", "message": "Gagal menghitung KPI tim"}
             
     request = TimeRangeKPIRequest(from_date=from_date_str, to_date=to_date_str, user_ids=target_user_ids)
     
