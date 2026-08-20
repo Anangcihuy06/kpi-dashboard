@@ -1984,7 +1984,7 @@ def trigger_sync(background_tasks: BackgroundTasks):
 
 @app.get("/api/v1/kpi/yearly-performance")
 @cache(expire=300)
-def get_yearly_performance(year: int, user_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def get_yearly_performance(year: int, user_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db), force_refresh: bool = False):
     """
     Get accumulated KPI data for a specific year (Jan 1 - Dec 31) for the current user.
     Uses company-wide relative scoring benchmark.
@@ -2032,6 +2032,7 @@ def get_team_yearly_performance(
     background_tasks: BackgroundTasks,
     response: Response,
     direct_only: bool = False, 
+    force_refresh: bool = False,
     db: Session = Depends(get_db)
 ):
     """
@@ -2064,6 +2065,9 @@ def get_team_yearly_performance(
     
     job_key = f"{user_id}_{year}_{direct_only}"
     
+    if force_refresh and job_key in TEAM_YEARLY_JOBS:
+        del TEAM_YEARLY_JOBS[job_key]
+        
     if job_key in TEAM_YEARLY_JOBS:
         job = TEAM_YEARLY_JOBS[job_key]
         

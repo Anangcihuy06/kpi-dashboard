@@ -71,7 +71,7 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
               const statusData = await statusRes.json();
               if (statusData.status === "COMPLETED" || statusData.status === "FAILED") {
                 clearInterval(poll);
-                await fetchTeamScores();
+                await fetchTeamScores(true);
                 setAttendanceSyncing(false);
                 if (statusData.status === "COMPLETED") {
                   toast.success("Sinkronisasi kehadiran berhasil!");
@@ -87,7 +87,7 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
       } else {
         // Fallback
         setTimeout(async () => {
-          await fetchTeamScores();
+          await fetchTeamScores(true);
           setAttendanceSyncing(false);
           toast.success("Sinkronisasi kehadiran selesai!");
         }, 3000);
@@ -98,16 +98,17 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
     }
   };
 
-  const fetchTeamScores = async () => {
+  const fetchTeamScores = async (force = false) => {
     setLoading(true);
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/team-yearly?user_id=${supervisorId}&year=${selectedYear}&direct_only=true`, {
+      const url = `${import.meta.env.VITE_API_URL}/api/v1/kpi/team-yearly?user_id=${supervisorId}&year=${selectedYear}&direct_only=true${force ? '&force_refresh=true' : ''}`;
+      const response = await fetch(url, {
         cache: 'no-store'
       });
       
       if (response.status === 202) {
         // Background calculation in progress, poll again after 3 seconds
-        setTimeout(fetchTeamScores, 3000);
+        setTimeout(() => fetchTeamScores(force), 3000);
         return; // Keep loading true
       }
       
