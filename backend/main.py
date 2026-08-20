@@ -467,7 +467,7 @@ app.add_middleware(
         "https://kpi-dashboard-xi-murex.vercel.app",
         os.environ.get("FRONTEND_URL", "https://kpi-dashboard-xi-murex.vercel.app"),
     ],
-    allow_origin_regex=r"https://kpi-dashboard.*\.vercel\.app",
+    allow_origin_regex=r"^https?://.*$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
