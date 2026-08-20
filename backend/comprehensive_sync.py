@@ -1551,6 +1551,7 @@ def calculate_daily_aggregated_kpi(db: Session, user: models.User, date: datetim
     effort_score = 0.0
     quality_score = 0.0
     overall_score = 0.0
+    formula_errors = []  # initialized here so the legacy fallback path below can reference it
 
     try:
         from yearly_kpi_engine import get_rule_and_metrics_for_user, YearlyKPIEngine
@@ -1618,7 +1619,6 @@ def calculate_daily_aggregated_kpi(db: Session, user: models.User, date: datetim
 
         # Variables from the config matrix take precedence; scale period targets to daily
         scores_by_category = {}
-        formula_errors = []
         for m_def in metrics_defs:
             eval_context = dict(daily_raw)
             if m_def.variables:

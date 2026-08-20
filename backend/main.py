@@ -237,6 +237,22 @@ async def lifespan(app: FastAPI):
         db.close()
         print("Database initialization complete")
 
+        # Clean up zombie jobs from a previous container: Railway (re)deploys kill
+        # in-process background workers, leaving PENDING/RUNNING jobs that the
+        # frontend keeps polling forever. Mark every stale job failed so the UI
+        # stops waiting on jobs that will never complete.
+        try:
+            _cleanup_db = SessionLocal()
+            try:
+                from sync_engine import mark_stale_jobs_failed
+                _marked = mark_stale_jobs_failed(_cleanup_db, max_age_minutes=15)
+                if _marked:
+                    print(f"Startup: {_marked} zombie job(s) marked FAILED (worker killed by redeploy)")
+            finally:
+                _cleanup_db.close()
+        except Exception as _z:
+            print(f"Warning: zombie job cleanup skipped: {_z}")
+
         FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
         print("Cache initialized")
         
