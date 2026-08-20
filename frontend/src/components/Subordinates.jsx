@@ -104,8 +104,16 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
       const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/team-yearly?user_id=${supervisorId}&year=${selectedYear}&direct_only=true`, {
         cache: 'no-store'
       });
+      
+      if (response.status === 202) {
+        // Background calculation in progress, poll again after 3 seconds
+        setTimeout(fetchTeamScores, 3000);
+        return; // Keep loading true
+      }
+      
       if (!response.ok) throw new Error("Gagal mengambil report tim");
       const data = await response.json();
+      
       if (data.status === "success") {
         setSubordinates(data.data || []);
       } else {
@@ -489,7 +497,7 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
                           )}
                         </td>
                         <td data-align="right" className="num" style={{ fontWeight: 800, fontSize: "16px", color: "var(--color-primary)" }}>
-                          {scoreInfo.overall !== undefined ? fmt(scoreInfo.overall, 1) : "N/A"}
+                          {scoreInfo.overall !== undefined ? fmt(scoreInfo.overall, 2) : "N/A"}
                         </td>
                         <td>
                           {!sub.email ? (

@@ -1,6 +1,6 @@
 import requests
 from datetime import datetime, timedelta
-from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -17,6 +17,9 @@ _supervisor_token_store = {}
 # Keyed by year; invalidated after sync operations. TTL prevents stale data.
 _company_maxima_cache = {}
 _COMPANY_MAXIMA_TTL = 1800  # 30 minutes
+
+# Background jobs tracking for team yearly KPI
+TEAM_YEARLY_JOBS = {}
 
 from database import engine, get_db
 import models
@@ -2011,9 +2014,26 @@ def get_yearly_performance(year: int, user_id: str, background_tasks: Background
     return {"status": "success", "data": None, "message": "No data found for the year."}
 
 
+def _run_team_yearly_kpi_job(db: Session, request: TimeRangeKPIRequest, user_id: str, job_key: str):
+    import traceback
+    try:
+        kpi_data = get_time_range_kpi(request=request, user_id=user_id, db=db)
+        TEAM_YEARLY_JOBS[job_key] = {"status": "success", "data": kpi_data.get("users", []), "timestamp": datetime.now().isoformat()}
+    except Exception as e:
+        logger.error(f"Error in team yearly background job: {e}")
+        logger.error(traceback.format_exc())
+        TEAM_YEARLY_JOBS[job_key] = {"status": "error", "data": [], "timestamp": datetime.now().isoformat()}
+
+
 @app.get("/api/v1/kpi/team-yearly")
-@cache(expire=60)
-def get_team_yearly_performance(year: int, user_id: str, direct_only: bool = False, db: Session = Depends(get_db)):
+def get_team_yearly_performance(
+    year: int, 
+    user_id: str, 
+    background_tasks: BackgroundTasks,
+    response: Response,
+    direct_only: bool = False, 
+    db: Session = Depends(get_db)
+):
     """
     Get accumulated KPI data for a specific year (Jan 1 - Dec 31) for all subordinates.
 
@@ -2042,10 +2062,29 @@ def get_team_yearly_performance(year: int, user_id: str, direct_only: bool = Fal
     from_date_str = f"{year}-01-01"
     to_date_str = f"{year}-12-31"
     
-    request = TimeRangeKPIRequest(from_date=from_date_str, to_date=to_date_str, user_ids=target_user_ids)
-    kpi_data = get_time_range_kpi(request=request, user_id=user_id, db=db)
+    job_key = f"{user_id}_{year}_{direct_only}"
     
-    return {"status": "success", "data": kpi_data.get("users", [])}
+    if job_key in TEAM_YEARLY_JOBS:
+        job = TEAM_YEARLY_JOBS[job_key]
+        if job["status"] == "processing":
+            response.status_code = 202
+            return {"status": "processing", "message": "Sedang menghitung data KPI tim..."}
+        elif job["status"] == "success":
+            data = job["data"]
+            del TEAM_YEARLY_JOBS[job_key]
+            return {"status": "success", "data": data}
+        elif job["status"] == "error":
+            del TEAM_YEARLY_JOBS[job_key]
+            return {"status": "error", "message": "Gagal menghitung KPI tim"}
+            
+    request = TimeRangeKPIRequest(from_date=from_date_str, to_date=to_date_str, user_ids=target_user_ids)
+    
+    # Start job
+    TEAM_YEARLY_JOBS[job_key] = {"status": "processing", "data": None, "timestamp": datetime.now().isoformat()}
+    background_tasks.add_task(_run_team_yearly_kpi_job, db, request, user_id, job_key)
+    
+    response.status_code = 202
+    return {"status": "processing", "message": "Sedang memulai perhitungan KPI tim..."}
 
 # ─────────────────────────────────────────────────────────────
 # TIME RANGE BASED KPI ENDPOINTS (NEW ARCHITECTURE)
@@ -2202,6 +2241,23 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
             if not is_authorized:
                 # Can only query own data unless supervisor, admin, or manager
                 target_user_ids = [user_id]
+                
+        # === FAST FAIL CHECK ===
+        # If there are NO attendance records AND no activities in this year globally for these users,
+        # skip calculation to prevent long loading times when year is empty.
+        # This will just return empty stats.
+        fast_check_att = db.query(models.AttendanceRecord).filter(
+            models.AttendanceRecord.date >= from_date.date().isoformat(),
+            models.AttendanceRecord.date <= to_date.date().isoformat()
+        ).first()
+        fast_check_act = db.query(models.Activity).filter(
+            models.Activity.activity_date >= from_date,
+            models.Activity.activity_date <= to_date
+        ).first()
+        
+        if not fast_check_att and not fast_check_act:
+            logger.info("Fast-fail triggered: No data found for the requested period. Returning empty KPIs.")
+            return {"status": "success", "period": {"start": from_date.isoformat(), "end": to_date.isoformat(), "day_count": 0}, "users": []}
         
         # === PASS 1: Calculate 5-Pillar Team Maxima per requested period ===
         maxima = _get_company_maxima(db, from_date, to_date)

@@ -5,6 +5,8 @@ Implements the full workflow from GitLab/Jira documentation
 
 import requests
 import json
+import httpx
+import asyncio
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
@@ -423,30 +425,38 @@ def sync_gitlab_commits(db: Session, user: models.User, settings: models.Integra
         user_ext_id = gitlab_identity.external_user_id
         events_url = f"{gitlab_url}/api/v4/users/{user_ext_id}/events"
         
-        page = 1
-        while True:
-            params = {
-                "action": "pushed",
-                "after": start_date_str,
-                "before": end_date_str,
-                "per_page": 100,
-                "page": page
-            }
-            res = requests.get(events_url, headers=headers, params=params, timeout=10)
-            if res.status_code != 200:
-                break
-            events = res.json()
-            if not events:
-                break
-            for ev in events:
-                pid = ev.get("project_id")
-                if pid:
-                    active_project_ids.add(str(pid))
-            if len(events) < 100:
-                break
-            page += 1
-            if page > 50: # safety cap
-                break
+        async def fetch_events_parallel():
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                tasks = []
+                for p in range(1, 31):
+                    params = {
+                        "action": "pushed",
+                        "after": start_date_str,
+                        "before": end_date_str,
+                        "per_page": 100,
+                        "page": p
+                    }
+                    tasks.append(client.get(events_url, headers=headers, params=params))
+                
+                responses = await asyncio.gather(*tasks, return_exceptions=True)
+                all_events = []
+                for res in responses:
+                    if isinstance(res, Exception):
+                        continue
+                    if res.status_code == 200:
+                        try:
+                            evs = res.json()
+                            if evs:
+                                all_events.extend(evs)
+                        except Exception:
+                            pass
+                return all_events
+                
+        events_list = asyncio.run(fetch_events_parallel())
+        for ev in events_list:
+            pid = ev.get("project_id")
+            if pid:
+                active_project_ids.add(str(pid))
                 
         if not active_project_ids:
             logger.info(f"No active push events found for {user.full_name} in the given period.")
@@ -454,31 +464,78 @@ def sync_gitlab_commits(db: Session, user: models.User, settings: models.Integra
             
         logger.info(f"Found {len(active_project_ids)} active projects for {user.full_name} via Events API.")
         
-        # Ensure projects are in DB
-        project_db_ids = {}
-        for ext_pid in active_project_ids:
-            proj = db.query(models.Project).filter(
-                and_(models.Project.source == "gitlab", models.Project.external_project_id == str(ext_pid))
-            ).first()
-            if not proj:
-                p_res = requests.get(f"{gitlab_url}/api/v4/projects/{ext_pid}", headers=headers, timeout=10)
-                if p_res.status_code == 200:
-                    p_data = p_res.json()
-                    proj = models.Project(
-                        source="gitlab",
-                        external_project_id=str(ext_pid),
-                        project_name=p_data.get("path_with_namespace") or p_data.get("name"),
-                        project_url=p_data.get("web_url"),
-                        is_active=True
-                    )
-                    db.add(proj)
+        async def fetch_projects_and_commits(project_ids_map):
+            start_dt_str = start_date.strftime("%Y-%m-%dT00:00:00Z")
+            end_dt_str = end_date.strftime("%Y-%m-%dT23:59:59Z")
+            
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                # 1. Fetch missing project info
+                proj_tasks = []
+                ext_pids_missing = [ext_pid for ext_pid in active_project_ids if not db.query(models.Project).filter(
+                    and_(models.Project.source == "gitlab", models.Project.external_project_id == str(ext_pid))
+                ).first()]
+                
+                for ext_pid in ext_pids_missing:
+                    proj_tasks.append(client.get(f"{gitlab_url}/api/v4/projects/{ext_pid}", headers=headers))
+                    
+                if proj_tasks:
+                    proj_responses = await asyncio.gather(*proj_tasks, return_exceptions=True)
+                    for res in proj_responses:
+                        if isinstance(res, Exception):
+                            continue
+                        if res.status_code == 200:
+                            p_data = res.json()
+                            ext_pid = str(p_data.get("id"))
+                            proj = models.Project(
+                                source="gitlab",
+                                external_project_id=ext_pid,
+                                project_name=p_data.get("path_with_namespace") or p_data.get("name"),
+                                project_url=p_data.get("web_url"),
+                                is_active=True
+                            )
+                            db.add(proj)
                     db.commit()
-                    db.refresh(proj)
-            if proj:
-                project_db_ids[str(ext_pid)] = proj.id
-        
-        start_dt_str = start_date.strftime("%Y-%m-%dT00:00:00Z")
-        end_dt_str = end_date.strftime("%Y-%m-%dT23:59:59Z")
+                    
+                # Load all project DB IDs
+                for ext_pid in active_project_ids:
+                    proj = db.query(models.Project).filter(
+                        and_(models.Project.source == "gitlab", models.Project.external_project_id == str(ext_pid))
+                    ).first()
+                    if proj:
+                        project_ids_map[str(ext_pid)] = proj.id
+                        
+                # 2. Fetch commits in parallel
+                commit_tasks = []
+                for ext_pid in project_ids_map.keys():
+                    commits_url = f"{gitlab_url}/api/v4/projects/{ext_pid}/repository/commits"
+                    # fetch up to 2 pages (200 commits per project) for speed
+                    for p in range(1, 3):
+                        cparams = {
+                            "since": start_dt_str,
+                            "until": end_dt_str,
+                            "per_page": 100,
+                            "page": p
+                        }
+                        commit_tasks.append(client.get(commits_url, headers=headers, params=cparams))
+                
+                all_commits_responses = await asyncio.gather(*commit_tasks, return_exceptions=True)
+                commits_by_project = {ext_pid: [] for ext_pid in project_ids_map.keys()}
+                for res in all_commits_responses:
+                    if isinstance(res, Exception):
+                        continue
+                    if res.status_code == 200:
+                        batch = res.json()
+                        if batch:
+                            # extract project id from URL to map it back
+                            url_parts = str(res.url).split("/projects/")
+                            if len(url_parts) > 1:
+                                p_id = url_parts[1].split("/")[0]
+                                commits_by_project.setdefault(p_id, []).extend(batch)
+                return commits_by_project
+
+        # Map to track external to db ids
+        project_db_ids = {}
+        commits_by_project = asyncio.run(fetch_projects_and_commits(project_db_ids))
         
         # Author needles for client-side filtering 
         name_needles = set()
@@ -503,12 +560,7 @@ def sync_gitlab_commits(db: Session, user: models.User, settings: models.Integra
             
         if user.email:
             emails.add(user.email.lower())
-        
-        commits_to_insert = []
-        activities_to_insert = []
-        seen_commit_ids = set()
-        
-        # Note: the old code passed author query to fetch_project_commits, here we adapt it
+            
         def _commit_matches_author(commit: dict, name_needles, emails) -> bool:
             author_name = (commit.get("author_name") or "").lower()
             author_email = (commit.get("author_email") or "").lower()
@@ -524,11 +576,13 @@ def sync_gitlab_commits(db: Session, user: models.User, settings: models.Integra
                 if needle and needle in author_name:
                     return True
             return False
-
+            
+        commits_to_insert = []
+        activities_to_insert = []
+        seen_commit_ids = set()
+        
         for ext_pid, project_db_id in project_db_ids.items():
-            # For exact author match in fetch_project_commits we just use None here and filter locally
-            # since active projects are limited.
-            project_commits = fetch_project_commits(ext_pid, None, gitlab_url, headers, start_dt_str, end_dt_str)
+            project_commits = commits_by_project.get(str(ext_pid), [])
             for commit in project_commits:
                 if not _commit_matches_author(commit, name_needles, emails):
                     continue
@@ -646,135 +700,149 @@ def sync_gitlab_merge_requests(db: Session, user: models.User, settings: models.
             "per_page": 100
         }
         
-        response = requests.get(mrs_url, headers={"PRIVATE-TOKEN": gitlab_token},
-                            params=mrs_params, timeout=30)
+        async def fetch_mrs_and_projects():
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                mrs_list = []
+                headers = {"PRIVATE-TOKEN": gitlab_token}
+                # Fetch up to 5 pages for MRs concurrently
+                tasks = [client.get(mrs_url, headers=headers, params={**mrs_params, "page": p}) for p in range(1, 6)]
+                responses = await asyncio.gather(*tasks, return_exceptions=True)
+                for res in responses:
+                    if isinstance(res, Exception):
+                        continue
+                    if res.status_code == 200:
+                        batch = res.json()
+                        if batch:
+                            mrs_list.extend(batch)
+                            
+                # Get unique project IDs from MRs
+                project_ids = list(set(str(mr.get("project_id")) for mr in mrs_list if mr.get("project_id")))
+                
+                # Fetch projects concurrently
+                proj_tasks = [client.get(f"{gitlab_url}/api/v4/projects/{pid}", headers=headers) for pid in project_ids]
+                proj_responses = await asyncio.gather(*proj_tasks, return_exceptions=True)
+                
+                projects_info = {}
+                for res in proj_responses:
+                    if isinstance(res, Exception):
+                        continue
+                    if res.status_code == 200:
+                        p = res.json()
+                        projects_info[str(p.get("id"))] = p
+                        
+                return mrs_list, projects_info
+                
+        mrs, projects_info = asyncio.run(fetch_mrs_and_projects())
         
-        if response.status_code == 200:
-            mrs = response.json()
-            
-            if mrs and len(mrs) > 0:
-                logger.info(f"CONSOLE: GITLAB MR DATA STRUCTURE for {user.full_name}:\n{json.dumps(mrs[0], indent=2)}")
-            
-            # Cache resolved project DB ids per external id so many MRs of the
-            # same project do not trigger a fresh HTTP fetch + upsert each time.
-            _project_db_cache = {}
+        if mrs and len(mrs) > 0:
+            logger.info(f"CONSOLE: GITLAB MR DATA STRUCTURE for {user.full_name}:\n{json.dumps(mrs[0], indent=2)}")
+        
+        _project_db_cache = {}
 
-            for mr in mrs:
-                mr_id = str(mr.get("id"))
-                project_id = str(mr.get("project_id"))
+        for mr in mrs:
+            mr_id = str(mr.get("id"))
+            project_id = str(mr.get("project_id"))
 
-                project_db_id = _project_db_cache.get(project_id)
-                if project_db_id is None:
-                    # Get project info
-                    project_url = f"{gitlab_url}/api/v4/projects/{project_id}"
-                    project_response = requests.get(project_url, headers={"PRIVATE-TOKEN": gitlab_token}, timeout=10)
+            project_db_id = _project_db_cache.get(project_id)
+            if project_db_id is None:
+                project = projects_info.get(project_id)
+                if project:
+                    existing_project = db.query(models.Project).filter(
+                        and_(models.Project.source == "gitlab", models.Project.external_project_id == str(project_id))
+                    ).first()
                     
-                    if project_response.status_code == 200:
-                        project = project_response.json()
-                        
-                        # Ensure project exists
-                        existing_project = db.query(models.Project).filter(
-                            and_(
-                                models.Project.source == "gitlab",
-                                models.Project.external_project_id == project_id
-                            )
-                        ).first()
-                        
-                        if not existing_project:
-                            project_obj = models.Project(
-                                source="gitlab",
-                                external_project_id=project_id,
-                                project_name=project.get("name"),
-                                project_url=project.get("web_url"),
-                                is_active=True
-                            )
-                            db.add(project_obj)
-                            db.commit()
-                            db.refresh(project_obj)
-                            project_db_id = project_obj.id
-                        else:
-                            project_db_id = existing_project.id
-                        _project_db_cache[project_id] = project_db_id
-                    else:
-                        project_db_id = None
-
-                if project_db_id is None:
-                    logger.warning(f"GitLab MR {mr_id}: could not resolve project {project_id}, skipping")
-                    continue
-                    
-                # Store raw MR data
-                existing_mr = db.query(models.RawGitLabMergeRequest).filter(
-                    and_(
-                        models.RawGitLabMergeRequest.external_mr_id == mr_id,
-                        models.RawGitLabMergeRequest.project_id == project_db_id
-                    )
-                ).first()
-
-                created_date = datetime.fromisoformat(mr.get("created_at").replace("Z", "+00:00"))
-                merged_date = None
-                if mr.get("merged_at"):
-                    merged_date = datetime.fromisoformat(mr.get("merged_at").replace("Z", "+00:00"))
-
-                mr_state = mr.get("state")  # opened, closed, merged
-                activity_type = "mr_merged" if mr_state == "merged" else "mr_created"
-                activity_date = merged_date if merged_date else created_date
-
-                if not existing_mr:
-                    new_mr = models.RawGitLabMergeRequest(
-                        external_mr_id=mr_id,
-                        project_id=project_db_id,
-                        author_email=mr.get("author", {}).get("email"),
-                        author_name=mr.get("author", {}).get("name"),
-                        title=mr.get("title"),
-                        description=mr.get("description"),
-                        state=mr_state,
-                        created_at=created_date,
-                        updated_at=datetime.fromisoformat(mr.get("updated_at").replace("Z", "+00:00")),
-                        merged_at=merged_date,
-                        web_url=mr.get("web_url"),
-                        raw_data=mr
-                    )
-                    db.add(new_mr)
-                    try:
+                    if not existing_project:
+                        existing_project = models.Project(
+                            source="gitlab",
+                            external_project_id=str(project_id),
+                            project_name=project.get("path_with_namespace") or project.get("name"),
+                            project_url=project.get("web_url"),
+                            is_active=True
+                        )
+                        db.add(existing_project)
                         db.commit()
-                        mrs_synced += 1
-                    except Exception:
-                        db.rollback()
+                        db.refresh(existing_project)
+                    
+                    _project_db_cache[project_id] = existing_project.id
+                    project_db_id = existing_project.id
 
-                # Create normalized activity
-                activity = models.Activity(
-                    user_id=user.id,
-                    source="gitlab",
-                    activity_type=activity_type,
-                    project_id=project_db_id,
-                    reference_id=mr_id,
-                    activity_date=activity_date.date(),
-                    activity_at=activity_date,
-                    activity_metadata={
-                        "title": mr.get("title"),
-                        "state": mr_state,
-                        "web_url": mr.get("web_url")
-                    }
+            if project_db_id is None:
+                logger.warning(f"GitLab MR {mr_id}: could not resolve project {project_id}, skipping")
+                continue
+                
+            # Store raw MR data
+            existing_mr = db.query(models.RawGitLabMergeRequest).filter(
+                and_(
+                    models.RawGitLabMergeRequest.external_mr_id == mr_id,
+                    models.RawGitLabMergeRequest.project_id == project_db_id
                 )
+            ).first()
 
-                # Check for existing activity
-                existing_activity = db.query(models.Activity).filter(
-                    and_(
-                        models.Activity.user_id == user.id,
-                        models.Activity.source == "gitlab",
-                        models.Activity.reference_id == mr_id
-                    )
-                ).first()
+            created_date = datetime.fromisoformat(mr.get("created_at").replace("Z", "+00:00"))
+            merged_date = None
+            if mr.get("merged_at"):
+                merged_date = datetime.fromisoformat(mr.get("merged_at").replace("Z", "+00:00"))
 
-                if not existing_activity:
-                    db.add(activity)
-                    try:
-                        db.commit()
-                    except Exception:
-                        db.rollback()
-            
-            db.commit()
-            logger.info(f"Synced {mrs_synced} new merge requests for {user.full_name}")
+            mr_state = mr.get("state")  # opened, closed, merged
+            activity_type = "mr_merged" if mr_state == "merged" else "mr_created"
+            activity_date = merged_date if merged_date else created_date
+
+            if not existing_mr:
+                new_mr = models.RawGitLabMergeRequest(
+                    external_mr_id=mr_id,
+                    project_id=project_db_id,
+                    author_email=mr.get("author", {}).get("email"),
+                    author_name=mr.get("author", {}).get("name"),
+                    title=mr.get("title"),
+                    description=mr.get("description"),
+                    state=mr_state,
+                    created_at=created_date,
+                    updated_at=datetime.fromisoformat(mr.get("updated_at").replace("Z", "+00:00")),
+                    merged_at=merged_date,
+                    web_url=mr.get("web_url"),
+                    raw_data=mr
+                )
+                db.add(new_mr)
+                try:
+                    db.commit()
+                    mrs_synced += 1
+                except Exception:
+                    db.rollback()
+
+            # Create normalized activity
+            activity = models.Activity(
+                user_id=user.id,
+                source="gitlab",
+                activity_type=activity_type,
+                project_id=project_db_id,
+                reference_id=mr_id,
+                activity_date=activity_date.date(),
+                activity_at=activity_date,
+                activity_metadata={
+                    "title": mr.get("title"),
+                    "state": mr_state,
+                    "web_url": mr.get("web_url")
+                }
+            )
+
+            # Check for existing activity
+            existing_activity = db.query(models.Activity).filter(
+                and_(
+                    models.Activity.user_id == user.id,
+                    models.Activity.source == "gitlab",
+                    models.Activity.reference_id == mr_id
+                )
+            ).first()
+
+            if not existing_activity:
+                db.add(activity)
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
+        
+        db.commit()
+        logger.info(f"Synced {mrs_synced} new merge requests for {user.full_name}")
     
     except Exception as e:
         logger.error(f"Error syncing GitLab MRs for {user.full_name}: {str(e)}")
@@ -814,241 +882,243 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
         # JQL: query all issues assigned to user updated in the period or with completed status
         jql = f'assignee = "{account_id}" AND updated >= "{start_date.date()}" AND updated <= "{end_date.date()}"'
         
-        next_page_token = None
-        max_results = 100
-        
-        while True:
-            payload = {
-                "jql": jql,
-                "fields": [
-                    "summary", "description", "subtasks", "status", "project", 
-                    "issuetype", "priority", "story_points", "customfield_10024", 
-                    "customfield_10016", "customfield_10028", "resolutiondate", 
-                    "created", "updated"
-                ],
-                "maxResults": max_results
-            }
-            if next_page_token:
-                payload["nextPageToken"] = next_page_token
-            
-            response = requests.post(search_url, auth=jira_auth, json=payload, timeout=30)
-            
-            logger.info(f"DEBUG JIRA API for {user.full_name}: URL={response.url} STATUS={response.status_code}")
-            
-            if response.status_code == 200:
-                data = response.json()
-                logger.info(f"DEBUG JIRA API RESPONSE for {user.full_name}: total={data.get('total')}, len(issues)={len(data.get('issues', []))}, raw={str(data)[:500]}")
-                issues = data.get("issues", [])
+        async def fetch_jira_issues():
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                issues = []
+                next_page_token = None
                 
-                if issues and len(issues) > 0 and not next_page_token:
-                    logger.info(f"CONSOLE: JIRA ISSUE DISCOVERY for {user.full_name}: first page fetched.")
-                
-                if not issues:
-                    logger.info(f"Synced {issues_synced} new Jira issues (0 processed) for {user.full_name}")
-                    issues_synced = 0
-                processed_issues_cache = set()
-                processed_activities_cache = set()
-
-                page_keys = [i.get("key") for i in issues]
-                existing_by_key = {}
-                if page_keys:
-                    existing_by_key = {
-                        r.issue_key: r for r in db.query(models.RawJiraIssue).filter(
-                            models.RawJiraIssue.issue_key.in_(page_keys)
-                        ).all()
+                while True:
+                    payload = {
+                        "jql": jql,
+                        "fields": [
+                            "summary", "description", "subtasks", "status", "project", 
+                            "issuetype", "priority", "story_points", "customfield_10024", 
+                            "customfield_10016", "customfield_10028", "resolutiondate", 
+                            "created", "updated"
+                        ],
+                        "maxResults": 100
                     }
-
-                need_score = []
-                for issue in issues:
-                    issue_key = issue.get("key")
-                    fields = issue.get("fields", {})
-                    existing = existing_by_key.get(issue_key)
-                    summar = (fields.get("summary") or "").strip()
-                    stored_summary = None
-                    if existing is not None and existing.complexity_detail:
-                        stored_summary = (existing.complexity_detail.get("summary") or "").strip()
-                    if existing is not None and existing.complexity_score is not None and stored_summary == summar:
-                        continue
-                    need_score.append(issue)
-
-                page_scores = {}
-                if need_score:
-                    try:
-                        from feature_analyzer import analyze_multi_factor
-                        # Defer LLM scoring to async worker to prevent sync blocking. Use fast local rules initially.
-                        for isc in need_score:
-                            local_res = analyze_multi_factor(isc, config=scorer.config)
-                            local_res["score_type"] = "rules"
-                            if getattr(scorer, "llm", None):
-                                local_res["needs_llm_scoring"] = True
-                            page_scores[isc.get("key")] = local_res
-                    except Exception as e:
-                        logger.warning(f"Local rule scoring failed for {user.full_name}: {e}")
-
-                issues_to_insert = []
-                activities_to_insert = []
-
-                for issue in issues:
-                    issue_key = issue.get("key")
-                    fields = issue.get("fields", {})
-
-                    # Try custom fields for story points (including customfield_10024 used in Cloud)
-                    raw_sp = fields.get("customfield_10024") or fields.get("customfield_10016") or fields.get("customfield_10028") or fields.get("story_points") or 0
-                    try:
-                        story_points = float(raw_sp) if raw_sp is not None else 0.0
-                    except Exception:
-                        story_points = 0.0
-
-                    existing_issue = existing_by_key.get(issue_key)
-                    feature_res = page_scores.get(issue_key)
-                    if feature_res is None and existing_issue is not None and existing_issue.complexity_detail:
-                        feature_res = existing_issue.complexity_detail
-                    if feature_res is None:
-                        feature_res = scorer.score(issue)
-                    feature_weight = feature_res["kpi_points"]
-                    complexity_detail = {
-                        "summary": (fields.get("summary") or "").strip(),
-                        "technical_complexity": feature_res["technical_complexity"],
-                        "business_impact": feature_res["business_impact"],
-                        "system_scope": feature_res["system_scope"],
-                        "delivery_risk": feature_res["delivery_risk"],
-                        "ownership_level": feature_res["ownership_level"],
-                        "total_score": feature_res["total_score"],
-                        "kpi_points": feature_weight,
-                        "score_type": feature_res.get("score_type", "rules"),
-                        "model": feature_res.get("model"),
-                        "prompt_version": feature_res.get("prompt_version"),
-                        "needs_llm_scoring": feature_res.get("needs_llm_scoring", False)
-                    }
-                    complexity_score = float(feature_weight)
-                
-                    effective_sp = story_points if story_points > 0 else feature_weight
-                
-                    proj_info = fields.get("project", {})
-                    proj_key = proj_info.get("key", "") if proj_info else ""
-                    proj_name = proj_info.get("name", "") if proj_info else ""
-
-                    project_db_id = None
-                    if proj_key:
-                        existing_proj = db.query(models.Project).filter(
-                            or_(
-                                models.Project.project_name.ilike(f"%{proj_key}%"),
-                                models.Project.project_key == proj_key
-                            )
-                        ).first()
-                        if existing_proj:
-                            project_db_id = existing_proj.id
-                        else:
-                            new_proj = models.Project(
-                                project_name=proj_name or proj_key,
-                                project_key=proj_key,
-                                source="jira"
-                            )
-                            db.add(new_proj)
-                            db.commit()
-                            project_db_id = new_proj.id
-                
-                    if issue_key in processed_issues_cache:
-                        continue
-
-                    resolution_date_str = fields.get("resolutiondate")
-                    resolved_at = None
-                    if resolution_date_str:
-                        try:
-                            resolved_at = datetime.strptime(resolution_date_str[:19], "%Y-%m-%dT%H:%M:%S")
-                        except Exception:
-                            resolved_at = datetime.now()
-                    elif fields.get("updated"):
-                        try:
-                            resolved_at = datetime.strptime(fields.get("updated")[:19], "%Y-%m-%dT%H:%M:%S")
-                        except Exception:
-                            resolved_at = datetime.now()
-                
-                    if not existing_issue:
-                        issues_to_insert.append(models.RawJiraIssue(
-                            issue_key=issue_key,
-                            summary=fields.get("summary"),
-                            issue_type=fields.get("issuetype", {}).get("name") if fields.get("issuetype") else None,
-                            status=fields.get("status", {}).get("name") if fields.get("status") else None,
-                            assignee_account_id=account_id,
-                            story_points=effective_sp,
-                            resolved_date=resolved_at,
-                            complexity_score=complexity_score,
-                            complexity_detail=complexity_detail,
-                            raw_data=issue
-                        ))
-                        issues_synced += 1
-                        processed_issues_cache.add(issue_key)
-                    else:
-                        processed_issues_cache.add(issue_key)
-                        existing_issue.story_points = effective_sp
-                        existing_issue.status = fields.get("status", {}).get("name") if fields.get("status") else None
-                        existing_issue.complexity_score = complexity_score
-                        existing_issue.complexity_detail = complexity_detail
-                
-                    activity_key = f"{user.id}-jira-issue_completed-{issue_key}"
-                    if activity_key in processed_activities_cache:
-                        continue
+                    if next_page_token:
+                        payload["nextPageToken"] = next_page_token
                         
-                    existing_activity = db.query(models.Activity).filter(
-                        and_(
-                            models.Activity.user_id == user.id,
-                            models.Activity.source == "jira",
-                            models.Activity.activity_type == "issue_completed",
-                            models.Activity.reference_id == issue_key
-                        )
-                    ).first()
-                
-                    status_cat = fields.get("status", {}).get("statusCategory", {}).get("name", "") if fields.get("status") else ""
-                    status_name = fields.get("status", {}).get("name", "") if fields.get("status") else ""
-                
-                    if not existing_activity:
-                        activities_to_insert.append(models.Activity(
-                            user_id=user.id,
-                            source="jira",
-                            activity_type="issue_completed",
-                            reference_id=issue_key,
-                            project_id=project_db_id,
-                            activity_date=resolved_at.date() if hasattr(resolved_at, 'date') else datetime.now().date(),
-                            activity_at=resolved_at if resolved_at else datetime.now(),
-                            story_points=effective_sp,
-                            activity_metadata={
-                                "issue_key": issue_key,
-                                "issue_summary": fields.get("summary"),
-                                "story_points": story_points,
-                                "feature_weight": feature_weight,
-                                "effective_sp": effective_sp,
-                                "jira_project_key": proj_key,
-                                "jira_project_name": proj_name,
-                                "status": status_name,
-                                "status_category": status_cat,
-                                "complexity_score": complexity_score,
-                                "complexity_detail": complexity_detail
-                            }
-                        ))
-                        processed_activities_cache.add(activity_key)
-                    else:
-                        processed_activities_cache.add(activity_key)
-                        existing_activity.story_points = effective_sp
-                        if project_db_id and not existing_activity.project_id:
-                            existing_activity.project_id = project_db_id
+                    res = await client.post(search_url, auth=jira_auth, json=payload)
+                    if res.status_code != 200:
+                        logger.error(f"Jira API error {res.status_code}: {res.text}")
+                        break
+                        
+                    data = res.json()
+                    page_issues = data.get("issues", [])
+                    if page_issues:
+                        issues.extend(page_issues)
+                        
+                    next_page_token = data.get("nextPageToken")
+                    if not next_page_token or data.get("isLast") is True:
+                        break
+                        
+                return issues
 
-                if issues_to_insert:
-                    db.add_all(issues_to_insert)
-                if activities_to_insert:
-                    db.add_all(activities_to_insert)
+        issues = asyncio.run(fetch_jira_issues())
+        
+        if issues and len(issues) > 0:
+            logger.info(f"CONSOLE: JIRA ISSUE DISCOVERY for {user.full_name}: fetched {len(issues)} issues.")
                 
-                db.commit()
-                logger.info(f"Synced {issues_synced} new Jira issues ({len(issues)} processed) for {user.full_name}")
-                
-                next_page_token = data.get('nextPageToken')
-                if not next_page_token or data.get('isLast') is True:
-                    break
-            
+        if not issues:
+            logger.info(f"Synced {issues_synced} new Jira issues (0 processed) for {user.full_name}")
+            issues_synced = 0
+        processed_issues_cache = set()
+        processed_activities_cache = set()
+
+        page_keys = [i.get("key") for i in issues]
+        existing_by_key = {}
+        if page_keys:
+            existing_by_key = {
+                r.issue_key: r for r in db.query(models.RawJiraIssue).filter(
+                    models.RawJiraIssue.issue_key.in_(page_keys)
+                ).all()
+            }
+
+        need_score = []
+        for issue in issues:
+            issue_key = issue.get("key")
+            fields = issue.get("fields", {})
+            existing = existing_by_key.get(issue_key)
+            summar = (fields.get("summary") or "").strip()
+            stored_summary = None
+            if existing is not None and existing.complexity_detail:
+                stored_summary = (existing.complexity_detail.get("summary") or "").strip()
+            if existing is not None and existing.complexity_score is not None and stored_summary == summar:
+                continue
+            need_score.append(issue)
+
+        page_scores = {}
+        if need_score:
+            try:
+                from feature_analyzer import analyze_multi_factor
+                # Defer LLM scoring to async worker to prevent sync blocking. Use fast local rules initially.
+                for isc in need_score:
+                    local_res = analyze_multi_factor(isc, config=scorer.config)
+                    local_res["score_type"] = "rules"
+                    if getattr(scorer, "llm", None):
+                        local_res["needs_llm_scoring"] = True
+                    page_scores[isc.get("key")] = local_res
+            except Exception as e:
+                logger.warning(f"Local rule scoring failed for {user.full_name}: {e}")
+
+        issues_to_insert = []
+        activities_to_insert = []
+
+        for issue in issues:
+            issue_key = issue.get("key")
+            fields = issue.get("fields", {})
+
+            # Try custom fields for story points (including customfield_10024 used in Cloud)
+            raw_sp = fields.get("customfield_10024") or fields.get("customfield_10016") or fields.get("customfield_10028") or fields.get("story_points") or 0
+            try:
+                story_points = float(raw_sp) if raw_sp is not None else 0.0
+            except Exception:
+                story_points = 0.0
+
+            existing_issue = existing_by_key.get(issue_key)
+            feature_res = page_scores.get(issue_key)
+            if feature_res is None and existing_issue is not None and existing_issue.complexity_detail:
+                feature_res = existing_issue.complexity_detail
+            if feature_res is None:
+                feature_res = scorer.score(issue)
+            feature_weight = feature_res["kpi_points"]
+            complexity_detail = {
+                "summary": (fields.get("summary") or "").strip(),
+                "technical_complexity": feature_res["technical_complexity"],
+                "business_impact": feature_res["business_impact"],
+                "system_scope": feature_res["system_scope"],
+                "delivery_risk": feature_res["delivery_risk"],
+                "ownership_level": feature_res["ownership_level"],
+                "total_score": feature_res["total_score"],
+                "kpi_points": feature_weight,
+                "score_type": feature_res.get("score_type", "rules"),
+                "model": feature_res.get("model"),
+                "prompt_version": feature_res.get("prompt_version"),
+                "needs_llm_scoring": feature_res.get("needs_llm_scoring", False)
+            }
+            complexity_score = float(feature_weight)
+        
+            effective_sp = story_points if story_points > 0 else feature_weight
+        
+            proj_info = fields.get("project", {})
+            proj_key = proj_info.get("key", "") if proj_info else ""
+            proj_name = proj_info.get("name", "") if proj_info else ""
+
+            project_db_id = None
+            if proj_key:
+                existing_proj = db.query(models.Project).filter(
+                    or_(
+                        models.Project.project_name.ilike(f"%{proj_key}%"),
+                        models.Project.project_key == proj_key
+                    )
+                ).first()
+                if existing_proj:
+                    project_db_id = existing_proj.id
+                else:
+                    new_proj = models.Project(
+                        project_name=proj_name or proj_key,
+                        project_key=proj_key,
+                        source="jira"
+                    )
+                    db.add(new_proj)
+                    db.commit()
+                    project_db_id = new_proj.id
+        
+            if issue_key in processed_issues_cache:
+                continue
+
+            resolution_date_str = fields.get("resolutiondate")
+            resolved_at = None
+            if resolution_date_str:
+                try:
+                    resolved_at = datetime.strptime(resolution_date_str[:19], "%Y-%m-%dT%H:%M:%S")
+                except Exception:
+                    resolved_at = datetime.now()
+            elif fields.get("updated"):
+                try:
+                    resolved_at = datetime.strptime(fields.get("updated")[:19], "%Y-%m-%dT%H:%M:%S")
+                except Exception:
+                    resolved_at = datetime.now()
+        
+            if not existing_issue:
+                issues_to_insert.append(models.RawJiraIssue(
+                    issue_key=issue_key,
+                    summary=fields.get("summary"),
+                    issue_type=fields.get("issuetype", {}).get("name") if fields.get("issuetype") else None,
+                    status=fields.get("status", {}).get("name") if fields.get("status") else None,
+                    assignee_account_id=account_id,
+                    story_points=effective_sp,
+                    resolved_date=resolved_at,
+                    complexity_score=complexity_score,
+                    complexity_detail=complexity_detail,
+                    raw_data=issue
+                ))
+                issues_synced += 1
+                processed_issues_cache.add(issue_key)
             else:
-                logger.error(f"Failed to fetch Jira issues for {user.full_name}: {response.status_code} {response.text}")
-                break
+                processed_issues_cache.add(issue_key)
+                existing_issue.story_points = effective_sp
+                existing_issue.status = fields.get("status", {}).get("name") if fields.get("status") else None
+                existing_issue.complexity_score = complexity_score
+                existing_issue.complexity_detail = complexity_detail
+        
+            activity_key = f"{user.id}-jira-issue_completed-{issue_key}"
+            if activity_key in processed_activities_cache:
+                continue
                 
+            existing_activity = db.query(models.Activity).filter(
+                and_(
+                    models.Activity.user_id == user.id,
+                    models.Activity.source == "jira",
+                    models.Activity.activity_type == "issue_completed",
+                    models.Activity.reference_id == issue_key
+                )
+            ).first()
+        
+            status_cat = fields.get("status", {}).get("statusCategory", {}).get("name", "") if fields.get("status") else ""
+            status_name = fields.get("status", {}).get("name", "") if fields.get("status") else ""
+        
+            if not existing_activity:
+                activities_to_insert.append(models.Activity(
+                    user_id=user.id,
+                    source="jira",
+                    activity_type="issue_completed",
+                    reference_id=issue_key,
+                    project_id=project_db_id,
+                    activity_date=resolved_at.date() if hasattr(resolved_at, 'date') else datetime.now().date(),
+                    activity_at=resolved_at if resolved_at else datetime.now(),
+                    story_points=effective_sp,
+                    activity_metadata={
+                        "issue_key": issue_key,
+                        "issue_summary": fields.get("summary"),
+                        "story_points": story_points,
+                        "feature_weight": feature_weight,
+                        "effective_sp": effective_sp,
+                        "jira_project_key": proj_key,
+                        "jira_project_name": proj_name,
+                        "status": status_name,
+                        "status_category": status_cat,
+                        "complexity_score": complexity_score,
+                        "complexity_detail": complexity_detail
+                    }
+                ))
+                processed_activities_cache.add(activity_key)
+            else:
+                processed_activities_cache.add(activity_key)
+                existing_activity.story_points = effective_sp
+                if project_db_id and not existing_activity.project_id:
+                    existing_activity.project_id = project_db_id
+
+        if issues_to_insert:
+            db.add_all(issues_to_insert)
+        if activities_to_insert:
+            db.add_all(activities_to_insert)
+        
+        db.commit()
+        logger.info(f"Synced {issues_synced} new Jira issues ({len(issues)} processed) for {user.full_name}")
 
     except Exception as e:
         logger.error(f"Error syncing Jira issues for {user.full_name}: {str(e)}")
@@ -1080,24 +1150,45 @@ def sync_jira_worklogs(db: Session, user: models.User, settings: models.Integrat
     worklogs_synced = 0
     
     try:
-        # Use /rest/api/3/search/jql endpoint (new Atlassian migration)
+        # Use /rest/api/3/search/jql endpoint for nextPageToken pagination
         search_url = f"{jira_url}/rest/api/3/search/jql"
         
         # JQL to find issues the user has logged work on
         jql = f'worklogAuthor = "{account_id}" AND worklogDate >= "{start_date.date()}" AND worklogDate <= "{end_date.date()}"'
         
-        payload = {
-            "jql": jql,
-            "fields": ["worklog", "summary"],
-            "maxResults": 100
-        }
+        async def fetch_jira_worklog_issues():
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                issues = []
+                next_page_token = None
+                
+                while True:
+                    payload = {
+                        "jql": jql,
+                        "fields": ["worklog", "summary"],
+                        "maxResults": 100
+                    }
+                    if next_page_token:
+                        payload["nextPageToken"] = next_page_token
+                        
+                    res = await client.post(search_url, auth=jira_auth, json=payload)
+                    if res.status_code != 200:
+                        logger.error(f"Jira API error for worklogs {res.status_code}: {res.text}")
+                        break
+                        
+                    data = res.json()
+                    page_issues = data.get("issues", [])
+                    if page_issues:
+                        issues.extend(page_issues)
+                        
+                    next_page_token = data.get("nextPageToken")
+                    if not next_page_token or data.get("isLast") is True:
+                        break
+                        
+                return issues
+
+        issues = asyncio.run(fetch_jira_worklog_issues())
         
-        response = requests.post(search_url, auth=jira_auth, json=payload, timeout=30)
-        
-        if response.status_code == 200:
-            issues_data = response.json()
-            issues = issues_data.get("issues", [])
-            
+        if issues is not None:
             worklogs_to_insert = []
             activities_to_insert = []
             
@@ -1165,7 +1256,7 @@ def sync_jira_worklogs(db: Session, user: models.User, settings: models.Integrat
             db.commit()
             logger.info(f"Synced {worklogs_synced} new worklogs for {user.full_name}")
         else:
-            logger.error(f"Failed to fetch worklogs for {user.full_name}: {response.status_code} {response.text}")
+            logger.error(f"Failed to fetch worklogs for {user.full_name}: request failed")
     
     except Exception as e:
         logger.error(f"Error syncing Jira worklogs for {user.full_name}: {str(e)}")

@@ -227,7 +227,7 @@ export default function Dashboard({ userId, isSelf }) {
             <Award size={24} />
           </div>
           <div className="stat-info">
-            <h4 className="num">{fmt(scores.overall, 1)}</h4>
+            <h4 className="num">{fmt(scores.overall, 2)}</h4>
             <p>Weighted Score</p>
           </div>
         </div>
@@ -368,7 +368,7 @@ export default function Dashboard({ userId, isSelf }) {
       <div className="card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", marginBottom: "20px", flexWrap: "wrap" }}>
           <h3 style={{ margin: 0 }}>Rincian Capaian & Rumus Matriks</h3>
-          <span className="status-pill primary">Skor akhir {fmt(scores.overall, 1)}</span>
+          <span className="status-pill primary">Skor akhir {fmt(scores.overall, 2)}</span>
         </div>
         <div className="table-container">
           <table className="custom-table">

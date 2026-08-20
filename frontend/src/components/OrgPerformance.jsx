@@ -97,6 +97,13 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
         `${import.meta.env.VITE_API_URL}/api/v1/kpi/team-yearly?user_id=${rootId}&year=${selectedYear}`,
         { cache: "no-store" }
       );
+      
+      if (response.status === 202) {
+        // Polling if background calculation is running
+        setTimeout(fetchPerformance, 3000);
+        return; // Keep loading true
+      }
+      
       if (!response.ok) throw new Error("Gagal mengambil data tim");
       const result = await response.json();
       if (result.status === "success") {
@@ -306,7 +313,7 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
           <div className="stat-info">
             <h4>Rata-rata Score</h4>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-              <span className="metric-value">{fmt(avgOverall, 1)}</span>
+              <span className="metric-value">{fmt(avgOverall, 2)}</span>
               <span className="table-meta">dari 5 pilar</span>
             </div>
           </div>
@@ -320,7 +327,7 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
             <h4>Top Performer</h4>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
               <span className="metric-value">{topPerformer ? (topPerformer.full_name || "—").split(" ").slice(0, 2).join(" ") : "—"}</span>
-              <span className="table-meta">{topPerformer ? fmt(topPerformer.kpi_scores?.overall, 1) : ""}</span>
+              <span className="table-meta">{topPerformer ? fmt(topPerformer.kpi_scores?.overall, 2) : ""}</span>
             </div>
           </div>
         </div>
@@ -499,7 +506,7 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
 
               <div style={{ textAlign: "right", minWidth: 64 }}>
                 <div style={{ fontWeight: 800, fontSize: 16, color: score != null && score < 40 ? "#b91c1c" : "var(--color-primary)" }}>
-                  {score != null ? fmt(score, 1) : "N/A"}
+                  {score != null ? fmt(score, 2) : "N/A"}
                 </div>
                 <div className="table-meta">overall</div>
               </div>
