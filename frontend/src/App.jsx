@@ -147,7 +147,6 @@ export default function App() {
             alt="ATI Business Group Logo"
             className="login-header-logo"
           />
-          <span className="hero-eyebrow" style={{ justifyContent: "center", marginBottom: 8 }}>Secure Company Portal</span>
           <h2 className="form-title">KPI Dashboard Portal</h2>
           <p className="form-subtitle">Autentikasi menggunakan akun ATI Business Group Anda</p>
 
