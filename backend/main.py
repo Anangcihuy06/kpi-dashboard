@@ -1062,16 +1062,21 @@ def get_sprint_report(sprint_id: str, supervisor_id: str, db: Session = Depends(
 
 @app.get("/api/v1/kpi-rules")
 def get_kpi_rules(division_id: str, group_id: Optional[str] = None, db: Session = Depends(get_db)):
-    query = db.query(models.KPIRule).filter(
-        models.KPIRule.division_id == division_id,
-        models.KPIRule.is_active == True
-    )
+    rule = None
     if group_id:
-        query = query.filter(models.KPIRule.group_id == group_id)
-    else:
-        query = query.filter(models.KPIRule.group_id.is_(None))
+        rule = db.query(models.KPIRule).filter(
+            models.KPIRule.division_id == division_id,
+            models.KPIRule.group_id == group_id,
+            models.KPIRule.is_active == True
+        ).first()
         
-    rule = query.first()
+    if not rule:
+        # Fallback to division rule
+        rule = db.query(models.KPIRule).filter(
+            models.KPIRule.division_id == division_id,
+            models.KPIRule.group_id.is_(None),
+            models.KPIRule.is_active == True
+        ).first()
 
     if not rule:
         return []
