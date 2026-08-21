@@ -1031,11 +1031,17 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
             if issue_key in processed_issues_cache:
                 continue
 
-            resolution_date_str = fields.get("resolutiondate")
+            resolved_date_str = fields.get("resolutiondate")
+            
+            # Fallback for Jira Kanban boards or misconfigured workflows that don't set Resolution
+            status_name = fields.get("status", {}).get("name", "").lower() if fields.get("status") else ""
+            if not resolved_date_str and status_name in ["done", "completed", "closed", "resolved"]:
+                resolved_date_str = fields.get("updated")
+
             resolved_at = None
-            if resolution_date_str:
+            if resolved_date_str:
                 try:
-                    resolved_at = datetime.strptime(resolution_date_str[:19], "%Y-%m-%dT%H:%M:%S")
+                    resolved_at = datetime.strptime(resolved_date_str[:19], "%Y-%m-%dT%H:%M:%S")
                 except Exception:
                     resolved_at = datetime.now()
             elif fields.get("updated"):
@@ -1065,6 +1071,8 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                 existing_issue.status = fields.get("status", {}).get("name") if fields.get("status") else None
                 existing_issue.complexity_score = complexity_score
                 existing_issue.complexity_detail = complexity_detail
+                existing_issue.resolved_date = resolved_at
+                existing_issue.raw_data = issue
         
             activity_key = f"{user.id}-jira-issue_completed-{issue_key}"
             if activity_key in processed_activities_cache:
@@ -1112,6 +1120,22 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
                 existing_activity.story_points = effective_sp
                 if project_db_id and not existing_activity.project_id:
                     existing_activity.project_id = project_db_id
+                if resolved_at:
+                    existing_activity.activity_date = resolved_at.date()
+                    existing_activity.activity_at = resolved_at
+                
+                # Update metadata
+                meta = dict(existing_activity.activity_metadata) if existing_activity.activity_metadata else {}
+                meta.update({
+                    "issue_summary": fields.get("summary"),
+                    "story_points": story_points,
+                    "feature_weight": feature_weight,
+                    "effective_sp": effective_sp,
+                    "status": status_name,
+                    "status_category": status_cat,
+                    "complexity_score": complexity_score,
+                })
+                existing_activity.activity_metadata = meta
 
         if issues_to_insert:
             db.add_all(issues_to_insert)
