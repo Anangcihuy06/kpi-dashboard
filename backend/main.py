@@ -293,6 +293,11 @@ def health_check():
         }, 503
 
 # Database diagnostics endpoint
+@app.get("/api/v1/db/diagnostics-tickets")
+def get_diagnostics_tickets(db: Session = Depends(get_db)):
+    tickets = db.query(models.RawJiraIssue).filter(models.RawJiraIssue.issue_key.like("KD-%")).all()
+    return {"tickets": [{"key": t.issue_key, "status": t.status, "resolved": str(t.resolved_date)} for t in tickets]}
+
 @app.get("/api/v1/db/diagnostics")
 def db_diagnostics():
     """Database diagnostics endpoint for debugging production issues"""

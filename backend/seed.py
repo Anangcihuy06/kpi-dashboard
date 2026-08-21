@@ -44,37 +44,29 @@ def seed_data():
     db.commit()
     db.refresh(kpi_rule)
     
-    # Metric 1: Jira Story Points (40%)
+    # Metric 1: Feature Complexity Score (90%)
     metric1 = KPIRuleMetric(
         kpi_rule_id=kpi_rule.id,
-        metric_key="jira_sp",
-        weight=0.40,
+        metric_key="feature_complexity",
+        category="ENGINEERING",
+        weight=0.90,
         calc_type="FORMULA",
-        formula_expression="min((jira_sp / target_sp) * 100, 120)",
-        variables={"target_sp": 20},
-        cap_score=120.0
+        formula_expression="min((complexity_sp / target_complexity_pts) * 100, 100)",
+        variables={"target_complexity_pts": 300, "max_c": 5, "max_i": 5, "max_s": 5, "max_r": 3, "max_o": 2},
+        cap_score=100.0
     )
-    # Metric 2: GitLab Merge Requests (40%)
+    # Metric 2: Attendance Score (10%)
     metric2 = KPIRuleMetric(
         kpi_rule_id=kpi_rule.id,
-        metric_key="gitlab_mr",
-        weight=0.40,
-        calc_type="FORMULA",
-        formula_expression="(gitlab_mr_merged / target_mr) * 100",
-        variables={"target_mr": 5},
-        cap_score=100.0
-    )
-    # Metric 3: Attendance Score (20%)
-    metric3 = KPIRuleMetric(
-        kpi_rule_id=kpi_rule.id,
         metric_key="attendance",
-        weight=0.20,
+        category="DISCIPLINE",
+        weight=0.10,
         calc_type="FORMULA",
         formula_expression="max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)",
-        variables={"target_days": 10},
+        variables={"target_days": 261, "late_percentage": 5},
         cap_score=100.0
     )
-    db.add_all([metric1, metric2, metric3])
+    db.add_all([metric1, metric2])
     db.commit()
     
     # 4. Create Users (Hierarchical Structure)
@@ -108,11 +100,10 @@ def seed_data():
     db.add(ryan)
     db.commit()
 
-    # 5. Metrics list (matching new 3-metric structure)
+    # 5. Metrics list (matching new structure)
     metrics_list = [
-        {"metric_key": "jira_sp", "weight": 0.40, "formula_expression": "min((jira_sp / target_sp) * 100, 120)", "variables": {"target_sp": 20}, "cap_score": 120.0},
-        {"metric_key": "gitlab_mr", "weight": 0.40, "formula_expression": "(gitlab_mr_merged / target_mr) * 100", "variables": {"target_mr": 5}, "cap_score": 100.0},
-        {"metric_key": "attendance", "weight": 0.20, "formula_expression": "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)", "variables": {"target_days": 10}, "cap_score": 100.0}
+        {"metric_key": "feature_complexity", "weight": 0.90, "formula_expression": "min((complexity_sp / target_complexity_pts) * 100, 100)", "variables": {"target_complexity_pts": 300, "max_c": 5, "max_i": 5, "max_s": 5, "max_r": 3, "max_o": 2}, "cap_score": 100.0},
+        {"metric_key": "attendance", "weight": 0.10, "formula_expression": "max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)", "variables": {"target_days": 261, "late_percentage": 5}, "cap_score": 100.0}
     ]
 
     # 6. Generate attendance data + raw metrics for Ryan (will be created after Jira sync)

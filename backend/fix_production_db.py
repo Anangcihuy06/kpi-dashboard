@@ -152,6 +152,70 @@ def fix_database_issues():
         else:
             print("✅ Integration settings exist")
         
+        # Ensure Technology Division KPI rule has feature_complexity
+        print("3. Checking Technology Division KPI Rule...")
+        from models import KPIRule, KPIRuleMetric
+        
+        # Find IT/Technology division
+        it_div = db.query(Division).filter(Division.code.in_(["IT", "Technology"])).first()
+        if it_div:
+            # Find default rule (group_id is None)
+            rule = db.query(KPIRule).filter(
+                KPIRule.division_id == it_div.id,
+                KPIRule.group_id.is_(None)
+            ).first()
+            
+            if not rule:
+                print("Creating default KPI Rule for Technology division...")
+                rule = KPIRule(
+                    division_id=it_div.id,
+                    name="IT Developer KPI Matrix",
+                    version=1,
+                    is_active=True
+                )
+                db.add(rule)
+                db.commit()
+                db.refresh(rule)
+                
+            # Check if it has feature_complexity
+            has_fc = db.query(KPIRuleMetric).filter(
+                KPIRuleMetric.kpi_rule_id == rule.id,
+                KPIRuleMetric.metric_key == "feature_complexity"
+            ).first()
+            
+            if not has_fc:
+                print("Adding feature_complexity metric to Technology division rule...")
+                # Delete existing metrics
+                db.query(KPIRuleMetric).filter(KPIRuleMetric.kpi_rule_id == rule.id).delete()
+                db.commit()
+                
+                # Add new metrics
+                m1 = KPIRuleMetric(
+                    kpi_rule_id=rule.id,
+                    metric_key="feature_complexity",
+                    category="ENGINEERING",
+                    weight=0.90,
+                    calc_type="FORMULA",
+                    formula_expression="min((complexity_sp / target_complexity_pts) * 100, 100)",
+                    variables={"target_complexity_pts": 300, "max_c": 5, "max_i": 5, "max_s": 5, "max_r": 3, "max_o": 2},
+                    cap_score=100.0
+                )
+                m2 = KPIRuleMetric(
+                    kpi_rule_id=rule.id,
+                    metric_key="attendance",
+                    category="DISCIPLINE",
+                    weight=0.10,
+                    calc_type="FORMULA",
+                    formula_expression="max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)",
+                    variables={"target_days": 261, "late_percentage": 5},
+                    cap_score=100.0
+                )
+                db.add_all([m1, m2])
+                db.commit()
+                print("✅ Technology Division KPI Rule updated with feature_complexity")
+            else:
+                print("✅ Technology Division KPI Rule already has feature_complexity")
+                
         db.close()
         print("✅ Issues fixed successfully")
         return True
