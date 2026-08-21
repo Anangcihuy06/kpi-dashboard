@@ -39,85 +39,138 @@ from comprehensive_sync import sync_user_comprehensive, calculate_daily_aggregat
 
 def sync_subordinates_for_supervisor(db, supervisor, token):
     """
-    Fetch subordinates of a supervisor from HRIS and assign the supervisor's
-    division/group to each employee. Idempotent — safe to call multiple times.
+    Fetch subordinates of a supervisor from HRIS members API and sync the
+    full hierarchy recursively.  Each member's division/group/team/position
+    is taken from their own API data (not copied from supervisor).
     Returns the number of employees processed.
     """
     if not supervisor or not token:
         return 0
 
     hdr = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    url = "https://hris-api.atibusinessgroup.com/api/app/overtime/request-data"
+    url = "https://talent-backend.andreasbilly.com/api/app/users/members"
     try:
-        res = requests.get(url, headers=hdr, timeout=8)
+        res = requests.get(url, headers=hdr, timeout=15)
         if res.status_code != 200:
-            print(f"[Sync] Failed to fetch subordinates for {supervisor.id}: HTTP {res.status_code}")
+            print(f"[Sync] Failed to fetch members for {supervisor.id}: HTTP {res.status_code}")
             return 0
-        employees = res.json().get("employee", [])
+        members = res.json()  # returns array directly
+        if not isinstance(members, list):
+            print(f"[Sync] Unexpected response format for {supervisor.id}")
+            return 0
     except Exception as e:
-        print(f"[Sync Warning] Failed to fetch subordinates for {supervisor.id}: {str(e)}")
+        print(f"[Sync Warning] Failed to fetch members for {supervisor.id}: {str(e)}")
         return 0
 
-    supervisor_division_id = supervisor.division_id
-    supervisor_group_id = supervisor.group_id
-    supervisor_group_name = supervisor.group_name
+    all_niks = set()
 
-    processed = 0
-    for emp in employees:
-        emp_nik = emp.get("nik")
-        emp_name = emp.get("name")
-        emp_id = emp.get("id")
+    def _ensure_division(div_info):
+        """Ensure division exists in DB and return its id."""
+        if not div_info or not div_info.get("id"):
+            return None
+        div_id = str(div_info["id"])
+        div_db = db.query(models.Division).filter(models.Division.id == div_id).first()
+        if not div_db:
+            div_db = models.Division(
+                id=div_id,
+                code=div_info.get("divCode", div_info.get("division", "UNKNOWN")),
+                name=div_info.get("division", "Unknown Division")
+            )
+            db.add(div_db)
+            db.commit()
+        return div_id
 
-        if not emp_nik:
-            continue
-        if emp_nik == supervisor.nik:
-            continue
+    def _process_member(member, parent_id):
+        """Process a single member and recursively process their children."""
+        nonlocal all_niks
 
-        sub = db.query(models.User).filter(models.User.nik == emp_nik).first()
+        nik = member.get("nik")
+        if not nik:
+            return 0
+        if nik == supervisor.nik and parent_id == supervisor.id:
+            return 0  # skip self
+
+        all_niks.add(nik)
+        first_name = member.get("firstName", "")
+        last_name = member.get("lastName", "")
+        full_name = f"{first_name} {last_name}".strip()
+        emp_id = member.get("id")
+        office_email = member.get("officeEmail", "")
+        children = member.get("children", [])
+        has_children = len(children) > 0
+
+        # Extract org info from this member's own data
+        div_info = member.get("division")
+        group_info = member.get("group")
+
+        division_id = _ensure_division(div_info)
+        group_id = str(group_info["id"]) if group_info and group_info.get("id") else None
+        group_name = group_info.get("group") if group_info else None
+
+        sub = db.query(models.User).filter(models.User.nik == nik).first()
         if sub:
-            sub.supervisor_id = supervisor.id
-            sub.employee_id = str(emp_id)
-            sub.full_name = emp_name
-            if supervisor_division_id:
-                sub.division_id = supervisor_division_id
-            if supervisor_group_id:
-                sub.group_id = supervisor_group_id
-                sub.group_name = supervisor_group_name
+            sub.supervisor_id = parent_id
+            sub.employee_id = str(emp_id) if emp_id else sub.employee_id
+            sub.full_name = full_name or sub.full_name
+            if office_email:
+                sub.email = office_email
+            if division_id:
+                sub.division_id = division_id
+            if group_id:
+                sub.group_id = group_id
+                sub.group_name = group_name
+            sub.has_subordinates = has_children
             db.commit()
         else:
-            temp_id = str(emp_id)
+            temp_id = str(emp_id) if emp_id else f"ext_{nik}"
             id_exists = db.query(models.User).filter(models.User.id == temp_id).first()
             if id_exists:
                 temp_id = f"ext_{emp_id}"
             new_sub = models.User(
                 id=temp_id,
-                nik=emp_nik,
-                employee_id=str(emp_id),
-                full_name=emp_name,
+                nik=nik,
+                employee_id=str(emp_id) if emp_id else None,
+                full_name=full_name or f"User {nik}",
+                email=office_email or None,
                 roles=["EMPLOYEE"],
-                has_subordinates=False,
+                has_subordinates=has_children,
                 is_active=True,
-                division_id=supervisor_division_id,
-                group_id=supervisor_group_id,
-                group_name=supervisor_group_name,
-                supervisor_id=supervisor.id,
+                division_id=division_id,
+                group_id=group_id,
+                group_name=group_name,
+                supervisor_id=parent_id,
                 jira_account_id=f"jira_user_{temp_id}",
                 gitlab_username=f"gitlab_user_{temp_id}"
             )
             db.add(new_sub)
             db.commit()
-        processed += 1
+            sub = db.query(models.User).filter(models.User.nik == nik).first()
+
+        processed = 1
+
+        # Recursively process children — their supervisor is this member
+        child_parent_id = sub.id if sub else parent_id
+        for child in children:
+            processed += _process_member(child, child_parent_id)
+
+        return processed
+
+    # Process all top-level members — they are direct subordinates of the logged-in supervisor
+    processed = 0
+    for member in members:
+        processed += _process_member(member, supervisor.id)
 
     # Remove supervisor links for subordinates no longer returned by HRIS
-    if "ROLE_ADMIN" not in (supervisor.roles or []):
-        api_niks = {emp["nik"] for emp in employees if emp.get("nik")}
+    if "ROLE_ADMIN" not in (supervisor.roles or []) and all_niks:
         db.query(models.User).filter(
             models.User.supervisor_id == supervisor.id,
-            ~models.User.nik.in_(list(api_niks))
+            ~models.User.nik.in_(list(all_niks))
         ).update({"supervisor_id": None}, synchronize_session=False)
         db.commit()
 
+    print(f"[Sync] Processed {processed} members for supervisor {supervisor.id} ({supervisor.full_name})")
     return processed
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -635,7 +688,7 @@ def _recursive_subordinates(db: Session, supervisor_id: str, visited: set) -> Li
 # Endpoints
 @app.post("/api/v1/auth/login")
 def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    external_url = "https://hris-api.atibusinessgroup.com/api/authenticate/mobile"
+    external_url = "https://talent-backend.andreasbilly.com/api/authenticate/mobile"
     try:
         response = requests.post(external_url, json={
             "username": payload.username,
@@ -658,7 +711,7 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
     token = user_data.get("id_token")
     if token:
         try:
-            profile_url = "https://hris-api.atibusinessgroup.com/api/app/users/profile"
+            profile_url = "https://talent-backend.andreasbilly.com/api/app/users/profile"
             profile_resp = requests.get(profile_url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
             print("PROFILE_STATUS:", profile_resp.status_code)
             if profile_resp.status_code == 200:
@@ -834,13 +887,13 @@ def update_user_email(user_id: str, payload: UpdateUserEmailRequest, db: Session
 
 @app.post("/api/v1/auth/debug_login")
 def debug_login(payload: LoginRequest):
-    external_url = "https://hris-api.atibusinessgroup.com/api/authenticate/mobile"
+    external_url = "https://talent-backend.andreasbilly.com/api/authenticate/mobile"
     response = requests.post(external_url, json={"username": payload.username, "password": payload.password}, timeout=10)
     user_data = response.json()
     token = user_data.get("id_token")
     profile_data = None
     if token:
-        profile_url = "https://hris-api.atibusinessgroup.com/api/app/users/profile"
+        profile_url = "https://talent-backend.andreasbilly.com/api/app/users/profile"
         profile_resp = requests.get(profile_url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
         try:
             profile_data = profile_resp.json()

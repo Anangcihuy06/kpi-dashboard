@@ -29,7 +29,7 @@ def get_system_token(max_retries=3, retry_delay=1) -> str:
         logger.warning("No HRIS system credentials configured (HRIS_SYSTEM_USERNAME/PASSWORD). Set them in the environment.")
         return ""
 
-    url = "https://hris-api.atibusinessgroup.com/api/authenticate/mobile"
+    url = "https://talent-backend.andreasbilly.com/api/authenticate/mobile"
     for attempt in range(max_retries):
         try:
             res = requests.post(url, json={
@@ -85,7 +85,7 @@ def fetch_timesheet_schedules(max_retries=3, retry_delay=2) -> dict:
     for attempt in range(max_retries):
         try:
             res = requests.get(
-                "https://hris-api.atibusinessgroup.com/api/app/timesheets?page=0&size=100",
+                "https://talent-backend.andreasbilly.com/api/app/timesheets?page=0&size=100",
                 headers=headers, timeout=30
             )
             if res.status_code == 200:
@@ -141,7 +141,7 @@ def fetch_all_subordinates_attendance(token: str, year: int) -> dict:
     
     while True:
         url = (
-            f"https://hris-api.atibusinessgroup.com/api/app/users/attendances-new"
+            f"https://talent-backend.andreasbilly.com/api/app/users/attendances-new"
             f"?page={page}&size={page_size}&sort=clockin_timesheet"
             f"&startDate={start_str}&endDate={end_str}"
         )
