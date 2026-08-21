@@ -99,13 +99,10 @@ def sync_subordinates_for_supervisor(db, supervisor, token):
         children = member.get("children", [])
         has_children = len(children) > 0
 
-        # Extract org info from this member's own data
-        div_info = member.get("division")
-        group_info = member.get("group")
-
-        division_id = _ensure_division(div_info)
-        group_id = str(group_info["id"]) if group_info and group_info.get("id") else None
-        group_name = group_info.get("group") if group_info else None
+        # Force members to inherit division and group from the logged-in supervisor
+        division_id = supervisor.division_id
+        group_id = supervisor.group_id
+        group_name = supervisor.group_name
 
         sub = db.query(models.User).filter(models.User.nik == nik).first()
         if sub:
