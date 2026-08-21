@@ -26,3 +26,21 @@ npm-debug.log*
 # OS
 .DS_Store
 Thumbs.db
+
+# Documentation & Design Files
+*.doc
+*.docx
+*design*.md
+*Design*.md
+*doc*.md
+*Doc*.md
+*guide*.md
+*GUIDE*.md
+IMPLEMENTATION*.md
+TECHNICAL*.md
+KPI_Dashboard*.md
+RAILWAY*.md
+design.md
+
+!AGENTS.md
+!README.md
