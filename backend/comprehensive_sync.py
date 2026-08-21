@@ -427,7 +427,7 @@ def sync_gitlab_commits(db: Session, user: models.User, settings: models.Integra
         
         async def fetch_events_parallel():
             async with httpx.AsyncClient(timeout=15.0) as client:
-                tasks = []
+                all_events = []
                 for p in range(1, 31):
                     params = {
                         "action": "pushed",
@@ -436,20 +436,19 @@ def sync_gitlab_commits(db: Session, user: models.User, settings: models.Integra
                         "per_page": 100,
                         "page": p
                     }
-                    tasks.append(client.get(events_url, headers=headers, params=params))
-                
-                responses = await asyncio.gather(*tasks, return_exceptions=True)
-                all_events = []
-                for res in responses:
-                    if isinstance(res, Exception):
-                        continue
-                    if res.status_code == 200:
-                        try:
+                    try:
+                        res = await client.get(events_url, headers=headers, params=params)
+                        if res.status_code == 200:
                             evs = res.json()
-                            if evs:
-                                all_events.extend(evs)
-                        except Exception:
-                            pass
+                            if not evs:
+                                break
+                            all_events.extend(evs)
+                            if len(evs) < 100:
+                                break
+                        else:
+                            break
+                    except Exception:
+                        break
                 return all_events
                 
         events_list = asyncio.run(fetch_events_parallel())
