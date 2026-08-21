@@ -2432,8 +2432,11 @@ def get_team_yearly_performance(
     
     job_key = f"{user_id}_{year}_{direct_only}"
     
-    if force_refresh and job_key in TEAM_YEARLY_JOBS:
-        del TEAM_YEARLY_JOBS[job_key]
+    if force_refresh:
+        for b in [True, False]:
+            k = f"{user_id}_{year}_{b}"
+            if k in TEAM_YEARLY_JOBS:
+                del TEAM_YEARLY_JOBS[k]
         
     if job_key in TEAM_YEARLY_JOBS:
         job = TEAM_YEARLY_JOBS[job_key]

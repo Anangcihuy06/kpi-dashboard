@@ -90,21 +90,21 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
     }
   };
 
-  const fetchPerformance = async () => {
+  const fetchPerformance = async (force = false) => {
     setLoading(true);
     setError(null);
     try {
       const response = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/kpi/team-yearly?user_id=${rootId}&year=${selectedYear}`,
+        `${import.meta.env.VITE_API_URL}/api/v1/kpi/team-yearly?user_id=${rootId}&year=${selectedYear}${force ? '&force_refresh=true' : ''}`,
         { cache: "no-store" }
       );
-      
+
       if (response.status === 202) {
         // Polling if background calculation is running
-        setTimeout(fetchPerformance, 3000);
+        setTimeout(() => fetchPerformance(true), 3000);
         return; // Keep loading true
       }
-      
+
       if (!response.ok) throw new Error("Gagal mengambil data tim");
       const result = await response.json();
       if (result.status === "success") {
@@ -156,8 +156,8 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
             ? `${displayMembers.length} anggota tim (mencakup seluruh bawahan hingga level terbawah)`
             : "Ringkasan performa seluruh bawahan Anda"}
         </p>
-        <div className="status-strip">
-          <span className={`status-pill ${syncPillClass}`}>
+        <div className="status-strip" style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <span className={`status-pill ${syncPillClass}`} onClick={() => fetchPerformance(true)} style={{ cursor: "pointer" }} title="Klik untuk Muat Ulang">
             <RefreshCw size={11} className={syncStatus.is_syncing ? "animate-spin" : ""} />
             {syncPillLabel}
           </span>
@@ -255,7 +255,7 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
           <p>
             {error || "Anggota tim belum tersedia untuk periode terpilih. Data akan muncul otomatis setelah disinkronkan dari HRIS."}
           </p>
-          <button className="btn-primary" onClick={fetchPerformance} style={{ marginTop: 8 }}>
+          <button className="btn-primary" onClick={() => fetchPerformance(true)} style={{ marginTop: 8 }}>
             <RefreshCw size={16} /> Muat Ulang
           </button>
         </div>
@@ -358,6 +358,7 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
   const leaderboard = [...displayMembers]
     .sort((a, b) => (Number(b.kpi_scores?.overall) || 0) - (Number(a.kpi_scores?.overall) || 0))
     .slice(0, 8)
+    .reverse() // Recharts vertical layout draws from bottom-to-top, so reversing makes #1 appear at the very top visually
     .map(m => ({
       name: (m.full_name || "").split(" ").slice(0, 2).join(" ") || m.nik,
       Score: Number(m.kpi_scores?.overall) || 0,
