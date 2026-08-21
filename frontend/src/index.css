@@ -568,7 +568,8 @@ p {
 
 .login-header-logo {
   max-width: 90px;
-  margin-bottom: var(--space-8);
+  display: block;
+  margin: 0 auto var(--space-8) auto;
   filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.1));
 }
 
