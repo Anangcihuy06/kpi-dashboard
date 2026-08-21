@@ -1,3 +1,4 @@
+from sqlalchemy import and_
 import requests
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks, Response
