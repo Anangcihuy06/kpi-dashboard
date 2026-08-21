@@ -156,9 +156,9 @@ def fix_database_issues():
         print("3. Checking Technology Division KPI Rule...")
         from models import KPIRule, KPIRuleMetric
         
-        # Find IT/Technology division
-        it_div = db.query(Division).filter(Division.code.in_(["IT", "Technology"])).first()
-        if it_div:
+        # Find IT/Technology divisions
+        it_divs = db.query(Division).filter(Division.code.in_(["IT", "Technology"])).all()
+        for it_div in it_divs:
             # Find default rule (group_id is None)
             rule = db.query(KPIRule).filter(
                 KPIRule.division_id == it_div.id,
@@ -166,7 +166,7 @@ def fix_database_issues():
             ).first()
             
             if not rule:
-                print("Creating default KPI Rule for Technology division...")
+                print(f"Creating default KPI Rule for division {it_div.name}...")
                 rule = KPIRule(
                     division_id=it_div.id,
                     name="IT Developer KPI Matrix",
@@ -184,7 +184,7 @@ def fix_database_issues():
             ).first()
             
             if not has_fc:
-                print("Adding feature_complexity metric to Technology division rule...")
+                print(f"Adding feature_complexity metric to division {it_div.name} rule...")
                 # Delete existing metrics
                 db.query(KPIRuleMetric).filter(KPIRuleMetric.kpi_rule_id == rule.id).delete()
                 db.commit()
@@ -212,9 +212,9 @@ def fix_database_issues():
                 )
                 db.add_all([m1, m2])
                 db.commit()
-                print("✅ Technology Division KPI Rule updated with feature_complexity")
+                print(f"✅ Division {it_div.name} KPI Rule updated with feature_complexity")
             else:
-                print("✅ Technology Division KPI Rule already has feature_complexity")
+                print(f"✅ Division {it_div.name} KPI Rule already has feature_complexity")
                 
         db.close()
         print("✅ Issues fixed successfully")
