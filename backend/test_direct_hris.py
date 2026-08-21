@@ -1,6 +1,6 @@
 import requests
 import json
-url = "https://talent-backend.andreasbilly.com/api/authenticate/mobile"
+url = "https://hris-api.atibusinessgroup.com/api/authenticate/mobile"
 res = requests.post(url, json={
     "username": "01.05.13.500",
     "password": "rf1d"
