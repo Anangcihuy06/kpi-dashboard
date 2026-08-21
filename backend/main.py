@@ -292,6 +292,31 @@ def health_check():
             "timestamp": datetime.now().isoformat()
         }, 503
 
+@app.get("/api/v1/db/fix-rules")
+def fix_rules(db: Session = Depends(get_db)):
+    import fix_production_db
+    result = {}
+    try:
+        fix_production_db.setup_production_database()
+        result["setup"] = "success"
+    except Exception as e:
+        result["setup_error"] = str(e)
+        
+    try:
+        group_rules = db.query(models.KPIRule).filter(models.KPIRule.group_id.isnot(None)).all()
+        deleted = []
+        for r in group_rules:
+            metrics = [m.metric_key for m in r.metrics]
+            if len(metrics) == 1 and metrics[0] == "attendance":
+                db.delete(r)
+                deleted.append(r.group_id)
+        db.commit()
+        result["deleted_groups"] = deleted
+    except Exception as e:
+        result["delete_error"] = str(e)
+        
+    return result
+
 # Database diagnostics endpoint
 @app.get("/api/v1/db/diagnostics-tickets")
 def get_diagnostics_tickets(db: Session = Depends(get_db)):
