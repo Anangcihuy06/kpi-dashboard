@@ -410,6 +410,11 @@ export default function Configurator() {
   };
 
   const handleCalcKPI = async () => {
+    if (metrics.length === 0) {
+      toast.warning("Matriks KPI belum dikonfigurasi. Silakan tambahkan indikator terlebih dahulu agar kalkulasi dapat berjalan.", { autoClose: 5000 });
+      return;
+    }
+    
     setCalcLoading(true);
     setCalcProgress(0);
     try {
@@ -655,8 +660,21 @@ export default function Configurator() {
                     </tr>
                   </thead>
                   <tbody>
-                    {metrics.map((metric, idx) => (
-                      <tr key={idx}>
+                    {metrics.length === 0 ? (
+                      <tr>
+                        <td colSpan="6" style={{ textAlign: "center", padding: "40px 20px", background: "#f8fafc" }}>
+                          <div style={{ color: "var(--color-text-muted)", marginBottom: "12px" }}>
+                            <AlertCircle size={32} style={{ margin: "0 auto", color: "#94a3b8" }} />
+                          </div>
+                          <h4 style={{ margin: "0 0 8px 0", color: "var(--color-primary)" }}>Belum Ada Configure Matrix</h4>
+                          <p style={{ margin: 0, fontSize: "14px", color: "var(--color-text-muted)" }}>
+                            Silakan tambahkan indikator baru atau buat otomatis dengan AI.
+                          </p>
+                        </td>
+                      </tr>
+                    ) : (
+                      metrics.map((metric, idx) => (
+                        <tr key={idx}>
                         <td>
                           <input
                             type="text"
@@ -742,7 +760,7 @@ export default function Configurator() {
                           </button>
                         </td>
                       </tr>
-                    ))}
+                    )))}
                   </tbody>
                 </table>
               </div>
