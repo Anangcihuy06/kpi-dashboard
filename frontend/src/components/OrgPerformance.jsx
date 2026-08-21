@@ -66,6 +66,7 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
   const [syncStatus, setSyncStatus] = useState({ last_sync_time: null, is_syncing: false });
   const [expanded, setExpanded] = useState({});
   const [detailMember, setDetailMember] = useState(null);
+  const [selectedGroup, setSelectedGroup] = useState("ALL");
 
   const rootId = String(userId || "");
 
@@ -134,14 +135,25 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
   const syncPillClass = syncStatus.is_syncing ? "syncing" : "live";
   const syncPillLabel = syncStatus.is_syncing ? "Sinkronisasi berjalan" : "Data terbaru";
 
+  const treeRoots = buildOrgTree(members);
+  const managerGroups = treeRoots.filter(r => r.children.length > 0 || r.has_subordinates);
+
+  let displayMembers = members;
+  if (selectedGroup !== "ALL") {
+    const groupRoot = treeRoots.find(r => String(r.user_id) === String(selectedGroup));
+    if (groupRoot) {
+      displayMembers = flattenTree([groupRoot]).map(item => item.node);
+    }
+  }
+
   const renderHeader = () => (
     <div className="header-ui">
       <div>
         <span className="hero-eyebrow">Organizational Performance</span>
         <h2>Dashboard Tim</h2>
         <p style={{ color: "var(--color-text-muted)", fontSize: "14px", margin: 0 }}>
-          {members.length > 0
-            ? `${members.length} anggota tim (mencakup seluruh bawahan hingga level terbawah)`
+          {displayMembers.length > 0
+            ? `${displayMembers.length} anggota tim (mencakup seluruh bawahan hingga level terbawah)`
             : "Ringkasan performa seluruh bawahan Anda"}
         </p>
         <div className="status-strip">
@@ -152,7 +164,25 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
           <span>Terakhir diperbarui: <strong>{formatLastSyncTime()}</strong></span>
         </div>
       </div>
-      <div className="filter-group" style={{ display: "flex", justifyContent: "flex-end", alignItems: "flex-end" }}>
+      <div className="filter-group" style={{ display: "flex", justifyContent: "flex-end", alignItems: "flex-end", gap: 16 }}>
+        {managerGroups.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            <label className="form-label" style={{ fontWeight: 600, fontSize: "11px", color: "var(--color-text-muted)" }}>
+              Grup Tim
+            </label>
+            <select
+              className="select-control"
+              value={selectedGroup}
+              onChange={(e) => setSelectedGroup(e.target.value)}
+              aria-label="Pilih Grup"
+            >
+              <option value="ALL">Semua Tim</option>
+              {managerGroups.map(mg => (
+                <option key={mg.user_id} value={String(mg.user_id)}>Grup {mg.full_name || mg.nik}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
           <label className="form-label" style={{ fontWeight: 600, fontSize: "11px", color: "var(--color-text-muted)" }}>
             Periode Evaluasi
@@ -233,24 +263,24 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
     );
   }
 
-  const directCount = members.filter(m => String(m.supervisor_id) === rootId).length;
-  const indirectCount = members.length - directCount;
+  const directCount = displayMembers.filter(m => String(m.supervisor_id) === (selectedGroup === "ALL" ? rootId : String(selectedGroup))).length;
+  const indirectCount = displayMembers.length - directCount;
 
   const avg = (key) => {
-    const vals = members.map(m => Number(m.kpi_scores?.[key]) || 0);
+    const vals = displayMembers.map(m => Number(m.kpi_scores?.[key]) || 0);
     return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
   };
   const avgOverall = avg("overall");
-  const topPerformer = [...members].sort((a, b) =>
+  const topPerformer = [...displayMembers].sort((a, b) =>
     (Number(b.kpi_scores?.overall) || 0) - (Number(a.kpi_scores?.overall) || 0)
   )[0];
 
-  const totalAtt = members.reduce((s, m) => s + (m.summary?.total_attendance_days || 0), 0);
-  const totalLate = members.reduce((s, m) => s + (m.summary?.total_late_count || 0), 0);
+  const totalAtt = displayMembers.reduce((s, m) => s + (m.summary?.total_attendance_days || 0), 0);
+  const totalLate = displayMembers.reduce((s, m) => s + (m.summary?.total_late_count || 0), 0);
   const attPct = totalAtt > 0 ? ((totalAtt - totalLate) / totalAtt) * 100 : 100;
 
   const monthly = {};
-  members.forEach(m => {
+  displayMembers.forEach(m => {
     (m.daily_breakdown || []).forEach(day => {
       if (!day.date || day.overall_score == null) return;
       const key = day.date.substring(0, 7);
@@ -280,11 +310,11 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
   const humanizeKey = (key) =>
     ({ feature_complexity: "Feature Complexity", attendance: "Kehadiran", engineering: "Engineering", delivery: "Delivery", quality: "Quality" })[key] ||
     String(key || "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-  const allSubTasks = members.flatMap(m => m.completed_tasks || []);
+  const allSubTasks = displayMembers.flatMap(m => m.completed_tasks || []);
   const avgSub = (key) =>
     allSubTasks.length ? allSubTasks.reduce((s, t) => s + (Number(t[key]) || 0), 0) / allSubTasks.length : 0;
   const ruleAgg = {};
-  members.forEach(m => {
+  displayMembers.forEach(m => {
     ((m.kpi_scores?.details) || []).forEach(d => {
       const key = d.metric_key || "other";
       if (!ruleAgg[key]) ruleAgg[key] = { sum: 0, wsum: 0, n: 0, weight: Number(d.weight) || 0, color: CHART_COLORS[Object.keys(ruleAgg).length % CHART_COLORS.length] };
@@ -325,7 +355,7 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
     }];
   });
 
-  const leaderboard = [...members]
+  const leaderboard = [...displayMembers]
     .sort((a, b) => (Number(b.kpi_scores?.overall) || 0) - (Number(a.kpi_scores?.overall) || 0))
     .slice(0, 8)
     .map(m => ({
@@ -333,7 +363,9 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
       Score: Number(m.kpi_scores?.overall) || 0,
     }));
 
-  const tree = buildOrgTree(members);
+  const tree = selectedGroup === "ALL" 
+    ? buildOrgTree(members) 
+    : treeRoots.filter(r => String(r.user_id) === String(selectedGroup));
   const flat = flattenTree(tree);
 
   const toggleNode = (id) => setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
@@ -352,7 +384,7 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
           <div className="stat-info">
             <h4>Total Tim</h4>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-              <span className="metric-value">{fmt(members.length)}</span>
+              <span className="metric-value">{fmt(displayMembers.length)}</span>
               {indirectCount > 0 && <span className="table-meta">{fmt(directCount)} direct · {fmt(indirectCount)} indirect</span>}
             </div>
           </div>
