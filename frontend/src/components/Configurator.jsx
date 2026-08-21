@@ -493,16 +493,28 @@ export default function Configurator() {
             <p style={{ fontSize: "13px", color: "var(--color-text-muted)", marginBottom: "20px" }}>
               <strong>Sync Data</strong> menarik data terbaru dari Jira/GitLab ke database lokal. <strong>Hitung KPI</strong> menghitung KPI karyawan menggunakan data yang sudah ada di database lokal.
             </p>
-            <div style={{ display: "flex", gap: "12px", alignItems: "flex-end", flexWrap: "wrap" }}>
-              <button
-                className="btn-primary"
-                onClick={handleSyncData}
-                disabled={syncDataLoading}
-                style={{ width: "auto", padding: "0 24px", height: "44px", display: "flex", alignItems: "center", gap: "8px" }}
-              >
-                {syncDataLoading ? <RefreshCw className="animate-spin" size={16} /> : <Globe size={16} />}
-                {syncDataLoading ? "Sync Data Berjalan..." : "Sync Data"}
-              </button>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: "16px" }}>
+              <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+                <button
+                  className="btn-primary"
+                  onClick={handleSyncData}
+                  disabled={syncDataLoading}
+                  style={{ width: "auto", padding: "0 24px", height: "44px", display: "flex", alignItems: "center", gap: "8px" }}
+                >
+                  {syncDataLoading ? <RefreshCw className="animate-spin" size={16} /> : <Globe size={16} />}
+                  {syncDataLoading ? "Sync Data Berjalan..." : "Sync Data"}
+                </button>
+                <button
+                  className="btn-primary"
+                  onClick={handleCalcKPI}
+                  disabled={calcLoading}
+                  style={{ width: "auto", padding: "0 24px", height: "44px", display: "flex", alignItems: "center", gap: "8px" }}
+                >
+                  {calcLoading ? <RefreshCw className="animate-spin" size={16} /> : <Play size={16} />}
+                  {calcLoading ? "Menghitung KPI..." : "Hitung KPI"}
+                </button>
+              </div>
+              
               <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                 <label className="form-label" style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>Pilih Tahun</label>
                 <select
@@ -515,15 +527,6 @@ export default function Configurator() {
                   ))}
                 </select>
               </div>
-              <button
-                className="btn-primary"
-                onClick={handleCalcKPI}
-                disabled={calcLoading}
-                style={{ width: "auto", padding: "0 24px", height: "44px", display: "flex", alignItems: "center", gap: "8px" }}
-              >
-{calcLoading ? <RefreshCw className="animate-spin" size={16} /> : <Play size={16} />}
-                {calcLoading ? "Menghitung KPI..." : "Hitung KPI"}
-              </button>
             </div>
             {calcLoading && (
               <div style={{ marginTop: "10px", width: "100%", maxWidth: "380px" }}>
