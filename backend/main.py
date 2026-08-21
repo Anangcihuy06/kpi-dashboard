@@ -1440,7 +1440,7 @@ def get_user_calculation_details(user_id: str, year: int, db: Session = Depends(
                 
                 if r_dt_naive and from_date <= r_dt_naive <= to_date:
                     status_lower = (ji.status or "").lower()
-                    if status_lower in ["done", "resolved", "ready to release", "ready for uat", "uat (user)", "ready for qa", "in qa"]:
+                    if status_lower in ["done", "resolved", "ready to release", "ready for uat", "uat (user)", "ready for qa", "in qa", "in review"]:
                         issues_completed += 1
                         sp = float(ji.story_points or 0.0)
                         cw = stored_feature_weight(ji)
@@ -2412,7 +2412,7 @@ def _compute_company_maxima(db: Session, from_date: datetime, to_date: datetime,
                 if r_dt_naive and from_date <= r_dt_naive <= to_date:
                     try:
                         status_lower = (ji.status or "").lower()
-                        if status_lower in ["done", "resolved", "ready to release", "ready for uat", "uat (user)", "ready for qa", "in qa"]:
+                        if status_lower in ["done", "resolved", "ready to release", "ready for uat", "uat (user)", "ready for qa", "in qa", "in review"]:
                             issues_cnt += 1
                             sp = float(ji.story_points or 0.0)
                             cw = stored_feature_weight(ji)
@@ -2712,7 +2712,7 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
                     if r_dt_naive and from_date <= r_dt_naive <= to_date:
                         try:
                             status_lower = (ji.status or "").lower()
-                            if status_lower in ["done", "resolved", "ready to release", "ready for uat", "uat (user)", "ready for qa", "in qa"]:
+                            if status_lower in ["done", "resolved", "ready to release", "ready for uat", "uat (user)", "ready for qa", "in qa", "in review"]:
                                 raw_jira_issues_count += 1
                                 sp = float(ji.story_points or 0.0)
                                 cw = stored_feature_weight(ji)

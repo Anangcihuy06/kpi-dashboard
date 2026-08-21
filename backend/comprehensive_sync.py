@@ -1035,7 +1035,7 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
             
             # Fallback for Jira Kanban boards or misconfigured workflows that don't set Resolution
             status_name = fields.get("status", {}).get("name", "").lower() if fields.get("status") else ""
-            if not resolved_date_str and status_name in ["done", "completed", "closed", "resolved"]:
+            if not resolved_date_str and status_name in ["done", "completed", "closed", "resolved", "in review"]:
                 resolved_date_str = fields.get("updated")
 
             resolved_at = None
