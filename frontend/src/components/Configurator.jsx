@@ -413,7 +413,7 @@ export default function Configurator() {
     setCalcLoading(true);
     setCalcProgress(0);
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/calculate/${selectedYear}`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/calculate/${selectedYear}?force=true`, {
         method: "POST"
       });
       if (!response.ok) {
