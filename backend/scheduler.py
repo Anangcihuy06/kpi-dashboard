@@ -291,8 +291,9 @@ def sync_data_only_job():
         from datetime import datetime as dt
 
         users = db.query(models.User).filter(models.User.is_active == True).all()
-        start_date = datetime(datetime.now().year, 1, 1, 0, 0, 0)
-        end_date = datetime(datetime.now().year, 12, 31, 23, 59, 59)
+        from datetime import timedelta
+        start_date = datetime.now() - timedelta(days=30)
+        end_date = datetime.now()
 
         # Parallel per-user sync. Each worker uses its OWN session because
         # SQLAlchemy Session is not thread-safe and a shared session would
