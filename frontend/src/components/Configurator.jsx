@@ -430,19 +430,33 @@ export default function Configurator() {
       }
       const data = await response.json();
 
+      const checkEmptyData = async () => {
+        try {
+          const checkRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/yearly-performance?user_id=${currentUser.id}&year=${selectedYear}`);
+          const checkData = await checkRes.json();
+          if (checkData.status === "success" && (!checkData.data || (checkData.data.summary?.total_activities === 0 && checkData.data.summary?.total_issues_completed === 0))) {
+             toast.warning(`Kalkulasi selesai, tetapi data untuk tahun ${selectedYear} masih kosong. Silakan jalankan 'Sync Data' terlebih dahulu.`, { autoClose: 6000 });
+          } else {
+             toast.success(`Kalkulasi KPI selesai untuk tahun ${selectedYear}.`);
+          }
+        } catch(e) {
+          toast.success(`Kalkulasi KPI selesai untuk tahun ${selectedYear}.`);
+        }
+      };
+
       if (data.job_id) {
         toast.info("Menghitung KPI dari data lokal...");
         pollJobUntilDone(data.job_id, async (statusData) => {
           setCalcLoading(false);
           setCalcProgress(100);
           if (statusData.status === "COMPLETED") {
-            toast.success(`Kalkulasi KPI selesai untuk tahun ${selectedYear}.`);
+            await checkEmptyData();
           } else {
             toast.error("Kalkulasi KPI gagal: " + (statusData.error_message || "Unknown error"));
           }
         }, 60 * 60 * 1000, setCalcProgress);
       } else {
-        toast.success(`Kalkulasi KPI selesai untuk tahun ${selectedYear}.`);
+        await checkEmptyData();
         setCalcLoading(false);
         setCalcProgress(100);
       }
