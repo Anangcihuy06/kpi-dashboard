@@ -879,7 +879,9 @@ def sync_jira_issues(db: Session, user: models.User, settings: models.Integratio
         search_url = f"{jira_url}/rest/api/3/search/jql"
         
         # JQL: query all issues assigned to user updated in the period or with completed status
-        jql = f'assignee = "{account_id}" AND updated >= "{start_date.date()}" AND updated <= "{end_date.date()}"'
+        # Note: Jira JQL '<= YYYY-MM-DD' implies midnight, so we add 1 day to end_date to include today's updates
+        end_date_jql = (end_date + timedelta(days=1)).date()
+        jql = f'assignee = "{account_id}" AND updated >= "{start_date.date()}" AND updated <= "{end_date_jql}"'
         
         async def fetch_jira_issues():
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -1152,8 +1154,9 @@ def sync_jira_worklogs(db: Session, user: models.User, settings: models.Integrat
         # Use /rest/api/3/search/jql endpoint for nextPageToken pagination
         search_url = f"{jira_url}/rest/api/3/search/jql"
         
-        # JQL to find issues the user has logged work on
-        jql = f'worklogAuthor = "{account_id}" AND worklogDate >= "{start_date.date()}" AND worklogDate <= "{end_date.date()}"'
+        # JQL: query all worklogs for the user in the period
+        end_date_jql = (end_date + timedelta(days=1)).date()
+        jql = f'worklogAuthor = "{account_id}" AND worklogDate >= "{start_date.date()}" AND worklogDate <= "{end_date_jql}"'
         
         async def fetch_jira_worklog_issues():
             async with httpx.AsyncClient(timeout=30.0) as client:
