@@ -4,6 +4,7 @@ import {
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar
 } from "recharts";
 import { Award, TrendingUp, GitMerge, CheckSquare, Calendar, RefreshCw, Clock, UserCheck, Info } from "lucide-react";
+import { toast } from "react-toastify";
 
 export default function Dashboard({ userId, isSelf }) {
   const [data, setData] = useState(null);
@@ -49,6 +50,9 @@ export default function Dashboard({ userId, isSelf }) {
       const result = await response.json();
       if (result.status === "success") {
         setData(result.data);
+        if (!result.data || (result.data.summary?.total_activities === 0 && result.data.summary?.total_issues_completed === 0)) {
+          toast.info(`Data KPI untuk tahun ${selectedYear} belum tersedia di database. Silakan jalankan 'Sync Data' terlebih dahulu di menu Configurator.`);
+        }
       } else {
         setData(null);
       }
