@@ -294,14 +294,51 @@ def health_check():
 
 @app.get("/api/v1/db/fix-rules")
 def fix_rules(db: Session = Depends(get_db)):
-    import fix_production_db
     result = {}
+    
+    # 1. Force create default rule for division 23
     try:
-        fix_production_db.setup_production_database()
-        result["setup"] = "success"
+        rule23 = db.query(models.KPIRule).filter(models.KPIRule.division_id == '23', models.KPIRule.group_id.is_(None)).first()
+        if not rule23:
+            rule23 = models.KPIRule(
+                id="def-div-23",
+                division_id="23",
+                name="Technology KPI Matrix",
+                version=1,
+                is_active=True
+            )
+            db.add(rule23)
+            db.commit()
+            db.refresh(rule23)
+            result["created_rule23"] = True
+            
+            # Add metrics
+            m1 = models.KPIRuleMetric(
+                kpi_rule_id=rule23.id,
+                metric_key="feature_complexity",
+                category="ENGINEERING",
+                weight=0.90,
+                calc_type="FORMULA",
+                formula_expression="min((complexity_sp / target_complexity_pts) * 100, 100)",
+                variables={"target_complexity_pts": 300, "max_c": 5, "max_i": 5, "max_s": 5, "max_r": 3, "max_o": 2},
+                cap_score=100.0
+            )
+            m2 = models.KPIRuleMetric(
+                kpi_rule_id=rule23.id,
+                metric_key="attendance",
+                category="DISCIPLINE",
+                weight=0.10,
+                calc_type="FORMULA",
+                formula_expression="max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)",
+                variables={"target_days": 261, "late_percentage": 5},
+                cap_score=100.0
+            )
+            db.add_all([m1, m2])
+            db.commit()
     except Exception as e:
-        result["setup_error"] = str(e)
+        result["create_error"] = str(e)
         
+    # 2. Delete group rules that only have attendance
     try:
         group_rules = db.query(models.KPIRule).filter(models.KPIRule.group_id.isnot(None)).all()
         deleted = []
