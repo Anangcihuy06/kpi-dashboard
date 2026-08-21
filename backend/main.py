@@ -1905,7 +1905,7 @@ async def sync_data_only(
                         update_job_progress(bg_db, jid, 80, "RUNNING")
             
             # Then do regular sync
-            result = sync_data_only_job()
+            result = sync_data_only_job(supervisor_id=supervisor_id)
             try:
                 _company_maxima_cache.clear()
             except Exception:
@@ -1958,7 +1958,7 @@ def _safe_mark_job_failed(db, job_id, error):
             pass
 
 @app.post("/api/v1/kpi/calculate/{year}")
-async def calculate_kpi_only(year: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), force: bool = False):
+async def calculate_kpi_only(year: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), force: bool = False, supervisor_id: str = None):
     """Calculate KPI using local DB data only (no external sync).
 
     By default only dates that are not already calculated are processed
@@ -1992,7 +1992,7 @@ async def calculate_kpi_only(year: int, background_tasks: BackgroundTasks, db: S
             def _progress_cb(pct):
                 with _bg_lock:
                     update_job_progress(bg_db, jid, int(pct), "RUNNING")
-            result = calculate_kpi_only_job(year, job_id=jid, progress_cb=_progress_cb, force=force)
+            result = calculate_kpi_only_job(year, job_id=jid, progress_cb=_progress_cb, force=force, supervisor_id=supervisor_id)
             try:
                 _company_maxima_cache.clear()
             except Exception:

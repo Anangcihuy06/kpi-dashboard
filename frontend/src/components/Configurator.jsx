@@ -383,7 +383,7 @@ export default function Configurator() {
   const handleSyncData = async () => {
     setSyncDataLoading(true);
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/sync/data`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/sync/data?supervisor_id=${currentUser.id || ""}`, {
         method: "POST"
       });
       if (!response.ok) throw new Error("Gagal menjalankan sync data");
@@ -413,7 +413,7 @@ export default function Configurator() {
     setCalcLoading(true);
     setCalcProgress(0);
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/calculate/${selectedYear}?force=true`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/calculate/${selectedYear}?force=true&supervisor_id=${currentUser.id || ""}`, {
         method: "POST"
       });
       if (!response.ok) {

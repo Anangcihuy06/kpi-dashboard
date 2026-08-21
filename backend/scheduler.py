@@ -253,7 +253,7 @@ def sync_sprints_job():
         db.close()
 
 
-def sync_data_only_job():
+def sync_data_only_job(supervisor_id=None):
     """
     Sync only data from Jira/GitLab into the local DB without calculating KPI.
     Used by the 'Sync Data' button in the Configurator.
@@ -290,7 +290,11 @@ def sync_data_only_job():
         from comprehensive_sync import sync_user_comprehensive
         from datetime import datetime as dt
 
-        users = db.query(models.User).filter(models.User.is_active == True).all()
+        from sqlalchemy import or_
+        query = db.query(models.User).filter(models.User.is_active == True)
+        if supervisor_id:
+            query = query.filter(or_(models.User.id == supervisor_id, models.User.supervisor_id == supervisor_id))
+        users = query.all()
         from datetime import timedelta
         start_date = datetime.now() - timedelta(days=30)
         end_date = datetime.now()
@@ -370,7 +374,7 @@ def _job_was_cancelled(db: Session, job_id: str) -> bool:
     return job is not None and job.status == "FAILED"
 
 
-def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=None, force: bool = False):
+def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=None, force: bool = False, supervisor_id: str = None):
     """
     Calculate KPI using data already present in the local DB.
     Does NOT call any external Jira/GitLab sync.
@@ -416,7 +420,11 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
         from concurrent.futures import ThreadPoolExecutor
 
         # Get all active users
-        users = db.query(models.User).filter(models.User.is_active == True).all()
+        from sqlalchemy import or_
+        query = db.query(models.User).filter(models.User.is_active == True)
+        if supervisor_id:
+            query = query.filter(or_(models.User.id == supervisor_id, models.User.supervisor_id == supervisor_id))
+        users = query.all()
 
         start_date = datetime(year, 1, 1, 0, 0, 0)
         end_date = datetime(year, 12, 31, 23, 59, 59)
