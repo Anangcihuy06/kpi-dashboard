@@ -290,10 +290,9 @@ def sync_data_only_job(supervisor_id=None):
         from comprehensive_sync import sync_user_comprehensive
         from datetime import datetime as dt
 
-        from sqlalchemy import or_
         query = db.query(models.User).filter(models.User.is_active == True)
         if supervisor_id:
-            query = query.filter(or_(models.User.id == supervisor_id, models.User.supervisor_id == supervisor_id))
+            query = query.filter(models.User.supervisor_id == supervisor_id)
         users = query.all()
         from datetime import timedelta
         start_date = datetime.now() - timedelta(days=30)
@@ -420,10 +419,9 @@ def calculate_kpi_only_job(year: int = None, job_id: str = None, progress_cb=Non
         from concurrent.futures import ThreadPoolExecutor
 
         # Get all active users
-        from sqlalchemy import or_
         query = db.query(models.User).filter(models.User.is_active == True)
         if supervisor_id:
-            query = query.filter(or_(models.User.id == supervisor_id, models.User.supervisor_id == supervisor_id))
+            query = query.filter(models.User.supervisor_id == supervisor_id)
         users = query.all()
 
         start_date = datetime(year, 1, 1, 0, 0, 0)
