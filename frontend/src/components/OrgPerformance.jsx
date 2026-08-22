@@ -361,14 +361,44 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
     }];
   });
 
-  const leaderboard = [...displayMembers]
-    .sort((a, b) => (Number(b.kpi_scores?.overall) || 0) - (Number(a.kpi_scores?.overall) || 0))
+  const uniqueGroups = [...new Set(displayMembers.map(m => m.group_name).filter(Boolean))];
+  const isMultiGroup = uniqueGroups.length > 1;
+  
+  let leaderboard = [];
+  if (isMultiGroup) {
+    const groupData = {};
+    displayMembers.forEach(m => {
+      const g = m.group_name;
+      if (!g) return;
+      if (!groupData[g]) groupData[g] = { totalScore: 0, count: 0 };
+      const score = Number(m.kpi_scores?.overall) || 0;
+      if (score > 0) {
+        groupData[g].totalScore += score;
+        groupData[g].count += 1;
+      }
+    });
+    
+    leaderboard = Object.keys(groupData).map(g => {
+      const avg = groupData[g].count > 0 ? (groupData[g].totalScore / groupData[g].count) : 0;
+      return { 
+        name: g.length > 20 ? g.substring(0, 20) + '...' : g, 
+        Score: parseFloat(avg.toFixed(1)) 
+      };
+    })
+    .filter(g => g.Score > 0)
+    .sort((a, b) => b.Score - a.Score)
     .slice(0, 8)
-    .reverse() // Recharts vertical layout draws from bottom-to-top, so reversing makes #1 appear at the very top visually
-    .map(m => ({
-      name: (m.full_name || "").split(" ").slice(0, 2).join(" ") || m.nik,
-      Score: Number(m.kpi_scores?.overall) || 0,
-    }));
+    .reverse();
+  } else {
+    leaderboard = [...displayMembers]
+      .sort((a, b) => (Number(b.kpi_scores?.overall) || 0) - (Number(a.kpi_scores?.overall) || 0))
+      .slice(0, 8)
+      .reverse()
+      .map(m => ({
+        name: (m.full_name || "").split(" ").slice(0, 2).join(" ") || m.nik,
+        Score: Number(m.kpi_scores?.overall) || 0,
+      }));
+  }
 
   const tree = selectedGroup === "ALL" 
     ? buildOrgTree(members) 
@@ -415,10 +445,10 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
             <Crown size={24} />
           </div>
           <div className="stat-info">
-            <h4>Top Performer</h4>
+            <h4>{isMultiGroup ? "Top Group" : "Top Performer"}</h4>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-              <span className="metric-value">{topPerformer ? (topPerformer.full_name || "—").split(" ").slice(0, 2).join(" ") : "—"}</span>
-              <span className="table-meta">{topPerformer ? fmt(topPerformer.kpi_scores?.overall, 2) : ""}</span>
+              <span className="metric-value">{isMultiGroup && leaderboard.length > 0 ? leaderboard[leaderboard.length-1].name : (topPerformer ? (topPerformer.full_name || "—").split(" ").slice(0, 2).join(" ") : "—")}</span>
+              <span className="table-meta">{isMultiGroup && leaderboard.length > 0 ? fmt(leaderboard[leaderboard.length-1].Score, 2) : (topPerformer ? fmt(topPerformer.kpi_scores?.overall, 2) : "")}</span>
             </div>
           </div>
         </div>
@@ -498,7 +528,7 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
         <div className="card">
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
             <Crown size={18} style={{ color: "#8b5cf6" }} />
-            <h3 style={{ margin: 0, fontSize: "var(--text-lg)", fontWeight: 700 }}>Top Performers</h3>
+            <h3 style={{ margin: 0, fontSize: "var(--text-lg)", fontWeight: 700 }}>{isMultiGroup ? "Top Groups" : "Top Performers"}</h3>
           </div>
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={leaderboard} layout="vertical" margin={{ top: 8, right: 24, left: 8, bottom: 0 }}>

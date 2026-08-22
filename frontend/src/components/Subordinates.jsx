@@ -177,12 +177,40 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
     exportToCSV(`Kinerja_Tim_${selectedYear}.csv`, exportData);
   };
 
+  const uniqueGroups = [...new Set(subordinates.map(m => m.group_name).filter(Boolean))];
+  const isMultiGroup = uniqueGroups.length > 1;
+
   const getLeaderboard = () => {
-    return [...subordinates]
-      .filter(s => s.kpi_scores && s.kpi_scores.overall > 0)
-      .sort((a, b) => b.kpi_scores.overall - a.kpi_scores.overall)
-      .slice(0, 3)
-      .map(s => ({ name: s.full_name.split(' ')[0], Score: parseFloat(s.kpi_scores.overall.toFixed(1)) }));
+    if (isMultiGroup) {
+      const groupData = {};
+      subordinates.forEach(m => {
+        const g = m.group_name;
+        if (!g) return;
+        if (!groupData[g]) groupData[g] = { totalScore: 0, count: 0 };
+        const score = Number(m.kpi_scores?.overall) || 0;
+        if (score > 0) {
+          groupData[g].totalScore += score;
+          groupData[g].count += 1;
+        }
+      });
+      
+      return Object.keys(groupData).map(g => {
+        const avg = groupData[g].count > 0 ? (groupData[g].totalScore / groupData[g].count) : 0;
+        return { 
+          name: g.length > 15 ? g.substring(0, 15) + '...' : g, 
+          Score: parseFloat(avg.toFixed(1)) 
+        };
+      })
+      .filter(g => g.Score > 0)
+      .sort((a, b) => b.Score - a.Score)
+      .slice(0, 3);
+    } else {
+      return [...subordinates]
+        .filter(s => s.kpi_scores && s.kpi_scores.overall > 0)
+        .sort((a, b) => b.kpi_scores.overall - a.kpi_scores.overall)
+        .slice(0, 3)
+        .map(s => ({ name: (s.full_name || "").split(' ')[0], Score: parseFloat(s.kpi_scores.overall.toFixed(1)) }));
+    }
   };
   const leaderboard = getLeaderboard();
 
@@ -398,7 +426,7 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
         <div className="card" style={{ marginBottom: "var(--space-6)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
             <Crown size={18} style={{ color: "#8b5cf6" }} />
-            <h3 style={{ margin: 0, fontSize: "var(--text-lg)", fontWeight: 700 }}>Top Performers Tim</h3>
+            <h3 style={{ margin: 0, fontSize: "var(--text-lg)", fontWeight: 700 }}>{isMultiGroup ? "Top Groups" : "Top Performers Tim"}</h3>
           </div>
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={leaderboard} layout="vertical" margin={{ top: 8, right: 24, left: 8, bottom: 0 }}>
