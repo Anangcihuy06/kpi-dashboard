@@ -124,7 +124,7 @@ export default function App() {
           <div className="floating-shape shape-2" />
           <div className="floating-shape shape-3" />
         </div>
-        
+
         <div className="login-card-premium-bold">
           <div className="logo-container-glow">
             <img
@@ -132,7 +132,7 @@ export default function App() {
               className="logo-premium"
             />
           </div>
-          
+
           <h2 className="auth-title-bold">KPI Dashboard Portal</h2>
           <p className="auth-subtitle-bold">Enterprise Performance Management System</p>
 
@@ -292,7 +292,7 @@ export default function App() {
               <p className="user-role-bold">{user.roles[0]?.replace(/^ROLE_/, "")}</p>
             </div>
           </div>
-          
+
           <button
             className="logout-btn-bold"
             onClick={handleLogout}
@@ -306,7 +306,7 @@ export default function App() {
       </nav>
 
       {/* Bold Premium Main Content Area */}
-      <main className="main-content" style={{ 
+      <main className="main-content" style={{
         marginLeft: sidebarCollapsed ? '80px' : '320px',
         transition: 'margin-left 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)',
         background: 'radial-gradient(at 80% 0%, rgba(64, 89, 198, 0.08) 0%, transparent 50%), radial-gradient(at 0% 100%, rgba(102, 122, 209, 0.06) 0%, transparent 50%), linear-gradient(180deg, #f8fafc 0%, #e8edfc 100%)',
