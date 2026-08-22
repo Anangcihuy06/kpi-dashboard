@@ -762,7 +762,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #0a0e3a 0%, #121854 50%, #1a237e 100%);
+  background: #ffffff;
   position: relative;
   overflow: hidden;
 }
@@ -865,7 +865,6 @@
 }
 
 .logo-premium {
-  width: 64px;
   height: 64px;
   border-radius: 12px;
   position: relative;
