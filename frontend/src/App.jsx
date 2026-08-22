@@ -214,7 +214,7 @@ export default function App() {
           <div className="logo-container-glow">
             <img
               src="/logo-removebg-preview.png"
-              style={{ width: "40px", height: "40px" }}
+              style={{ height: "40px" }}
             />
           </div>
           <div>
