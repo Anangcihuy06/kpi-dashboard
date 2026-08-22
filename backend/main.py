@@ -1,7 +1,7 @@
 from sqlalchemy import and_
 import requests
 from datetime import datetime, timedelta
-from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks, Response
+from fastapi import Query, FastAPI, Depends, HTTPException, status, BackgroundTasks, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -2348,6 +2348,14 @@ def get_yearly_performance(year: int, user_id: str, background_tasks: Background
     return {"status": "success", "data": None, "message": "No data found for the year."}
 
 
+
+def create_notification(db: Session, user_id: str, title: str, message: str, type: str = 'info'):
+    import models
+    n = models.Notification(user_id=user_id, title=title, message=message, type=type)
+    db.add(n)
+    db.commit()
+
+
 def _run_team_yearly_kpi_job(db: Session, request: 'TimeRangeKPIRequest', user_id: str, job_key: str):
     """
     Compute team KPI per-user and update the cached result progressively so the
@@ -3458,3 +3466,22 @@ def kill_locks(db: Session = Depends(get_db)):
         return {"status": "locks_killed"}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
+
+
+# ==========================================
+# NOTIFICATION ENDPOINTS
+# ==========================================
+
+@app.get('/api/v1/notifications')
+def get_notifications(user_id: str = Query(...), db: Session = Depends(get_db)):
+    notifs = db.query(models.Notification).filter(models.Notification.user_id == user_id).order_by(models.Notification.created_at.desc()).limit(20).all()
+    return {'status': 'success', 'data': [{'id': n.id, 'title': n.title, 'message': n.message, 'type': n.type, 'is_read': n.is_read, 'created_at': n.created_at.isoformat()} for n in notifs]}
+
+@app.put('/api/v1/notifications/{notif_id}/read')
+def read_notification(notif_id: int, db: Session = Depends(get_db)):
+    notif = db.query(models.Notification).filter(models.Notification.id == notif_id).first()
+    if notif:
+        notif.is_read = True
+        db.commit()
+    return {'status': 'success'}
+

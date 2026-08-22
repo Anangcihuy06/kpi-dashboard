@@ -35,6 +35,30 @@ export default function App() {
   const [user, setUser] = useState(null); // Logged in user profile
   const [token, setToken] = useState("");
   const [activeTab, setActiveTab] = useState("dashboard");
+
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifs, setShowNotifs] = useState(false);
+
+  useEffect(() => {
+    if (user && user.id) {
+      fetch(`${import.meta.env.VITE_API_URL}/api/v1/notifications?user_id=${user.id}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'success') {
+            setNotifications(data.data);
+          }
+        })
+        .catch(console.error);
+    }
+  }, [user]);
+
+  const markAsRead = async (id) => {
+    try {
+      await fetch(`${import.meta.env.VITE_API_URL}/api/v1/notifications/${id}/read`, { method: 'PUT' });
+      setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+    } catch (e) { console.error(e); }
+  };
+
   const [subTargetId, setSubTargetId] = useState(null);
 
   // Load session from localStorage on mount — verify locally (no HRIS call needed)

@@ -1,3 +1,4 @@
+import datetime
 import uuid
 from sqlalchemy import Column, String, Boolean, ForeignKey, Numeric, DateTime, JSON, Integer, Text, Float, UniqueConstraint
 from sqlalchemy.orm import relationship
@@ -621,3 +622,14 @@ class FeatureScoreCache(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
+
+
+class Notification(Base):
+    __tablename__ = 'notifications'
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True) # Receiver of notification
+    title = Column(String)
+    message = Column(Text)
+    type = Column(String, default='info') # info, warning, success
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
