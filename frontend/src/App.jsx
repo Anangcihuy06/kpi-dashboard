@@ -128,7 +128,8 @@ export default function App() {
         <div className="login-card-premium-bold">
           <div className="logo-container-glow">
             <img
-              src="/logo-removebg-previews.png"
+              src="/logo-removebg-preview.png"
+              alt="Logo"
               className="logo-premium"
             />
           </div>
@@ -212,7 +213,7 @@ export default function App() {
         <div className="sidebar-header-bold">
           <div className="logo-container-glow">
             <img
-              src="/logo-removebg-previews.png"
+              src="/logo-removebg-preview.png"
               style={{ width: "40px", height: "40px" }}
             />
           </div>
