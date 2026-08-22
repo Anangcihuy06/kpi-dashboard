@@ -1602,12 +1602,13 @@
 }
 
 .sidebar-premium-bold.collapsed .sidebar-toggle-btn {
-  transform: rotate(180deg);
+  transform: translateY(-50%) rotate(180deg);
 }
 
 .sidebar-toggle-btn {
   position: absolute;
-  bottom: 120px;
+  top: 50%;
+  transform: translateY(-50%);
   right: -14px;
   width: 28px;
   height: 28px;
@@ -1625,7 +1626,7 @@
 }
 
 .sidebar-toggle-btn:hover {
-  transform: scale(1.1);
+  transform: translateY(-50%) scale(1.1);
   box-shadow: 0 6px 20px rgba(64, 89, 198, 0.5);
 }
 
@@ -1827,7 +1828,7 @@
 }
 
 .sidebar-premium-bold.collapsed .sidebar-toggle-btn {
-  transform: rotate(180deg);
+  transform: translateY(-50%) rotate(180deg);
 }
 
 /* User Profile & Logout styles */
@@ -1949,7 +1950,8 @@
 /* Toggle button positioning */
 .sidebar-toggle-btn {
   position: absolute;
-  bottom: 120px;
+  top: 50%;
+  transform: translateY(-50%);
   right: 8px;
   width: 28px;
   height: 28px;
@@ -1967,7 +1969,7 @@
 }
 
 .sidebar-toggle-btn:hover {
-  transform: scale(1.1);
+  transform: translateY(-50%) scale(1.1);
   box-shadow: 0 6px 20px rgba(64, 89, 198, 0.5);
 }
 
@@ -1992,4 +1994,7 @@
 .sidebar-premium-bold.collapsed .user-info-bold,
 .sidebar-premium-bold.collapsed .logout-btn-bold span {
   display: none;
+}
+.sidebar-premium-bold.collapsed .sidebar-toggle-btn:hover {
+  transform: translateY(-50%) rotate(180deg) scale(1.1);
 }
