@@ -90,8 +90,8 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
     }
   };
 
-  const fetchPerformance = async (force = false) => {
-    setLoading(true);
+  const fetchPerformance = async (force = false, isPolling = false) => {
+    if (!isPolling) setLoading(true);
     setError(null);
     try {
       const response = await fetch(
@@ -100,9 +100,14 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
       );
 
       if (response.status === 202) {
+        const result = await response.json();
+        const partial = result.partial_data || [];
+        if (partial.length > 0) {
+          setMembers(partial);
+        }
         // Polling if background calculation is running
-        setTimeout(() => fetchPerformance(true), 3000);
-        return; // Keep loading true
+        setTimeout(() => fetchPerformance(true, true), 3000);
+        return;
       }
 
       if (!response.ok) throw new Error("Gagal mengambil data tim");

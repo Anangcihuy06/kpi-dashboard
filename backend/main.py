@@ -1018,8 +1018,11 @@ def sync_attendance_year(
             
             # Invalidate cache after sync
             try:
-                from fastapi_cache import FastAPICache, _company_maxima_cache
+                from fastapi_cache import FastAPICache
                 FastAPICache.clear()
+                
+                # _company_maxima_cache is a global variable in main.py, we need to import it properly or clear it
+                global _company_maxima_cache
                 _company_maxima_cache.clear()
             except Exception:
                 pass
@@ -2452,7 +2455,23 @@ def get_team_yearly_performance(
                 pass
                 
         if is_stale and job["status"] != "processing":
-            del TEAM_YEARLY_JOBS[job_key]
+            old_data = job.get("data")
+            TEAM_YEARLY_JOBS[job_key] = {
+                "status": "processing", 
+                "data": old_data, 
+                "timestamp": datetime.now().isoformat(),
+                "done": 0,
+                "total": len(target_user_ids)
+            }
+            background_tasks.add_task(_run_team_yearly_kpi_job, db, request, user_id, job_key)
+            response.status_code = 202
+            return {
+                "status": "processing",
+                "message": "Sedang memperbarui perhitungan KPI tim...",
+                "partial_data": old_data or [],
+                "progress": 0,
+                "total": len(target_user_ids),
+            }
         else:
             if job["status"] == "processing":
                 response.status_code = 202
