@@ -1951,7 +1951,7 @@
 .sidebar-toggle-btn {
   position: absolute;
   bottom: 120px;
-  right: -14px;
+  right: 8px;
   width: 28px;
   height: 28px;
   border-radius: 50%;
@@ -1973,7 +1973,7 @@
 }
 
 .sidebar-premium-bold.collapsed .sidebar-toggle-btn {
-  right: -14px;
+  right: 8px;
 }
 
 .sidebar-premium-bold.collapsed .sidebar-footer-bold {
