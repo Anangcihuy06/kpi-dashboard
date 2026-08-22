@@ -1590,11 +1590,12 @@
 
 .sidebar-premium-bold.collapsed .menu-items-bold {
   align-items: center;
+  padding: 4px;
 }
 
 .sidebar-premium-bold.collapsed .menu-item-bold {
   justify-content: center;
-  padding: 16px;
+  padding: 12px;
 }
 
 .sidebar-premium-bold.collapsed .menu-indicator {
@@ -1635,7 +1636,7 @@
 }
 
 .sidebar-premium-bold.collapsed .sidebar-footer-bold {
-  padding: 0 12px;
+  padding: 0 8px;
 }
 
 .sidebar-premium-bold.collapsed .user-profile-bold {
@@ -1645,7 +1646,7 @@
 
 .sidebar-premium-bold.collapsed .logout-btn-bold {
   justify-content: center;
-  padding: 12px;
+  padding: 12px 0;
 }
 
 .sidebar-footer-bold {
@@ -1978,7 +1979,7 @@
 }
 
 .sidebar-premium-bold.collapsed .sidebar-footer-bold {
-  padding: 0 12px;
+  padding: 0 8px;
 }
 
 .sidebar-premium-bold.collapsed .user-profile-bold {
@@ -1988,7 +1989,7 @@
 
 .sidebar-premium-bold.collapsed .logout-btn-bold {
   justify-content: center;
-  padding: 12px;
+  padding: 12px 0;
 }
 
 .sidebar-premium-bold.collapsed .user-info-bold,
