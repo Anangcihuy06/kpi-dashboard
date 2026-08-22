@@ -467,8 +467,8 @@ export default function Configurator() {
     }
   };
 
-  return (
-    <div>
+   return (
+    <div className="dashboard-premium-bold">
       <div className="header-ui">
         <div>
           <span className="hero-eyebrow">Administration & Configuration</span>
@@ -479,24 +479,50 @@ export default function Configurator() {
         </div>
       </div>
 
-      {/* Sub Tabs Toggle */}
-      <div style={{ display: "flex", gap: "12px", borderBottom: "1px solid #cbd5e1", marginBottom: "28px", paddingBottom: "2px" }}>
-        <button
-          className={`switcher-btn ${activeSubTab === "rules" ? "active" : ""}`}
-          onClick={() => setActiveSubTab("rules")}
-          style={{ backgroundColor: activeSubTab === "rules" ? "var(--color-secondary)" : "transparent", color: activeSubTab === "rules" ? "#fff" : "var(--color-primary)", padding: "8px 24px", borderRadius: "16px 16px 0 0", fontSize: "14px" }}
-        >
-          <Settings size={14} style={{ display: "inline", marginRight: "6px" }} />
-          KPI Matrix Rules
-        </button>
-        <button
-          className={`switcher-btn ${activeSubTab === "integrations" ? "active" : ""}`}
-          onClick={() => setActiveSubTab("integrations")}
-          style={{ backgroundColor: activeSubTab === "integrations" ? "var(--color-secondary)" : "transparent", color: activeSubTab === "integrations" ? "#fff" : "var(--color-primary)", padding: "8px 24px", borderRadius: "16px 16px 0 0", fontSize: "14px" }}
-        >
-          <Globe size={14} style={{ display: "inline", marginRight: "6px" }} />
-          Jira & GitLab Integrations
-        </button>
+      {/* Bold Sub Tabs Toggle */}
+      <div className="glass-card-bold" style={{ padding: "0", marginBottom: "28px", overflow: "hidden" }}>
+        <div style={{ display: "flex", gap: "0", borderBottom: "1px solid rgba(102, 122, 209, 0.2)", padding: "0 24px" }}>
+          <button
+            onClick={() => setActiveSubTab("rules")}
+            style={{ 
+              background: activeSubTab === "rules" ? "linear-gradient(135deg, #121854, #4059c6)" : "transparent",
+              color: activeSubTab === "rules" ? "#ffffff" : "#64748b",
+              borderRadius: "0",
+              padding: "12px 24px",
+              fontSize: "14px",
+              fontWeight: 700,
+              boxShadow: "none",
+              border: "none",
+              cursor: "pointer",
+              transition: "all 0.3s ease",
+              position: "relative"
+            }}
+          >
+            <Settings size={14} style={{ display: "inline", marginRight: "8px", verticalAlign: "middle" }} />
+            KPI Matrix Rules
+            {activeSubTab === "rules" && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: "3px", background: "linear-gradient(90deg, #4059c6, #667ad1)" }} />}
+          </button>
+          <button
+            onClick={() => setActiveSubTab("integrations")}
+            style={{ 
+              background: activeSubTab === "integrations" ? "linear-gradient(135deg, #121854, #4059c6)" : "transparent",
+              color: activeSubTab === "integrations" ? "#ffffff" : "#64748b",
+              borderRadius: "0",
+              padding: "12px 24px",
+              fontSize: "14px",
+              fontWeight: 700,
+              boxShadow: "none",
+              border: "none",
+              cursor: "pointer",
+              transition: "all 0.3s ease",
+              position: "relative"
+            }}
+          >
+            <Globe size={14} style={{ display: "inline", marginRight: "8px", verticalAlign: "middle" }} />
+            Jira & GitLab Integrations
+            {activeSubTab === "integrations" && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: "3px", background: "linear-gradient(90deg, #4059c6, #667ad1)" }} />}
+          </button>
+        </div>
       </div>
 
       {activeSubTab === "rules" ? (

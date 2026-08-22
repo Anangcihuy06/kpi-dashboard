@@ -1,20 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { Award, Users, Settings, LogOut, KeyRound, Info } from "lucide-react";
+import { Award, Users, Settings, LogOut, KeyRound, User, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 import OrgPerformance from "./components/OrgPerformance";
 import Subordinates from "./components/Subordinates";
 import Configurator from "./components/Configurator";
-
-const AVATAR_GRADIENTS = [
-  "linear-gradient(135deg, #5c73d9 0%, #121854 100%)",
-  "linear-gradient(135deg, #7c3aed 0%, #2e1065 100%)",
-  "linear-gradient(135deg, #0ea5e9 0%, #0c1f5a 100%)",
-  "linear-gradient(135deg, #10b981 0%, #064e3b 100%)",
-  "linear-gradient(135deg, #f59e0b 0%, #78350f 100%)",
-  "linear-gradient(135deg, #ec4899 0%, #500724 100%)",
-  "linear-gradient(135deg, #14b8a6 0%, #134e4a 100%)",
-  "linear-gradient(135deg, #6366f1 0%, #1e1b4b 100%)",
-];
 
 function getInitials(name = "") {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -23,42 +12,9 @@ function getInitials(name = "") {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-function getAvatarGradient(name = "") {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
-  }
-  return AVATAR_GRADIENTS[hash % AVATAR_GRADIENTS.length];
-}
-
 export default function App() {
   const [user, setUser] = useState(null); // Logged in user profile
-  const [token, setToken] = useState("");
   const [activeTab, setActiveTab] = useState("dashboard");
-
-  const [notifications, setNotifications] = useState([]);
-  const [showNotifs, setShowNotifs] = useState(false);
-
-  useEffect(() => {
-    if (user && user.id) {
-      fetch(`${import.meta.env.VITE_API_URL}/api/v1/notifications?user_id=${user.id}`)
-        .then(res => res.json())
-        .then(data => {
-          if (data.status === 'success') {
-            setNotifications(data.data);
-          }
-        })
-        .catch(console.error);
-    }
-  }, [user]);
-
-  const markAsRead = async (id) => {
-    try {
-      await fetch(`${import.meta.env.VITE_API_URL}/api/v1/notifications/${id}/read`, { method: 'PUT' });
-      setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
-    } catch (e) { console.error(e); }
-  };
-
   const [subTargetId, setSubTargetId] = useState(null);
 
   // Load session from localStorage on mount — verify locally (no HRIS call needed)
@@ -73,7 +29,6 @@ export default function App() {
         .then(data => {
           if (data?.status === "valid") {
             setUser(data.user);
-            setToken(storedToken);
           } else {
             // Session invalid — clear it
             localStorage.removeItem("kpi_user");
@@ -83,7 +38,6 @@ export default function App() {
         .catch(() => {
           // Fallback: use cached session if backend unreachable
           setUser(parsedUser);
-          setToken(storedToken);
         });
     }
   }, []);
@@ -120,7 +74,6 @@ export default function App() {
 
       const data = await response.json();
       setUser(data.user);
-      setToken(data.token);
       localStorage.setItem("kpi_user", JSON.stringify(data.user));
       localStorage.setItem("kpi_token", data.token);
       localStorage.setItem("hris_token", data.hris_token || ""); // Store HRIS token
@@ -164,56 +117,81 @@ export default function App() {
 
   if (!user) {
     return (
-      <div className="auth-page">
-        <div className="login-card">
-          <img
-            src="/logo-removebg-preview.png"
-            alt="ATI Business Group Logo"
-            className="login-header-logo"
-          />
-          <h2 className="form-title">KPI Dashboard Portal</h2>
-          <p className="form-subtitle">Autentikasi menggunakan akun ATI Business Group Anda</p>
+      <div className="auth-premium-bold">
+        <div className="auth-background-bold">
+          <div className="gradient-mesh" />
+          <div className="floating-shape shape-1" />
+          <div className="floating-shape shape-2" />
+          <div className="floating-shape shape-3" />
+        </div>
+        
+        <div className="login-card-premium-bold">
+          <div className="logo-container-glow">
+            <img
+              src="/logo-removebg-preview.png"
+              alt="ATI Business Group Logo"
+              className="logo-premium"
+            />
+          </div>
+          
+          <h2 className="auth-title-bold">KPI Dashboard Portal</h2>
+          <p className="auth-subtitle-bold">Enterprise Performance Management System</p>
 
           <form onSubmit={handleRealLogin}>
-            <div className="form-group">
-              <label className="form-label" htmlFor="login-username">Username / NIK</label>
-              <input
-                id="login-username"
-                type="text"
-                className="form-input"
-                value={usernameInput}
-                onChange={handleUsernameChange}
-                placeholder="01.05.13.500"
-                autoComplete="username"
-                required
-              />
+            <div className="input-group-bold">
+              <label className="input-label-bold" htmlFor="login-username">Corporate ID</label>
+              <div className="input-wrapper-bold">
+                <input
+                  id="login-username"
+                  type="text"
+                  className="input-premium-bold"
+                  value={usernameInput}
+                  onChange={handleUsernameChange}
+                  placeholder="01.05.13.500"
+                  autoComplete="username"
+                  required
+                />
+                <div className="input-icon-glow">
+                  <User size={20} />
+                </div>
+              </div>
             </div>
 
-            <div className="form-group" style={{ marginBottom: "24px" }}>
-              <label className="form-label" htmlFor="login-password">Password</label>
-              <input
-                id="login-password"
-                type="password"
-                className="form-input"
-                value={passwordInput}
-                onChange={(e) => setPasswordInput(e.target.value)}
-                placeholder="••••••••"
-                autoComplete="current-password"
-                required
-              />
+            <div className="input-group-bold">
+              <label className="input-label-bold" htmlFor="login-password">Password</label>
+              <div className="input-wrapper-bold">
+                <input
+                  id="login-password"
+                  type="password"
+                  className="input-premium-bold"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="••••••••"
+                  autoComplete="current-password"
+                  required
+                />
+                <div className="input-icon-glow">
+                  <KeyRound size={20} />
+                </div>
+              </div>
             </div>
 
-            <button type="submit" className="btn-primary" disabled={loginLoading}>
+            <button type="submit" className="btn-primary-bold" disabled={loginLoading}>
               {loginLoading ? (
                 <span style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
-                  <span className="spinner" style={{ width: "14px", height: "14px", border: "2px solid #fff3", borderTop: "2px solid #fff", borderRadius: "50%", animation: "spin 0.8s linear infinite", display: "inline-block" }}></span>
-                  Menghubungi HRIS Server... (bisa 10-20 detik)
+                  <span className="spinner" style={{ width: "16px", height: "16px", border: "2px solid rgba(255,255,255,0.3)", borderTop: "2px solid #fff", borderRadius: "50%", animation: "spin 0.8s linear infinite", display: "inline-block" }}></span>
+                  Authenticating with HRIS...
                 </span>
-              ) : "Sign In ke Portal"}
+              ) : (
+                <span className="btn-text">
+                  Sign In to Portal
+                  <ArrowRight size={18} />
+                </span>
+              )}
             </button>
 
-            <p className="text-xs text-muted" style={{ marginTop: 16, lineHeight: 1.6 }}>
-              Data performa Anda disinkronkan otomatis dari Jira, GitLab, dan HRIS setiap beberapa menit.
+            <p className="text-xs text-muted" style={{ marginTop: 24, lineHeight: 1.6, textAlign: 'center', opacity: 0.7 }}>
+              Performance data is automatically synchronized from Jira, GitLab, and HRIS
             </p>
           </form>
         </div>
@@ -230,133 +208,105 @@ export default function App() {
 
   return (
     <div className="app-container">
-      {/* Sidebar */}
-      <nav className="sidebar">
-        <div className="brand-logo-container">
-          <img
-            src="/logo-removebg-preview.png"
-            alt="ATI Logo"
-            style={{ width: "32px", height: "32px" }}
-          />
+      {/* Bold Premium Sidebar */}
+      <nav className="sidebar-premium-bold">
+        <div className="sidebar-header-bold">
+          <div className="logo-container-glow" style={{ margin: '0 0 16px 0', padding: '12px', width: 'fit-content' }}>
+            <img
+              src="/logo-removebg-preview.png"
+              alt="ATI Logo"
+              style={{ width: "40px", height: "40px" }}
+            />
+          </div>
           <div>
-            <span className="brand-name">ATI Dashboard</span>
-            <div style={{ fontSize: "9px", color: "var(--color-tint)" }}>KPI Tracking System</div>
+            <h3 className="brand-name-bold">ATI Dashboard</h3>
+            <p className="brand-tagline-bold">KPI Tracking System</p>
           </div>
         </div>
 
-        <ul className="menu-list">
-          <li>
-            <div
-              className={`menu-item ${activeTab === "dashboard" ? "active" : ""}`}
+        <div className="menu-container-bold">
+          <div className="menu-section-title">
+            <span>Main Menu</span>
+          </div>
+          
+          <div className="menu-items-bold">
+            <button
+              className={`menu-item-bold ${activeTab === "dashboard" ? "active" : ""}`}
               onClick={() => setActiveTab("dashboard")}
-              role="link"
-              tabIndex={0}
-              aria-label="Dashboard"
               title="Ringkasan performa seluruh tim di bawah kendali Anda"
             >
-              <Award size={18} />
-              <span>Dashboard</span>
-            </div>
-          </li>
+              <div className="menu-icon-glow">
+                <Award size={20} />
+              </div>
+              <span className="menu-label">Dashboard</span>
+              <div className="menu-indicator" />
+              <div className="menu-shine" />
+            </button>
 
-          {hasSubordinatesMenu && (
-            <li>
-              <div
-                className={`menu-item ${activeTab === "subordinates" ? "active" : ""}`}
+            {hasSubordinatesMenu && (
+              <button
+                className={`menu-item-bold ${activeTab === "subordinates" ? "active" : ""}`}
                 onClick={() => { setActiveTab("subordinates"); setSubTargetId(null); }}
-                role="link"
-                tabIndex={0}
-                aria-label="Subordinate"
                 title="Kelola dan evaluasi KPI seluruh anggota tim di bawah kendali Anda"
               >
-                <Users size={18} />
-                <span>Subordinate</span>
-              </div>
-            </li>
-          )}
+                <div className="menu-icon-glow">
+                  <Users size={20} />
+                </div>
+                <span className="menu-label">Subordinate</span>
+                <div className="menu-indicator" />
+                <div className="menu-shine" />
+              </button>
+            )}
 
-          {hasConfiguratorMenu && (
-            <li>
-              <div
-                className={`menu-item ${activeTab === "configurator" ? "active" : ""}`}
+            {hasConfiguratorMenu && (
+              <button
+                className={`menu-item-bold ${activeTab === "configurator" ? "active" : ""}`}
                 onClick={() => setActiveTab("configurator")}
-                role="link"
-                tabIndex={0}
-                aria-label="Matrix Config"
                 title="Atur matriks KPI, formula dinamis, dan integrasi Jira/GitLab"
               >
-                <Settings size={18} />
-                <span>Matrix Config</span>
-              </div>
-            </li>
-          )}
-        </ul>
+                <div className="menu-icon-glow">
+                  <Settings size={20} />
+                </div>
+                <span className="menu-label">Matrix Config</span>
+                <div className="menu-indicator" />
+                <div className="menu-shine" />
+              </button>
+            )}
+          </div>
+        </div>
 
-        {/* User Profile Summary at bottom of sidebar */}
-        <div className="sidebar-footer">
-          <div className="user-profile-header">
-            <div
-              style={{
-                position: "relative",
-                width: 52,
-                height: 52,
-                borderRadius: "50%",
-                background: getAvatarGradient(user.fullName),
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "#ffffff",
-                fontWeight: 700,
-                fontSize: getInitials(user.fullName).length > 1 ? 15 : 19,
-                letterSpacing: "0.5px",
-                fontFamily: "var(--font-headings, 'Poppins', sans-serif)",
-                flexShrink: 0,
-                boxShadow:
-                  "0 6px 16px rgba(18, 24, 84, 0.28), inset 0 1px 0 rgba(255,255,255,0.35)",
-                border: "2.5px solid rgba(255,255,255,0.9)",
-              }}
-              title={user.fullName}
-            >
-              {getInitials(user.fullName)}
-              <span
-                style={{
-                  position: "absolute",
-                  bottom: 0,
-                  right: 0,
-                  width: 13,
-                  height: 13,
-                  borderRadius: "50%",
-                  background: "#10b981",
-                  border: "2.5px solid #ffffff",
-                  boxShadow: "0 2px 6px rgba(16, 185, 129, 0.55)",
-                }}
-              />
+        {/* Bold User Profile Section */}
+        <div className="sidebar-footer-bold">
+          <div className="user-profile-bold">
+            <div className="user-avatar-glow">
+              <span className="avatar-initials">
+                {getInitials(user.fullName)}
+              </span>
+              <div className="avatar-status-dot" />
             </div>
-            <div className="user-details" style={{ minWidth: 0 }}>
-              <h5 style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.fullName}</h5>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 2 }}>
-                {user.roles.slice(0, 2).map(r => (
-                  <span key={r} className="status-pill live" style={{ fontSize: "9px", padding: "1px 7px", textTransform: "none", letterSpacing: 0 }}>
-                    {r.replace(/^ROLE_/, "")}
-                  </span>
-                ))}
-              </div>
-              {user.nik && <p className="table-meta" style={{ marginTop: 3 }}>NIK {user.nik}</p>}
+            <div className="user-info-bold">
+              <h4 className="user-name-bold">{user.fullName}</h4>
+              <p className="user-role-bold">{user.roles[0]?.replace(/^ROLE_/, "")}</p>
             </div>
           </div>
-
+          
           <button
-            className="btn-logout"
+            className="logout-btn-bold"
             onClick={handleLogout}
             title="Keluar dari portal KPI"
           >
-            <LogOut size={14} /> Log Out
+            <LogOut size={18} />
+            <span>Log Out</span>
+            <div className="btn-glow" />
           </button>
         </div>
       </nav>
 
-      {/* Main Content Area */}
-      <main className="main-content">
+      {/* Bold Premium Main Content Area */}
+      <main className="main-content" style={{ 
+        background: 'radial-gradient(at 80% 0%, rgba(64, 89, 198, 0.08) 0%, transparent 50%), radial-gradient(at 0% 100%, rgba(102, 122, 209, 0.06) 0%, transparent 50%), linear-gradient(180deg, #f8fafc 0%, #e8edfc 100%)',
+        backgroundAttachment: 'fixed'
+      }}>
         {activeTab === "dashboard" && <OrgPerformance userId={user.id} onOpenMemberDetail={(id) => { setSubTargetId(id); setActiveTab("subordinates"); }} />}
         {activeTab === "subordinates" && <Subordinates supervisorId={user.id} initialMemberId={subTargetId} onResetTarget={() => setSubTargetId(null)} />}
         {activeTab === "configurator" && <Configurator />}

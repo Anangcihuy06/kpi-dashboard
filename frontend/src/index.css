@@ -1,3 +1,6 @@
+/* Import Bold Premium UI System */
+@import url('./css/bold-premium-ui.css');
+
 /* Global Style Tokens for ATI Business Group Design System */
 :root {
   /* Core Color Palette - Enhanced */

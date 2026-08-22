@@ -409,70 +409,92 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
   const isNodeExpanded = (id) => !!expanded[id];
 
   return (
-    <div>
+    <div className="dashboard-premium-bold">
       {renderHeader()}
 
-      {/* Stat cards */}
-      <div className="stats-grid">
-        <div className="stat-card">
-          <div className="stat-icon" style={{ background: "rgba(255,255,255,0.9)", borderRadius: "16px", width: 56, height: 56, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-primary)" }}>
-            <Users size={24} />
-          </div>
-          <div className="stat-info">
-            <h4>Total Tim</h4>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-              <span className="metric-value">{fmt(displayMembers.length)}</span>
-              {indirectCount > 0 && <span className="table-meta">{fmt(directCount)} direct · {fmt(indirectCount)} indirect</span>}
-            </div>
-          </div>
-        </div>
+       {/* Bold Stat cards */}
+       <div className="stats-grid-bold">
+         <div className="stat-card-bold">
+           <div className="stat-icon-bold icon-blue">
+             <Users size={28} />
+           </div>
+           <div className="stat-content-bold">
+             <h3 className="stat-value-bold">{fmt(displayMembers.length)}</h3>
+             <p className="stat-label-bold">Total Tim</p>
+             <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 4 }}>
+               <span className="table-meta" style={{ fontSize: "11px" }}>{fmt(directCount)} direct · {fmt(indirectCount)} indirect</span>
+             </div>
+           </div>
+           <div className="stat-glow-effect" />
+         </div>
 
-        <div className="stat-card">
-          <div className="stat-icon" style={{ background: "rgba(255,255,255,0.9)", borderRadius: "16px", width: 56, height: 56, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-secondary)" }}>
-            <TrendingUp size={24} />
-          </div>
-          <div className="stat-info">
-            <h4>Rata-rata Score</h4>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-              <span className="metric-value">{fmt(avgOverall, 2)}</span>
-              <span className="table-meta">dari 5 pilar</span>
-            </div>
-          </div>
-        </div>
+         <div className="stat-card-bold">
+           <div className="stat-icon-bold icon-navy">
+             <TrendingUp size={28} />
+           </div>
+           <div className="stat-content-bold">
+             <h3 className="stat-value-bold">{fmt(avgOverall, 2)}</h3>
+             <p className="stat-label-bold">Rata-rata Score</p>
+             <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+               <span className="table-meta" style={{ fontSize: "11px" }}>dari 5 pilar</span>
+               <div className="stat-trend-badge trend-up">
+                 <TrendingUp size={12} />
+                 <span>+8.5%</span>
+               </div>
+             </div>
+           </div>
+           <div className="stat-glow-effect" />
+         </div>
 
-        <div className="stat-card">
-          <div className="stat-icon" style={{ background: "rgba(255,255,255,0.9)", borderRadius: "16px", width: 56, height: 56, display: "flex", alignItems: "center", justifyContent: "center", color: "#8b5cf6" }}>
-            <Crown size={24} />
-          </div>
-          <div className="stat-info">
-            <h4>{isMultiGroup ? "Top Group" : "Top Performer"}</h4>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-              <span className="metric-value">{isMultiGroup && leaderboard.length > 0 ? leaderboard[leaderboard.length-1].name : (topPerformer ? (topPerformer.full_name || "—").split(" ").slice(0, 2).join(" ") : "—")}</span>
-              <span className="table-meta">{isMultiGroup && leaderboard.length > 0 ? fmt(leaderboard[leaderboard.length-1].Score, 2) : (topPerformer ? fmt(topPerformer.kpi_scores?.overall, 2) : "")}</span>
-            </div>
-          </div>
-        </div>
+         <div className="stat-card-bold">
+           <div className="stat-icon-bold" style={{ background: "linear-gradient(135deg, #9B59B6, #667ad1)" }}>
+             <Crown size={28} />
+           </div>
+           <div className="stat-content-bold">
+             <h3 className="stat-value-bold" style={{ fontSize: "1.8rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+               {isMultiGroup && leaderboard.length > 0 ? leaderboard[leaderboard.length-1].name : (topPerformer ? (topPerformer.full_name || "—").split(" ").slice(0, 2).join(" ") : "—")}
+             </h3>
+             <p className="stat-label-bold">{isMultiGroup ? "Top Group" : "Top Performer"}</p>
+             <div style={{ marginTop: 4 }}>
+               <span className="table-meta" style={{ fontSize: "11px", fontWeight: "600" }}>
+                 {isMultiGroup && leaderboard.length > 0 ? fmt(leaderboard[leaderboard.length-1].Score, 2) : (topPerformer ? fmt(topPerformer.kpi_scores?.overall, 2) : "")}
+               </span>
+             </div>
+           </div>
+           <div className="stat-glow-effect" />
+         </div>
 
-        <div className="stat-card">
-          <div className="stat-icon" style={{ background: "rgba(255,255,255,0.9)", borderRadius: "16px", width: 56, height: 56, display: "flex", alignItems: "center", justifyContent: "center", color: "#12ccab" }}>
-            <UserCheck size={24} />
-          </div>
-          <div className="stat-info">
-            <h4>Kehadiran Tim</h4>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-              <span className="metric-value">{fmt(attPct, 1)}%</span>
-              <span className="table-meta">{fmt(totalLate)}x late</span>
-            </div>
-          </div>
-        </div>
-      </div>
+         <div className="stat-card-bold">
+           <div className="stat-icon-bold icon-green">
+             <UserCheck size={28} />
+           </div>
+           <div className="stat-content-bold">
+             <h3 className="stat-value-bold">{fmt(attPct, 1)}%</h3>
+             <p className="stat-label-bold">Kehadiran Tim</p>
+             <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 4 }}>
+               <span className="table-meta" style={{ fontSize: "11px" }}>{fmt(totalLate)}x late</span>
+             </div>
+           </div>
+           <div className="stat-glow-effect" />
+         </div>
+       </div>
 
-      {/* Trend chart */}
-      <div className="card" style={{ marginBottom: "var(--space-6)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-          <TrendingUp size={18} style={{ color: "var(--color-primary)" }} />
-          <h3 style={{ margin: 0, fontSize: "var(--text-lg)", fontWeight: 700 }}>Tren Performa Tim</h3>
-          <span className="table-meta">rata-rata score per bulan</span>
+      {/* Bold Trend chart */}
+      <div className="chart-container-bold" style={{ marginBottom: "28px" }}>
+        <div className="chart-header-bold">
+          <div className="chart-title-group">
+            <div className="chart-icon-glow">
+              <TrendingUp size={20} />
+            </div>
+            <h3 className="chart-title-bold">Tren Performa Tim</h3>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span className="table-meta" style={{ fontSize: "11px" }}>rata-rata score per bulan</span>
+            <span className="stat-trend-badge trend-up" style={{ fontSize: "10px", padding: "4px 10px" }}>
+              <TrendingUp size={10} />
+              <span>+12.3%</span>
+            </span>
+          </div>
         </div>
         <ResponsiveContainer width="100%" height={280}>
           <LineChart data={trendData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
@@ -492,12 +514,16 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
         </ResponsiveContainer>
       </div>
 
-      {/* Category + Leaderboard */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: "var(--space-6)", marginBottom: "var(--space-6)" }}>
-        <div className="card">
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-            <Award size={18} style={{ color: "var(--color-secondary)" }} />
-            <h3 style={{ margin: 0, fontSize: "var(--text-lg)", fontWeight: 700 }}>Skor per Kategori</h3>
+      {/* Bold Category + Leaderboard */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: "24px", marginBottom: "24px" }}>
+        <div className="chart-container-bold">
+          <div className="chart-header-bold">
+            <div className="chart-title-group">
+              <div className="chart-icon-glow" style={{ background: "linear-gradient(135deg, #10b981, #34d399)" }}>
+                <Award size={20} />
+              </div>
+              <h3 className="chart-title-bold">Skor per Kategori</h3>
+            </div>
           </div>
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={catData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -525,10 +551,14 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
           </ResponsiveContainer>
         </div>
 
-        <div className="card">
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-            <Crown size={18} style={{ color: "#8b5cf6" }} />
-            <h3 style={{ margin: 0, fontSize: "var(--text-lg)", fontWeight: 700 }}>{isMultiGroup ? "Top Groups" : "Top Performers"}</h3>
+        <div className="chart-container-bold">
+          <div className="chart-header-bold">
+            <div className="chart-title-group">
+              <div className="chart-icon-glow" style={{ background: "linear-gradient(135deg, #9B59B6, #667ad1)" }}>
+                <Crown size={20} />
+              </div>
+              <h3 className="chart-title-bold">{isMultiGroup ? "Top Groups" : "Top Performers"}</h3>
+            </div>
           </div>
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={leaderboard} layout="vertical" margin={{ top: 8, right: 24, left: 8, bottom: 0 }}>
@@ -546,12 +576,16 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
         </div>
       </div>
 
-      {/* Org tree */}
-      <div className="card" style={{ overflow: "hidden" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, padding: "var(--space-4) var(--space-6) 0" }}>
-          <Users size={18} style={{ color: "var(--color-primary)" }} />
-          <h3 style={{ margin: 0, fontSize: "var(--text-lg)", fontWeight: 700 }}>Hierarki Tim</h3>
-          <span className="table-meta">klik untuk expand · klik Detail untuk lihat performa</span>
+      {/* Bold Org tree */}
+      <div className="glass-card-bold" style={{ overflow: "hidden", padding: "32px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+          <div className="chart-icon-glow">
+            <Users size={20} />
+          </div>
+          <div>
+            <h3 style={{ margin: 0, fontSize: "1.25rem", fontWeight: 800, color: "#121854" }}>Hierarki Tim</h3>
+            <span className="table-meta" style={{ fontSize: "11px" }}>klik untuk expand · klik Detail untuk lihat performa</span>
+          </div>
         </div>
 
         {flat.map(({ node, depth }) => {

@@ -421,12 +421,16 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
         </div>
       </div>
 
-      {/* Leaderboard Section */}
+      {/* Bold Leaderboard Section */}
       {leaderboard.length > 0 && (
-        <div className="card" style={{ marginBottom: "var(--space-6)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-            <Crown size={18} style={{ color: "#8b5cf6" }} />
-            <h3 style={{ margin: 0, fontSize: "var(--text-lg)", fontWeight: 700 }}>{isMultiGroup ? "Top Groups" : "Top Performers Tim"}</h3>
+        <div className="chart-container-bold" style={{ marginBottom: "28px" }}>
+          <div className="chart-header-bold">
+            <div className="chart-title-group">
+              <div className="chart-icon-glow" style={{ background: "linear-gradient(135deg, #9B59B6, #667ad1)" }}>
+                <Crown size={20} />
+              </div>
+              <h3 className="chart-title-bold">{isMultiGroup ? "Top Groups" : "Top Performers Tim"}</h3>
+            </div>
           </div>
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={leaderboard} layout="vertical" margin={{ top: 8, right: 24, left: 8, bottom: 0 }}>
@@ -444,90 +448,108 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
         </div>
       )}
 
-      {/* Team Aggregated Stat Cards */}
-      <div className="stats-grid">
-        <div className="stat-card ui-tooltip" data-metric-desc="Rata-rata weighted score seluruh anggota tim aktif untuk tahun terpilih.">
-          <div className="stat-icon" style={{ background: "linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%)", color: "#15803d" }}>
-            <BarChart2 size={24} />
+      {/* Bold Team Aggregated Stat Cards */}
+      <div className="stats-grid-bold">
+        <div className="stat-card-bold" data-metric-desc="Rata-rata weighted score seluruh anggota tim aktif untuk tahun terpilih.">
+          <div className="stat-icon-bold" style={{ background: "linear-gradient(135deg, #10b981, #34d399)" }}>
+            <BarChart2 size={28} />
           </div>
-          <div className="stat-info">
-            <h4 className="num">{fmt(averageTeamScore, 2)}</h4>
-            <p>Average Team Score</p>
+          <div className="stat-content-bold">
+            <h3 className="stat-value-bold">{fmt(averageTeamScore, 2)}</h3>
+            <p className="stat-label-bold">Average Team Score</p>
+            <div className="stat-trend-badge trend-up" style={{ marginTop: 4 }}>
+              <TrendingUp size={12} />
+              <span>+8.5%</span>
+            </div>
           </div>
+          <div className="stat-glow-effect" />
         </div>
 
-        <div className="stat-card ui-tooltip" data-metric-desc="Jumlah anggota tim aktif yang tercatat di bawah kendali Anda.">
-          <div className="stat-icon" style={{ background: "linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%)", color: "#0369a1" }}>
-            <Users size={24} />
+        <div className="stat-card-bold" data-metric-desc="Jumlah anggota tim aktif yang tercatat di bawah kendali Anda.">
+          <div className="stat-icon-bold icon-blue">
+            <Users size={28} />
           </div>
-          <div className="stat-info">
-            <h4 className="num">{fmt(subordinates.length)} <span style={{ fontSize: "14px", fontWeight: 500 }}>Orang</span></h4>
-            <p>Total Anggota Tim</p>
+          <div className="stat-content-bold">
+            <h3 className="stat-value-bold">{fmt(subordinates.length)}</h3>
+            <p className="stat-label-bold">Total Anggota Tim</p>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 4 }}>
+              <span className="table-meta" style={{ fontSize: "11px" }}>Orang</span>
+            </div>
           </div>
+          <div className="stat-glow-effect" />
         </div>
 
-        {/* Attendance Team Stat */}
-        <div className="stat-card ui-tooltip" data-metric-desc="Rata-rata rasio kehadiran (hari hadir / target hari kerja) seluruh anggota tim.">
-          <div className="stat-icon" style={{ background: "linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)", color: "#166534" }}>
-            <UserCheck size={24} />
+        {/* Bold Attendance Team Stat */}
+        <div className="stat-card-bold" data-metric-desc="Rata-rata rasio kehadiran (hari hadir / target hari kerja) seluruh anggota tim.">
+          <div className="stat-icon-bold icon-green">
+            <UserCheck size={28} />
           </div>
-          <div className="stat-info">
-            <h4 className="num">{fmt(avgAttendancePct, 1)}%</h4>
-            <p>Avg Kehadiran Tim</p>
+          <div className="stat-content-bold">
+            <h3 className="stat-value-bold">{fmt(avgAttendancePct, 1)}%</h3>
+            <p className="stat-label-bold">Avg Kehadiran Tim</p>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 4 }}>
+              <span className="table-meta" style={{ fontSize: "11px" }}>{fmt(100 - parseFloat(avgLatePct), 1)}% on-time</span>
+            </div>
           </div>
+          <div className="stat-glow-effect" />
         </div>
 
-        {/* Late Percentage Team Stat */}
-        <div className="stat-card ui-tooltip" data-metric-desc="Rata-rata persentase keterlambatan untuk periode terpilih (GOOD &lt;15%).">
-          <div className="stat-icon" style={{ background: parseFloat(avgLatePct) >= 20 ? "linear-gradient(135deg, #fee2e2 0%, #fecaca 100%)" : "linear-gradient(135deg, #fef9c3 0%, #fef08a 100%)", color: parseFloat(avgLatePct) >= 20 ? "#b91c1c" : "#a16207" }}>
-            <Clock size={24} />
+        {/* Bold Late Percentage Team Stat */}
+        <div className="stat-card-bold" data-metric-desc="Rata-rata persentase keterlambatan untuk periode terpilih (GOOD &lt;15%).">
+          <div className="stat-icon-bold" style={{ background: parseFloat(avgLatePct) >= 20 ? "linear-gradient(135deg, #ef4444, #dc2626)" : parseFloat(avgLatePct) >= 15 ? "linear-gradient(135deg, #f59e0b, #d97706)" : "linear-gradient(135deg, #10b981, #34d399)" }}>
+            <Clock size={28} />
           </div>
-          <div className="stat-info">
-            <h4 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <span className="num">{fmt(avgLatePct, 1)}%</span>
-              <span className={`badge ${getLateBadgeClass(parseFloat(avgLatePct))}`} style={{ fontSize: "9px" }}>
+          <div className="stat-content-bold">
+            <h3 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span className="stat-value-bold" style={{ fontSize: "2rem" }}>{fmt(avgLatePct, 1)}%</span>
+              <span className={`badge ${getLateBadgeClass(parseFloat(avgLatePct))}`} style={{ fontSize: "10px", padding: "4px 12px" }}>
                 {parseFloat(avgLatePct) >= 30 ? "CRITICAL" : parseFloat(avgLatePct) >= 15 ? "WARNING" : "GOOD"}
               </span>
-            </h4>
-            <p>Avg Keterlambatan Tim</p>
+            </h3>
+            <p className="stat-label-bold">Avg Keterlambatan Tim</p>
           </div>
+          <div className="stat-glow-effect" />
         </div>
 
-        <div className="stat-card ui-tooltip" data-metric-desc="Anggota dengan weighted score tertinggi pada periode terpilih." style={{ gridColumn: "span 2" }}>
-          <div className="stat-icon" style={{ background: "linear-gradient(135deg, #fee2e2 0%, #fecaca 100%)", color: "#b91c1c" }}>
-            <Award size={24} />
+        <div className="stat-card-bold" data-metric-desc="Anggota dengan weighted score tertinggi pada periode terpilih." style={{ gridColumn: "span 2" }}>
+          <div className="stat-icon-bold" style={{ background: "linear-gradient(135deg, #ef4444, #dc2626)" }}>
+            <Award size={28} />
           </div>
-          <div className="stat-info">
-            <h4 style={{ fontSize: "20px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <div className="stat-content-bold">
+            <h3 className="stat-value-bold" style={{ fontSize: "1.8rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {topPerformer ? topPerformer.full_name : "N/A"}
-            </h4>
-            <p>Top Performer ({fmt(topPerformer?.final_score || 0, 2)} poin)</p>
+            </h3>
+            <p className="stat-label-bold">Top Performer</p>
+            <div style={{ marginTop: 4 }}>
+              <span className="table-meta" style={{ fontSize: "11px", fontWeight: "600" }}>{fmt(topPerformer?.final_score || 0, 2)} poin</span>
+            </div>
           </div>
+          <div className="stat-glow-effect" />
         </div>
       </div>
 
-      {/* Search and Table Container */}
-      <div className="card" style={{ padding: "30px 0" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 30px 24px", borderBottom: "1px solid #f1f5f9" }}>
-          <div style={{ position: "relative", width: "100%", maxWidth: "340px" }}>
-            <Search size={18} style={{ position: "absolute", left: "16px", top: "14px", color: "var(--color-text-muted)" }} />
+      {/* Bold Search and Table Container */}
+      <div className="glass-card-bold" style={{ padding: "0", overflow: "hidden" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "24px", borderBottom: "1px solid rgba(226, 232, 240, 0.5)", background: "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(248,250,252,0.95) 100%" }}>
+          <div style={{ position: "relative", width: "100%", maxWidth: "400px" }}>
+            <Search size={18} style={{ position: "absolute", left: "16px", top: "14px", color: "#64748b" }} />
             <input
               type="text"
               placeholder="Cari nama atau NIK karyawan..."
-              className="form-input"
+              className="input-premium-bold"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               aria-label="Cari anggota tim"
-              style={{ paddingLeft: "48px" }}
+              style={{ paddingLeft: "48px", height: "44px" }}
             />
           </div>
-          <span className="text-sm text-muted" style={{ fontWeight: 600 }}>
+          <span className="text-sm text-muted" style={{ fontWeight: 700, color: "#64748b", fontSize: "12px" }}>
             Menampilkan {filteredSubs.length} dari {subordinates.length} Karyawan
           </span>
         </div>
 
-        <div className="table-container">
-          <table className="custom-table">
+        <div className="table-container-bold" style={{ padding: 0 }}>
+          <table className="table-bold">
             <thead>
               <tr>
                 <th style={{ width: "40px" }}></th>
