@@ -1562,3 +1562,115 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* ════════════════════════════════════════════════════════════════════════════════
+   SIDEBAR COLLAPSE/EXPAND STYLES
+   ════════════════════════════════════════════════════════════════════════════════ */
+
+.sidebar-premium-bold {
+  width: 320px;
+  transition: width 0.3s cubic-bezier(0.25, 0.8, 0.25, 1), transform 0.3s ease;
+  overflow: hidden;
+}
+
+.sidebar-premium-bold.collapsed {
+  width: 80px;
+}
+
+.sidebar-premium-bold.collapsed .sidebar-header-bold .logo-container-glow {
+  margin: 0 auto 16px auto;
+}
+
+.sidebar-premium-bold.collapsed .brand-name-bold,
+.sidebar-premium-bold.collapsed .brand-tagline-bold,
+.sidebar-premium-bold.collapsed .menu-label,
+.sidebar-premium-bold.collapsed .user-info-bold,
+.sidebar-premium-bold.collapsed .logout-btn-bold span {
+  display: none;
+}
+
+.sidebar-premium-bold.collapsed .menu-items-bold {
+  align-items: center;
+}
+
+.sidebar-premium-bold.collapsed .menu-item-bold {
+  justify-content: center;
+  padding: 16px;
+}
+
+.sidebar-premium-bold.collapsed .menu-indicator {
+  display: none;
+}
+
+.sidebar-premium-bold.collapsed .sidebar-toggle-btn {
+  transform: rotate(180deg);
+}
+
+.sidebar-toggle-btn {
+  position: absolute;
+  bottom: 120px;
+  right: -14px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4059c6, #667ad1);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(64, 89, 198, 0.4);
+  transition: all 0.3s ease;
+  z-index: 10;
+}
+
+.sidebar-toggle-btn:hover {
+  transform: scale(1.1);
+  box-shadow: 0 6px 20px rgba(64, 89, 198, 0.5);
+}
+
+.sidebar-premium-bold.collapsed .sidebar-toggle-btn {
+  right: -14px;
+}
+
+.sidebar-premium-bold.collapsed .sidebar-footer-bold {
+  padding: 0 12px;
+}
+
+.sidebar-premium-bold.collapsed .user-profile-bold {
+  justify-content: center;
+  padding: 12px;
+}
+
+.sidebar-premium-bold.collapsed .logout-btn-bold {
+  justify-content: center;
+  padding: 12px;
+}
+
+.sidebar-footer-bold {
+  padding: 0 24px;
+  transition: padding 0.3s ease;
+}
+
+/* Prevent content cutoff in sidebar */
+.sidebar-premium-bold {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.sidebar-premium-bold .menu-container-bold {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+.sidebar-premium-bold .menu-container-bold::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sidebar-premium-bold .menu-container-bold::-webkit-scrollbar-thumb {
+  background: rgba(102, 122, 209, 0.5);
+  border-radius: 2px;
+}

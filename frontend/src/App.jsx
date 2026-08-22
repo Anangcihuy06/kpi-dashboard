@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Award, Users, Settings, LogOut, KeyRound, User, ArrowRight } from "lucide-react";
+import { Award, Users, Settings, LogOut, KeyRound, User, ArrowRight, ChevronLeft } from "lucide-react";
 import { toast } from "sonner";
 import OrgPerformance from "./components/OrgPerformance";
 import Subordinates from "./components/Subordinates";
@@ -13,9 +13,10 @@ function getInitials(name = "") {
 }
 
 export default function App() {
-  const [user, setUser] = useState(null); // Logged in user profile
+  const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [subTargetId, setSubTargetId] = useState(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Load session from localStorage on mount — verify locally (no HRIS call needed)
   useEffect(() => {
@@ -92,7 +93,6 @@ export default function App() {
 
   const handleLogout = () => {
     setUser(null);
-    setToken("");
     setUsernameInput("");
     setPasswordInput("");
     localStorage.removeItem("kpi_user");
@@ -209,7 +209,7 @@ export default function App() {
   return (
     <div className="app-container">
       {/* Bold Premium Sidebar */}
-      <nav className="sidebar-premium-bold">
+      <nav className={`sidebar-premium-bold ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-header-bold">
           <div className="logo-container-glow" style={{ margin: '0 0 16px 0', padding: '12px', width: 'fit-content' }}>
             <img
@@ -218,17 +218,15 @@ export default function App() {
               style={{ width: "40px", height: "40px" }}
             />
           </div>
-          <div>
-            <h3 className="brand-name-bold">ATI Dashboard</h3>
-            <p className="brand-tagline-bold">KPI Tracking System</p>
-          </div>
+          {!sidebarCollapsed && (
+            <div>
+              <h3 className="brand-name-bold">ATI Dashboard</h3>
+              <p className="brand-tagline-bold">KPI Tracking System</p>
+            </div>
+          )}
         </div>
 
         <div className="menu-container-bold">
-          <div className="menu-section-title">
-            <span>Main Menu</span>
-          </div>
-          
           <div className="menu-items-bold">
             <button
               className={`menu-item-bold ${activeTab === "dashboard" ? "active" : ""}`}
@@ -238,7 +236,7 @@ export default function App() {
               <div className="menu-icon-glow">
                 <Award size={20} />
               </div>
-              <span className="menu-label">Dashboard</span>
+              {!sidebarCollapsed && <span className="menu-label">Dashboard</span>}
               <div className="menu-indicator" />
               <div className="menu-shine" />
             </button>
@@ -252,7 +250,7 @@ export default function App() {
                 <div className="menu-icon-glow">
                   <Users size={20} />
                 </div>
-                <span className="menu-label">Subordinate</span>
+                {!sidebarCollapsed && <span className="menu-label">Subordinate</span>}
                 <div className="menu-indicator" />
                 <div className="menu-shine" />
               </button>
@@ -267,13 +265,22 @@ export default function App() {
                 <div className="menu-icon-glow">
                   <Settings size={20} />
                 </div>
-                <span className="menu-label">Matrix Config</span>
+                {!sidebarCollapsed && <span className="menu-label">Matrix Config</span>}
                 <div className="menu-indicator" />
                 <div className="menu-shine" />
               </button>
             )}
           </div>
         </div>
+
+        {/* Collapse/Expand Toggle Button */}
+        <button
+          className="sidebar-toggle-btn"
+          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+          title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+        >
+          <ChevronLeft size={20} />
+        </button>
 
         {/* Bold User Profile Section */}
         <div className="sidebar-footer-bold">
@@ -284,10 +291,12 @@ export default function App() {
               </span>
               <div className="avatar-status-dot" />
             </div>
-            <div className="user-info-bold">
-              <h4 className="user-name-bold">{user.fullName}</h4>
-              <p className="user-role-bold">{user.roles[0]?.replace(/^ROLE_/, "")}</p>
-            </div>
+            {!sidebarCollapsed && (
+              <div className="user-info-bold">
+                <h4 className="user-name-bold">{user.fullName}</h4>
+                <p className="user-role-bold">{user.roles[0]?.replace(/^ROLE_/, "")}</p>
+              </div>
+            )}
           </div>
           
           <button
@@ -296,7 +305,7 @@ export default function App() {
             title="Keluar dari portal KPI"
           >
             <LogOut size={18} />
-            <span>Log Out</span>
+            {!sidebarCollapsed && <span>Log Out</span>}
             <div className="btn-glow" />
           </button>
         </div>
@@ -304,6 +313,8 @@ export default function App() {
 
       {/* Bold Premium Main Content Area */}
       <main className="main-content" style={{ 
+        marginLeft: sidebarCollapsed ? '80px' : '320px',
+        transition: 'margin-left 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)',
         background: 'radial-gradient(at 80% 0%, rgba(64, 89, 198, 0.08) 0%, transparent 50%), radial-gradient(at 0% 100%, rgba(102, 122, 209, 0.06) 0%, transparent 50%), linear-gradient(180deg, #f8fafc 0%, #e8edfc 100%)',
         backgroundAttachment: 'fixed'
       }}>
