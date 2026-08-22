@@ -1222,6 +1222,9 @@
   justify-content: center;
   width: 40px;
   height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  flex-shrink: 0;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.1);
   transition: all 0.3s ease;
@@ -1595,7 +1598,8 @@
 
 .sidebar-premium-bold.collapsed .menu-item-bold {
   justify-content: center;
-  padding: 12px;
+  padding: 12px 0;
+  gap: 0;
 }
 
 .sidebar-premium-bold.collapsed .menu-indicator {
@@ -1647,6 +1651,7 @@
 .sidebar-premium-bold.collapsed .logout-btn-bold {
   justify-content: center;
   padding: 12px 0;
+  gap: 0;
 }
 
 .sidebar-footer-bold {
@@ -1990,6 +1995,7 @@
 .sidebar-premium-bold.collapsed .logout-btn-bold {
   justify-content: center;
   padding: 12px 0;
+  gap: 0;
 }
 
 .sidebar-premium-bold.collapsed .user-info-bold,
