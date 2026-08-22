@@ -1,6 +1,6 @@
 import requests
 import json
-url = "https://talent-backend.andreasbilly.com/api/authenticate/mobile"
+url = "https://hris-api.atibusinessgroup.com/api/authenticate/mobile"
 res = requests.post(url, json={
     "username": "01.05.13.500",
     "password": "rf1d"
@@ -14,7 +14,7 @@ if res.status_code == 200:
         "Authorization": f"Bearer {token}",
         "Accept": "application/json"
     }
-    url_att = "https://talent-backend.andreasbilly.com/app/users/attendances-new?page=0&size=10&sort=clockin_timesheet"
+    url_att = "https://hris-api.atibusinessgroup.com/app/users/attendances-new?page=0&size=10&sort=clockin_timesheet"
     res_att = requests.get(url_att, headers=headers)
     print("Att Status:", res_att.status_code)
     print("Att Data:", res_att.text[:200])

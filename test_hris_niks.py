@@ -1,7 +1,7 @@
 import requests
 from datetime import datetime
 
-url = "https://talent-backend.andreasbilly.com/api/authenticate/mobile"
+url = "https://hris-api.atibusinessgroup.com/api/authenticate/mobile"
 res = requests.post(url, json={
     "username": "01.05.13.500",
     "password": "rf1d"
@@ -14,7 +14,7 @@ start_str = "2026-01-01"
 end_str = "2026-12-31"
 
 url_att = (
-    f"https://talent-backend.andreasbilly.com/api/app/users/attendances-new"
+    f"https://hris-api.atibusinessgroup.com/api/app/users/attendances-new"
     f"?page={page}&size={page_size}&sort=clockin_timesheet"
     f"&startDate={start_str}&endDate={end_str}"
 )

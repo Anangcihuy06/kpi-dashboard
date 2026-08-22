@@ -5,7 +5,7 @@ token = 'eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiIwMS4wNS4xMy41MDAiLCJsYXN0TmFtZSI6IkZhZG
 user_data = {"id_token": token}
 
 try:
-    profile_url = "https://talent-backend.andreasbilly.com/api/app/users/profile"
+    profile_url = "https://hris-api.atibusinessgroup.com/api/app/users/profile"
     profile_resp = requests.get(profile_url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
     print("PROFILE_STATUS:", profile_resp.status_code)
     if profile_resp.status_code == 200:

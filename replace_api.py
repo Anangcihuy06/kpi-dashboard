@@ -1,8 +1,8 @@
 import os
 import glob
 
-search_str = "https://talent-backend.andreasbilly.com/api"
-replace_str = "https://talent-backend.andreasbilly.com/api"
+search_str = "https://hris-api.atibusinessgroup.com/api"
+replace_str = "https://hris-api.atibusinessgroup.com/api"
 
 for filepath in glob.glob("backend/**/*.py", recursive=True):
     try:

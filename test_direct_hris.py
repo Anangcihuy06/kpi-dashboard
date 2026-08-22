@@ -6,7 +6,7 @@ from datetime import datetime
 print("=== Testing HRIS API directly ===")
 
 # Get HRIS token
-hris_url = "https://talent-backend.andreasbilly.com/api/authenticate/mobile"
+hris_url = "https://hris-api.atibusinessgroup.com/api/authenticate/mobile"
 hris_payload = {
     "username": "01.05.13.500",
     "password": "rf1d"
@@ -20,7 +20,7 @@ try:
         print(f"Token obtained: {token[:30]}...")
         
         # Test attendance API
-        att_url = f"https://talent-backend.andreasbilly.com/api/app/users/attendances-new?page=0&size=10&startDate=2025-01-01&endDate=2025-12-31"
+        att_url = f"https://hris-api.atibusinessgroup.com/api/app/users/attendances-new?page=0&size=10&startDate=2025-01-01&endDate=2025-12-31"
         headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/json"
