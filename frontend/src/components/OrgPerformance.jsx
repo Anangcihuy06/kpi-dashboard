@@ -107,7 +107,7 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
           setLoading(false); // We have partial data, stop showing skeleton
         }
         // Polling if background calculation is running
-        setTimeout(() => fetchPerformance(false, true), 3000);
+        setTimeout(() => fetchPerformance(false, true), 10000);
         return;
       }
 

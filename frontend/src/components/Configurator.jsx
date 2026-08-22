@@ -377,7 +377,7 @@ export default function Configurator() {
       } catch (e) {
         console.error("Error polling job status:", e);
       }
-    }, 3000);
+    }, 10000);
   };
 
   const handleSyncData = async () => {

@@ -90,14 +90,14 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
           } catch (e) {
             console.error("Error polling job status:", e);
           }
-        }, 3000);
+        }, 10000);
       } else {
         // Fallback
         setTimeout(async () => {
           await fetchTeamScores(true);
           setAttendanceSyncing(false);
           toast.success("Sinkronisasi KPI & Attendance selesai! Skor KPI diperbarui.");
-        }, 3000);
+        }, 10000);
       }
     } catch (err) {
       toast.error("Gagal sinkronisasi KPI & Attendance: " + err.message);
@@ -127,7 +127,7 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
         // Poll again without blocking the UI
         setTimeout(async () => {
           await fetchTeamScores(false);
-        }, 3000);
+        }, 10000);
         return; 
       }
       
