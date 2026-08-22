@@ -211,10 +211,11 @@ export default function App() {
       {/* Bold Premium Sidebar */}
       <nav className={`sidebar-premium-bold ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-header-bold">
-          <div className="logo-container-glow">
+          <div>
             <img
               src="/logo-removebg-preview.png"
-              style={{ height: "40px" }}
+              style={{ height: "70px", objectFit: "contain" }}
+              alt="Sidebar Logo"
             />
           </div>
           <div>
