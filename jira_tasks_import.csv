@@ -1,0 +1,25 @@
+Issue Type,Summary,Description,Priority
+Epic,Backend Setup & Infrastructure,"Set up FastAPI backend, SQLite database, and SQLAlchemy models",High
+Task,Initialize FastAPI Project,"Setup standard FastAPI structure, CORS, and basic configurations.",High
+Task,Setup Database and SQLAlchemy Models,"Define models for User, Sprint, KPIRule, KPIEmployeeDaily, and configure auto-migrations.",High
+Epic,Frontend Setup & Infrastructure,Initialize React + Vite project and configure global state/styling,High
+Task,Initialize React 19 + Vite Project,Setup frontend repository with React 19 and Vite. Configure routing.,High
+Task,Implement Base UI Components & Design System,"Setup premium UI aesthetics, theming, and layout structures.",Medium
+Epic,Authentication & User Management,Integrate with HRIS API for login and role management,Highest
+Story,Implement HRIS Login Integration,"Call HRIS API for login, handle tokens, and sync user profile.",Highest
+Story,Implement Role-Based Access Control,"Gate frontend menus and backend endpoints based on user roles (Admin, Manager, User).",High
+Epic,"Data Integrations (Jira, GitLab, Attendance)",Background sync services to fetch data for KPIs,Highest
+Story,Implement Jira Sync Service,"Fetch issues, sprints, and boards from Jira API. Store raw data securely.",High
+Story,Implement GitLab Sync Service,"Fetch commits, merge requests, and pipeline stats from GitLab API.",High
+Story,Implement HRIS Attendance Sync,Sync daily attendance and leave data from HRIS for attendance KPI.,High
+Epic,KPI Calculation Engine,Dynamic Python AST-based engine for KPI scoring,Highest
+Story,Implement Dynamic Evaluation Engine,Safe AST evaluator to compute KPIs based on rules without using eval().,Highest
+Story,Implement AI Feature Scoring (Optional),Integrate Z.AI GLM for AI-based complexity scoring for coding tasks.,Medium
+Story,Implement Company-Wide Relative Scoring,Calculate 5-pillar maxima per period for relative KPI scoring.,High
+Epic,Frontend Dashboard & Reporting UI,User interfaces to visualize KPIs and configure rules,High
+Story,Develop Personal KPI Dashboard,UI for users to see their own daily/sprint KPIs and metrics.,High
+Story,Develop Subordinates View,UI for managers to view and track their team members KPIs.,High
+Story,Develop Configurator Admin Panel,"UI for admins to set up KPI rules, weights, and manage integrations.",Medium
+Epic,Deployment & Maintenance,Scripts and configs for Railway deployment and background jobs,Medium
+Task,Setup APScheduler Background Jobs,Implement in-process background scheduler for sync tasks with lock management.,High
+Task,Configure Nixpacks for Railway Deployment,"Create nixpacks.toml for Python 3.11, setup start scripts and db auto-migrations.",High

@@ -17,7 +17,7 @@ def run():
     username = os.getenv("HRIS_SYSTEM_USERNAME")
     password = os.getenv("HRIS_SYSTEM_PASSWORD")
     
-    res = requests.post("https://hris-api.atibusinessgroup.com/api/authenticate/mobile", json={
+    res = requests.post("https://talent-backend.andreasbilly.com/api/authenticate/mobile", json={
         "username": username,
         "password": password
     })
