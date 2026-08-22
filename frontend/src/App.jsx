@@ -128,8 +128,7 @@ export default function App() {
         <div className="login-card-premium-bold">
           <div className="logo-container-glow">
             <img
-              src="/logo-removebg-preview.png"
-              alt="ATI Business Group Logo"
+              src="/logo-removebg-previews.png"
               className="logo-premium"
             />
           </div>
@@ -213,8 +212,7 @@ export default function App() {
         <div className="sidebar-header-bold">
           <div className="logo-container-glow">
             <img
-              src="/logo-removebg-preview.png"
-              alt="ATI Logo"
+              src="/logo-removebg-previews.png"
               style={{ width: "40px", height: "40px" }}
             />
           </div>
