@@ -1,7 +1,13 @@
 import React, { useState, useEffect } from "react";
-import { Users, Search, ArrowLeft, ChevronDown, ChevronUp, BarChart2, Award, Info, Clock, UserCheck, AlertTriangle, RefreshCw, Mail } from "lucide-react";
+import { Users, Search, ArrowLeft, ChevronDown, ChevronUp, BarChart2, Award, Info, Clock, UserCheck, AlertTriangle, RefreshCw, Mail, Download, Crown, TrendingUp } from "lucide-react";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, BarChart, Bar, Cell } from "recharts";
+import { exportToCSV } from "../utils/export";
 import { toast } from "sonner";
 import Dashboard from "./Dashboard";
+
+const SCORE_GRADIENT = ["#12ccab", "#4f8cff", "#8b5cf6", "#f59e0b", "#ef4444"];
+
+const SCORE_GRADIENT = ["#12ccab", "#4f8cff", "#8b5cf6", "#f59e0b", "#ef4444"];
 
 export default function Subordinates({ supervisorId, initialMemberId, onResetTarget }) {
   const [subordinates, setSubordinates] = useState([]);
@@ -155,8 +161,36 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
     }));
   };
 
+  const handleExportCSV = () => {
+    const exportData = subordinates.map(sub => ({
+      NIK: sub.nik || "-",
+      Nama: sub.full_name,
+      Divisi: sub.division || "-",
+      "Overall KPI": sub.kpi_scores?.overall || 0,
+      "Kehadiran (%)": sub.attendance?.normal_percentage || 0,
+      "Terlambat (%)": sub.attendance?.late_percentage || 0,
+      "C": sub.pillars?.C?.score || 0,
+      "I": sub.pillars?.I?.score || 0,
+      "S": sub.pillars?.S?.score || 0,
+      "R": sub.pillars?.R?.score || 0,
+      "O": sub.pillars?.O?.score || 0,
+    }));
+    exportToCSV(`Kinerja_Tim_${selectedYear}.csv`, exportData);
+  };
+
+  const getLeaderboard = () => {
+    return [...subordinates]
+      .filter(s => s.kpi_scores && s.kpi_scores.overall > 0)
+      .sort((a, b) => b.kpi_scores.overall - a.kpi_scores.overall)
+      .slice(0, 3)
+      .map(s => ({ name: s.full_name.split(' ')[0], Score: parseFloat(s.kpi_scores.overall.toFixed(1)) }));
+  };
+  const leaderboard = getLeaderboard();
+
   // Filter subordinates by search query
-  const filteredSubs = subordinates.filter(sub =>
+  const sortedSubordinates = [...subordinates].sort((a, b) => (b.kpi_scores?.overall || 0) - (a.kpi_scores?.overall || 0));
+
+  const filteredSubs = sortedSubordinates.filter(sub =>
     sub.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     (sub.nik && sub.nik.includes(searchQuery))
   );
@@ -304,6 +338,15 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
         </div>
 
         <div className="filter-group" style={{ display: "flex", gap: "10px", alignItems: "flex-end", justifyContent: "flex-end" }}>
+          <button
+            className="btn-outline"
+            onClick={handleExportCSV}
+            title="Download Laporan CSV"
+            style={{ display: "flex", alignItems: "center", gap: "6px", padding: "0 16px", height: "48px", fontSize: "12px", fontWeight: 600 }}
+          >
+            <Download size={13} />
+            Export CSV
+          </button>
           <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
             <label className="form-label" style={{ fontWeight: 600, fontSize: "11px", color: "var(--color-text-muted)" }}>
               Periode Evaluasi
@@ -319,6 +362,15 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
               ))}
             </select>
           </div>
+          <button
+            className="btn-outline"
+            onClick={handleExportCSV}
+            title="Download Laporan CSV"
+            style={{ display: "flex", alignItems: "center", gap: "6px", padding: "0 16px", height: "48px", fontSize: "12px", fontWeight: 600 }}
+          >
+            <Download size={13} />
+            Export CSV
+          </button>
           <button
             className={attendanceSyncing ? "btn-outline" : "btn-primary"}
             onClick={() => syncAttendanceForYear(selectedYear)}
@@ -341,6 +393,29 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
           </button>
         </div>
       </div>
+
+      {/* Leaderboard Section */}
+      {leaderboard.length > 0 && (
+        <div className="card" style={{ marginBottom: "var(--space-6)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <Crown size={18} style={{ color: "#8b5cf6" }} />
+            <h3 style={{ margin: 0, fontSize: "var(--text-lg)", fontWeight: 700 }}>Top Performers Tim</h3>
+          </div>
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={leaderboard} layout="vertical" margin={{ top: 8, right: 24, left: 8, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.25)" horizontal={false} />
+              <XAxis type="number" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
+              <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#475569" }} axisLine={false} tickLine={false} width={110} />
+              <Tooltip cursor={{ fill: "rgba(148,163,184,0.08)" }} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", boxShadow: "0 8px 24px rgba(15,23,42,0.08)", fontSize: 13 }} />
+              <Bar dataKey="Score" name="Score" radius={[0, 6, 6, 0]} maxBarSize={20}>
+                {leaderboard.map((_, idx) => (
+                  <Cell key={idx} fill={SCORE_GRADIENT[idx % SCORE_GRADIENT.length]} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       {/* Team Aggregated Stat Cards */}
       <div className="stats-grid">
