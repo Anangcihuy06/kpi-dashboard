@@ -211,19 +211,17 @@ export default function App() {
       {/* Bold Premium Sidebar */}
       <nav className={`sidebar-premium-bold ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-header-bold">
-          <div className="logo-container-glow" style={{ margin: '0 0 16px 0', padding: '12px', width: 'fit-content' }}>
+          <div className="logo-container-glow">
             <img
               src="/logo-removebg-preview.png"
               alt="ATI Logo"
               style={{ width: "40px", height: "40px" }}
             />
           </div>
-          {!sidebarCollapsed && (
-            <div>
-              <h3 className="brand-name-bold">ATI Dashboard</h3>
-              <p className="brand-tagline-bold">KPI Tracking System</p>
-            </div>
-          )}
+          <div>
+            <h3 className="brand-name-bold">ATI Dashboard</h3>
+            <p className="brand-tagline-bold">KPI Tracking System</p>
+          </div>
         </div>
 
         <div className="menu-container-bold">
@@ -236,7 +234,7 @@ export default function App() {
               <div className="menu-icon-glow">
                 <Award size={20} />
               </div>
-              {!sidebarCollapsed && <span className="menu-label">Dashboard</span>}
+              <span className="menu-label">Dashboard</span>
               <div className="menu-indicator" />
               <div className="menu-shine" />
             </button>
@@ -250,7 +248,7 @@ export default function App() {
                 <div className="menu-icon-glow">
                   <Users size={20} />
                 </div>
-                {!sidebarCollapsed && <span className="menu-label">Subordinate</span>}
+                <span className="menu-label">Subordinate</span>
                 <div className="menu-indicator" />
                 <div className="menu-shine" />
               </button>
@@ -265,7 +263,7 @@ export default function App() {
                 <div className="menu-icon-glow">
                   <Settings size={20} />
                 </div>
-                {!sidebarCollapsed && <span className="menu-label">Matrix Config</span>}
+                <span className="menu-label">Matrix Config</span>
                 <div className="menu-indicator" />
                 <div className="menu-shine" />
               </button>
@@ -291,12 +289,10 @@ export default function App() {
               </span>
               <div className="avatar-status-dot" />
             </div>
-            {!sidebarCollapsed && (
-              <div className="user-info-bold">
-                <h4 className="user-name-bold">{user.fullName}</h4>
-                <p className="user-role-bold">{user.roles[0]?.replace(/^ROLE_/, "")}</p>
-              </div>
-            )}
+            <div className="user-info-bold">
+              <h4 className="user-name-bold">{user.fullName}</h4>
+              <p className="user-role-bold">{user.roles[0]?.replace(/^ROLE_/, "")}</p>
+            </div>
           </div>
           
           <button
@@ -305,7 +301,7 @@ export default function App() {
             title="Keluar dari portal KPI"
           >
             <LogOut size={18} />
-            {!sidebarCollapsed && <span>Log Out</span>}
+            <span>Log Out</span>
             <div className="btn-glow" />
           </button>
         </div>
