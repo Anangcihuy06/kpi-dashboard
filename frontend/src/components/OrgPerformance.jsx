@@ -104,6 +104,7 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
         const partial = result.partial_data || [];
         if (partial.length > 0) {
           setMembers(partial);
+          setLoading(false); // We have partial data, stop showing skeleton
         }
         // Polling if background calculation is running
         setTimeout(() => fetchPerformance(true, true), 3000);
@@ -117,10 +118,10 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
       } else {
         setMembers([]);
       }
+      setLoading(false);
     } catch (err) {
       setError(err.message);
       setMembers([]);
-    } finally {
       setLoading(false);
     }
   };

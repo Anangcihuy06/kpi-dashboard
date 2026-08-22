@@ -39,7 +39,7 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
   useEffect(() => {
     if (supervisorId) {
       setLoading(true);
-      fetchTeamScores().finally(() => setLoading(false));
+      fetchTeamScores();
     }
   }, [supervisorId, selectedYear]);
 
@@ -113,22 +113,22 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
       });
       
       if (response.status === 202) {
-        // Background calculation in progress — render partial rows as they arrive,
-        // then keep polling this same endpoint until it returns a full result.
+        // Background calculation in progress
         const data = await response.json();
         const partial = data.partial_data || [];
         if (partial.length > 0) {
           setSubordinates(partial);
+          setLoading(false); // We have partial data, stop showing skeleton
         }
         const progress = data.progress || 0;
         const total = data.total || 0;
         setCalcProgress({ progress, total });
-        // Poll again without blocking the UI — drop the force flag on retries so
-        // the in-progress job is not cancelled & restarted every 3s.
+        
+        // Poll again without blocking the UI
         setTimeout(async () => {
           await fetchTeamScores(false);
         }, 3000);
-        return; // Don't toggle loading — keep showing whatever we have
+        return; 
       }
       
       if (!response.ok) throw new Error("Gagal mengambil report tim");
@@ -140,9 +140,10 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
       } else {
         setSubordinates([]);
       }
+      setLoading(false);
     } catch (err) {
       console.error(err);
-      // Keep existing data on error, don't clear it
+      setLoading(false);
     }
     return Promise.resolve();
   };
