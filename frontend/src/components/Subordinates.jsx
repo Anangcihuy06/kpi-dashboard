@@ -5,7 +5,6 @@ import { exportToCSV } from "../utils/export";
 import { toast } from "sonner";
 import Dashboard from "./Dashboard";
 
-const SCORE_GRADIENT = ["#12ccab", "#4f8cff", "#8b5cf6", "#f59e0b", "#ef4444"];
 
 const SCORE_GRADIENT = ["#12ccab", "#4f8cff", "#8b5cf6", "#f59e0b", "#ef4444"];
 
