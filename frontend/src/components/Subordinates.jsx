@@ -232,7 +232,7 @@ export default function Subordinates({ supervisorId }) {
         >
           <ArrowLeft size={16} /> Kembali ke Daftar Tim
         </button>
-        <Dashboard userId={selectedSubId} isSelf={false} />
+        <Dashboard userId={selectedSubId} isSelf={false} initialYear={selectedYear} />
       </div>
     );
   }

@@ -5,9 +5,9 @@ import {
 } from "recharts";
 import { Award, TrendingUp, GitMerge, CheckSquare, Calendar, RefreshCw, Clock, UserCheck, Info } from "lucide-react";
 
-export default function Dashboard({ userId, isSelf }) {
+export default function Dashboard({ userId, isSelf, initialYear }) {
   const [data, setData] = useState(null);
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [selectedYear, setSelectedYear] = useState(initialYear || new Date().getFullYear());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [syncStatus, setSyncStatus] = useState({ last_sync_time: null, is_syncing: false });
