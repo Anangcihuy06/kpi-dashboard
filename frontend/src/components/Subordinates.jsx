@@ -36,7 +36,7 @@ export default function Subordinates({ supervisorId }) {
 
   const fetchSyncStatus = async () => {
     try {
-      const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/sync/status", {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/sync/status?_t=${Date.now()}`, {
         cache: 'no-store'
       });
       const status = await response.json();
@@ -96,7 +96,7 @@ export default function Subordinates({ supervisorId }) {
   const fetchTeamScores = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/team-yearly?user_id=${supervisorId}&year=${selectedYear}`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/team-yearly?user_id=${supervisorId}&year=${selectedYear}&_t=${Date.now()}`, {
         cache: 'no-store'
       });
       if (!response.ok) throw new Error("Gagal mengambil report tim");
