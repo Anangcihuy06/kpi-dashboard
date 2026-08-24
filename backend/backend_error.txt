@@ -1,0 +1,4 @@
+  File "C:\Users\ATI-User\KPI-Dashboard\backend\main.py", line 1819
+    background_tasks: BackgroundTasks,
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+SyntaxError: parameter without a default follows parameter with a default

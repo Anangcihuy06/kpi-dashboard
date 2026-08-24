@@ -1,14 +1,22 @@
 import React, { useState, useEffect } from "react";
-import { Award, Users, Settings, LogOut, KeyRound, Info } from "lucide-react";
+import { Award, Users, Settings, LogOut, KeyRound, User, ArrowRight, ChevronLeft } from "lucide-react";
 import { toast } from "sonner";
-import Dashboard from "./components/Dashboard";
+import OrgPerformance from "./components/OrgPerformance";
 import Subordinates from "./components/Subordinates";
 import Configurator from "./components/Configurator";
 
+function getInitials(name = "") {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 export default function App() {
-  const [user, setUser] = useState(null); // Logged in user profile
-  const [token, setToken] = useState("");
+  const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [subTargetId, setSubTargetId] = useState(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Load session from localStorage on mount — verify locally (no HRIS call needed)
   useEffect(() => {
@@ -22,7 +30,6 @@ export default function App() {
         .then(data => {
           if (data?.status === "valid") {
             setUser(data.user);
-            setToken(storedToken);
           } else {
             // Session invalid — clear it
             localStorage.removeItem("kpi_user");
@@ -32,7 +39,6 @@ export default function App() {
         .catch(() => {
           // Fallback: use cached session if backend unreachable
           setUser(parsedUser);
-          setToken(storedToken);
         });
     }
   }, []);
@@ -69,9 +75,9 @@ export default function App() {
 
       const data = await response.json();
       setUser(data.user);
-      setToken(data.token);
       localStorage.setItem("kpi_user", JSON.stringify(data.user));
       localStorage.setItem("kpi_token", data.token);
+      localStorage.setItem("hris_token", data.hris_token || ""); // Store HRIS token
       setActiveTab("dashboard");
     } catch (err) {
       clearTimeout(timeoutId);
@@ -87,7 +93,6 @@ export default function App() {
 
   const handleLogout = () => {
     setUser(null);
-    setToken("");
     setUsernameInput("");
     setPasswordInput("");
     localStorage.removeItem("kpi_user");
@@ -112,49 +117,82 @@ export default function App() {
 
   if (!user) {
     return (
-      <div className="auth-page">
-        <div className="login-card">
-          <img
-            src="/logo-removebg-preview.png"
-            alt="ATI Business Group Logo"
-            className="login-header-logo"
-          />
-          <h2 className="form-title">KPI Dashboard Portal</h2>
-          <p className="form-subtitle">Autentikasi menggunakan akun ATI Business Group Anda</p>
+      <div className="auth-premium-bold">
+        <div className="auth-background-bold">
+          <div className="gradient-mesh" />
+          <div className="floating-shape shape-1" />
+          <div className="floating-shape shape-2" />
+          <div className="floating-shape shape-3" />
+        </div>
+
+        <div className="login-card-premium-bold">
+          <div className="logo-container-glow">
+            <img
+              src="/logo-removebg-preview.png"
+              alt="Logo"
+              className="logo-premium"
+            />
+          </div>
+
+          <h2 className="auth-title-bold">KPI Dashboard Portal</h2>
+          <p className="auth-subtitle-bold">Enterprise Performance Management System</p>
 
           <form onSubmit={handleRealLogin}>
-            <div className="form-group">
-              <label className="form-label">Username / NIK</label>
-              <input
-                type="text"
-                className="form-input"
-                value={usernameInput}
-                onChange={handleUsernameChange}
-                placeholder="01.05.13.500"
-                required
-              />
+            <div className="input-group-bold">
+              <label className="input-label-bold" htmlFor="login-username">Corporate ID</label>
+              <div className="input-wrapper-bold">
+                <input
+                  id="login-username"
+                  type="text"
+                  className="input-premium-bold"
+                  value={usernameInput}
+                  onChange={handleUsernameChange}
+                  placeholder="01.05.13.500"
+                  autoComplete="username"
+                  required
+                />
+                <div className="input-icon-glow">
+                  <User size={20} />
+                </div>
+              </div>
             </div>
 
-            <div className="form-group" style={{ marginBottom: "32px" }}>
-              <label className="form-label">Password</label>
-              <input
-                type="password"
-                className="form-input"
-                value={passwordInput}
-                onChange={(e) => setPasswordInput(e.target.value)}
-                placeholder="••••••••"
-                required
-              />
+            <div className="input-group-bold">
+              <label className="input-label-bold" htmlFor="login-password">Password</label>
+              <div className="input-wrapper-bold">
+                <input
+                  id="login-password"
+                  type="password"
+                  className="input-premium-bold"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="••••••••"
+                  autoComplete="current-password"
+                  required
+                />
+                <div className="input-icon-glow">
+                  <KeyRound size={20} />
+                </div>
+              </div>
             </div>
 
-            <button type="submit" className="btn-primary" disabled={loginLoading}>
+            <button type="submit" className="btn-primary-bold" disabled={loginLoading}>
               {loginLoading ? (
                 <span style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
-                  <span className="spinner" style={{ width: "14px", height: "14px", border: "2px solid #fff3", borderTop: "2px solid #fff", borderRadius: "50%", animation: "spin 0.8s linear infinite", display: "inline-block" }}></span>
-                  Menghubungi HRIS Server... (bisa 10-20 detik)
+                  <span className="spinner" style={{ width: "16px", height: "16px", border: "2px solid rgba(255,255,255,0.3)", borderTop: "2px solid #fff", borderRadius: "50%", animation: "spin 0.8s linear infinite", display: "inline-block" }}></span>
+                  Authenticating with HRIS...
                 </span>
-              ) : "Sign In ke Portal"}
+              ) : (
+                <span className="btn-text">
+                  Sign In to Portal
+                  <ArrowRight size={18} />
+                </span>
+              )}
             </button>
+
+            <p className="text-xs text-muted" style={{ marginTop: 24, lineHeight: 1.6, textAlign: 'center', opacity: 0.7 }}>
+              Performance data is automatically synchronized from Jira, GitLab, and HRIS
+            </p>
           </form>
         </div>
       </div>
@@ -165,86 +203,119 @@ export default function App() {
   // - Subordinates menu visible to anyone who is a manager/supervisor or has subordinates
   const hasSubordinatesMenu = user.hasSubordinates || user.roles.includes("ROLE_ADMIN") || user.roles.includes("MANAGER") || user.roles.includes("SUPERVISOR");
 
-  // - Configurator menu visible to MANAGER or ROLE_ADMIN
-  const hasConfiguratorMenu = user.roles.includes("ROLE_ADMIN") || user.roles.includes("MANAGER");
+  // - Configurator menu visible to MANAGER/SUPERVISOR/ROLE_ADMIN or anyone with subordinates
+  const hasConfiguratorMenu = user.roles.includes("ROLE_ADMIN") || user.roles.includes("MANAGER") || user.roles.includes("SUPERVISOR") || user.hasSubordinates;
 
   return (
     <div className="app-container">
-      {/* Sidebar */}
-      <nav className="sidebar">
-        <div className="brand-logo-container">
-          <img
-            src="/logo-removebg-preview.png"
-            alt="ATI Logo"
-            style={{ width: "32px", height: "32px" }}
-          />
+      {/* Bold Premium Sidebar */}
+      <nav className={`sidebar-premium-bold ${sidebarCollapsed ? 'collapsed' : ''}`}>
+        <div className="sidebar-header-bold">
           <div>
-            <span className="brand-name">ATI Dashboard</span>
-            <div style={{ fontSize: "9px", color: "var(--color-tint)" }}>KPI Tracking System</div>
+            <img
+              src="/logo-removebg-preview.png"
+              style={{ height: "70px", objectFit: "contain" }}
+              alt="Sidebar Logo"
+            />
+          </div>
+          <div>
+            <h3 className="brand-name-bold">ATI Dashboard</h3>
+            <p className="brand-tagline-bold">KPI Tracking System</p>
           </div>
         </div>
 
-        <ul className="menu-list">
-          <li>
-            <div
-              className={`menu-item ${activeTab === "dashboard" ? "active" : ""}`}
+        <div className="menu-container-bold">
+          <div className="menu-items-bold">
+            <button
+              className={`menu-item-bold ${activeTab === "dashboard" ? "active" : ""}`}
               onClick={() => setActiveTab("dashboard")}
+              title="Ringkasan performa seluruh tim di bawah kendali Anda"
             >
-              <Award size={18} />
-              <span>My Performance</span>
-            </div>
-          </li>
-
-          {hasSubordinatesMenu && (
-            <li>
-              <div
-                className={`menu-item ${activeTab === "subordinates" ? "active" : ""}`}
-                onClick={() => setActiveTab("subordinates")}
-              >
-                <Users size={18} />
-                <span>Hierarki Tim (Sub)</span>
+              <div className="menu-icon-glow">
+                <Award size={20} />
               </div>
-            </li>
-          )}
+              <span className="menu-label">Dashboard</span>
+              <div className="menu-indicator" />
+              <div className="menu-shine" />
+            </button>
 
-          {hasConfiguratorMenu && (
-            <li>
-              <div
-                className={`menu-item ${activeTab === "configurator" ? "active" : ""}`}
+            {hasSubordinatesMenu && (
+              <button
+                className={`menu-item-bold ${activeTab === "subordinates" ? "active" : ""}`}
+                onClick={() => { setActiveTab("subordinates"); setSubTargetId(null); }}
+                title="Kelola dan evaluasi KPI seluruh anggota tim di bawah kendali Anda"
+              >
+                <div className="menu-icon-glow">
+                  <Users size={20} />
+                </div>
+                <span className="menu-label">Subordinate</span>
+                <div className="menu-indicator" />
+                <div className="menu-shine" />
+              </button>
+            )}
+
+            {hasConfiguratorMenu && (
+              <button
+                className={`menu-item-bold ${activeTab === "configurator" ? "active" : ""}`}
                 onClick={() => setActiveTab("configurator")}
+                title="Atur matriks KPI, formula dinamis, dan integrasi Jira/GitLab"
               >
-                <Settings size={18} />
-                <span>Matrix Config</span>
-              </div>
-            </li>
-          )}
-        </ul>
+                <div className="menu-icon-glow">
+                  <Settings size={20} />
+                </div>
+                <span className="menu-label">Matrix Config</span>
+                <div className="menu-indicator" />
+                <div className="menu-shine" />
+              </button>
+            )}
+          </div>
+        </div>
 
-        {/* User Profile Summary at bottom of sidebar */}
-        <div className="sidebar-footer">
-          <div className="user-profile-header">
-            <div className="user-avatar">
-              {user.fullName.charAt(0)}
+        {/* Collapse/Expand Toggle Button */}
+        <button
+          className="sidebar-toggle-btn"
+          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+          title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+        >
+          <ChevronLeft size={20} />
+        </button>
+
+        {/* Bold User Profile Section */}
+        <div className="sidebar-footer-bold">
+          <div className="user-profile-bold">
+            <div className="user-avatar-glow">
+              <span className="avatar-initials">
+                {getInitials(user.fullName)}
+              </span>
+              <div className="avatar-status-dot" />
             </div>
-            <div className="user-details">
-              <h5>{user.fullName}</h5>
-              <p>Role: {user.roles.join(", ")}</p>
+            <div className="user-info-bold">
+              <h4 className="user-name-bold">{user.fullName}</h4>
+              <p className="user-role-bold">{user.roles[0]?.replace(/^ROLE_/, "")}</p>
             </div>
           </div>
 
           <button
-            className="btn-logout"
+            className="logout-btn-bold"
             onClick={handleLogout}
+            title="Keluar dari portal KPI"
           >
-            <LogOut size={14} /> Log Out
+            <LogOut size={18} />
+            <span>Log Out</span>
+            <div className="btn-glow" />
           </button>
         </div>
       </nav>
 
-      {/* Main Content Area */}
-      <main className="main-content">
-        {activeTab === "dashboard" && <Dashboard userId={user.id} isSelf={true} />}
-        {activeTab === "subordinates" && <Subordinates supervisorId={user.id} />}
+      {/* Bold Premium Main Content Area */}
+      <main className="main-content" style={{
+        marginLeft: sidebarCollapsed ? '80px' : '320px',
+        transition: 'margin-left 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)',
+        background: 'radial-gradient(at 80% 0%, rgba(64, 89, 198, 0.08) 0%, transparent 50%), radial-gradient(at 0% 100%, rgba(102, 122, 209, 0.06) 0%, transparent 50%), linear-gradient(180deg, #f8fafc 0%, #e8edfc 100%)',
+        backgroundAttachment: 'fixed'
+      }}>
+        {activeTab === "dashboard" && <OrgPerformance userId={user.id} onOpenMemberDetail={(id) => { setSubTargetId(id); setActiveTab("subordinates"); }} />}
+        {activeTab === "subordinates" && <Subordinates supervisorId={user.id} initialMemberId={subTargetId} onResetTarget={() => setSubTargetId(null)} />}
         {activeTab === "configurator" && <Configurator />}
       </main>
     </div>

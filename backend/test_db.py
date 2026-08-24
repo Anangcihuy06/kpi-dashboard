@@ -1,7 +1,21 @@
-import sqlite3
-conn = sqlite3.connect('c:/Users/ATI-User/KPI-Dashboard/backend/database.db')
-c = conn.cursor()
-c.execute("SELECT COUNT(*) FROM activities WHERE user_id='6518' AND activity_type='commit'")
-print(f'Nanang commits in activities: {c.fetchone()[0]}')
-c.execute("SELECT COUNT(*) FROM raw_gitlab_commits WHERE author_name LIKE '%nanang%' OR author_name LIKE '%anang%'")
-print(f'Nanang commits in raw_gitlab_commits: {c.fetchone()[0]}')
+import os
+from sqlalchemy import text
+from database import SessionLocal
+from models import KPIRule, KPIRuleMetric, Division, User
+
+db = SessionLocal()
+
+print("KPIRULES:")
+rules = db.query(KPIRule).all()
+for r in rules:
+    print(r.id, r.name, r.division_id, r.group_id)
+
+print("\nDIVISIONS:")
+divs = db.query(Division).all()
+for d in divs:
+    print(d.id, d.code, d.name)
+
+print("\nUSERS:")
+users = db.query(User).all()
+for u in users:
+    print(u.id, u.nik, u.full_name, u.division_id, u.group_id)

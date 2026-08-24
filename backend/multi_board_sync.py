@@ -25,7 +25,21 @@ def sync_all_boards_sprints(db: Session, settings: models.IntegrationSetting):
         board_ids.append(settings.default_jira_board_id)
     
     if not board_ids:
-        logger.warning("No Jira boards configured for sync.")
+        logger.info("No Jira boards configured. Attempting auto-discovery...")
+        try:
+            resp = requests.get(f"{settings.jira_url}/rest/agile/1.0/board", auth=jira_auth, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                for b in data.get('values', []):
+                    board_ids.append(str(b['id']))
+                logger.info(f"Auto-discovered {len(board_ids)} boards.")
+            else:
+                logger.warning(f"Failed to auto-discover boards: {resp.status_code}")
+        except Exception as e:
+            logger.error(f"Error during auto-discovery: {e}")
+            
+    if not board_ids:
+        logger.warning("No Jira boards configured for sync and auto-discovery found none.")
         return {}
     
     # Remove duplicates

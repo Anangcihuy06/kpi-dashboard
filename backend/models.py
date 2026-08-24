@@ -1,5 +1,6 @@
+import datetime
 import uuid
-from sqlalchemy import Column, String, Boolean, ForeignKey, Numeric, DateTime, JSON, Integer, Text, Float
+from sqlalchemy import Column, String, Boolean, ForeignKey, Numeric, DateTime, JSON, Integer, Text, Float, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -83,6 +84,10 @@ class Project(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
+    __table_args__ = (
+        UniqueConstraint("source", "external_project_id", name="uq_project_source_external"),
+    )
+
 class Sprint(Base):
     __tablename__ = "sprints"
 
@@ -147,6 +152,10 @@ class SyncState(Base):
     retry_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("source", "entity", name="uq_sync_state_source_entity"),
+    )
 
 class SyncJob(Base):
     """Track background sync jobs for frontend polling"""
@@ -256,6 +265,10 @@ class RawJiraIssue(Base):
     created_date = Column(DateTime, nullable=True)
     updated_date = Column(DateTime, nullable=True)
     resolved_date = Column(DateTime, nullable=True)
+    # Precomputed multi-factor feature score (complexity_sp contribution).
+    # Computed once at sync time by the FeatureScorer so request paths never re-scan.
+    complexity_score = Column(Float, nullable=True)
+    complexity_detail = Column(JSON, nullable=True)
     raw_data = Column(JSON, default={})
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now())
@@ -400,6 +413,10 @@ class KPIEmployeeDaily(Base):
     project = relationship("Project")
     sprint = relationship("Sprint")
 
+    __table_args__ = (
+        UniqueConstraint("user_id", "date", name="uq_kpi_employee_daily_user_date"),
+    )
+
 # ─────────────────────────────────────────────────────────────
 # EXISTING TABLES (Enhanced for compatibility)
 # ─────────────────────────────────────────────────────────────
@@ -521,3 +538,98 @@ class AttendanceRecord(Base):
     user = relationship("User", backref="attendance_records")
     sprint = relationship("Sprint", backref="attendance_records")
 
+class CompanyMaxima(Base):
+    """Company/group-wide 5-pillar maxima per period (computed once at sync time).
+
+    Replaces the request-time company scan so /yearly-performance is a cheap DB read.
+    A row with group_id = NULL is the company-wide (global) benchmark; rows with a
+    group_id hold the benchmark of the indicator matrix for that specific group.
+    """
+    __tablename__ = "company_maxima"
+
+    id = Column(String(50), primary_key=True, default=generate_uuid)
+    year = Column(Integer, nullable=False, index=True)
+    period = Column(String(20), nullable=False, default="YEARLY")  # YEARLY / SPRINT
+    group_id = Column(String(50), nullable=True, index=True)  # NULL = company-wide
+    division_id = Column(String(50), nullable=True)
+    max_raw_sp = Column(Float, nullable=False, default=0.0)
+    max_complexity_sp = Column(Float, nullable=False, default=0.0)
+    max_issues_cnt = Column(Integer, nullable=False, default=0)
+    max_founder_sp = Column(Float, nullable=False, default=0.0)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("year", "period", "group_id", name="uq_company_maxima_scope"),
+    )
+
+class UserYearlyMetrics(Base):
+    """Precomputed per-user, per-year delivery aggregates.
+
+    Computed once at sync time so request paths never scan raw tables.
+    """
+    __tablename__ = "user_yearly_metrics"
+
+    id = Column(String(50), primary_key=True, default=generate_uuid)
+    user_id = Column(String(50), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    year = Column(Integer, nullable=False, index=True)
+    period = Column(String(20), nullable=False, default="YEARLY")
+    raw_sp = Column(Float, nullable=False, default=0.0)
+    complexity_sp = Column(Float, nullable=False, default=0.0)
+    issues_completed = Column(Integer, nullable=False, default=0)
+    founder_credit = Column(Float, nullable=False, default=0.0)
+    # Highest resolved_date already folded into the totals above. NULL = not
+    # accumulated yet (full recompute on next run). DateTime (not Date) so the
+    # exact timestamp is kept and later increments never re-count those rows.
+    last_processed_date = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    user = relationship("User")
+    __table_args__ = (UniqueConstraint("user_id", "year", "period", name="uq_user_yearly_metrics"),)
+
+class AppLock(Base):
+    """DB-backed advisory lock row (see locks.py).
+
+    Enables cross-instance mutual exclusion (two Railway workers never run the
+    same heavy job at the same time) on both SQLite and Postgres.
+    """
+    __tablename__ = "app_locks"
+
+    lock_name = Column(String(150), primary_key=True)
+    owner = Column(String(100), nullable=True)
+    acquired_at = Column(String(30), nullable=True)
+    heartbeat_at = Column(String(30), nullable=True)
+
+class FeatureScoreCache(Base):
+    """Persistent cache of feature-complexity scoring.
+
+    Keyed by (issue_key, summary_hash) so a rescore never pays the LLM again
+    for a summary that has not changed, and the cache survives restarts (the
+    previous in-memory dict was lost on every reload).
+    """
+    __tablename__ = "feature_score_cache"
+
+    id = Column(String(50), primary_key=True, default=generate_uuid)
+    issue_key = Column(String(100), nullable=False, index=True)
+    summary_hash = Column(String(64), nullable=False)
+    score = Column(JSON, nullable=True)
+    model = Column(String(100), nullable=True)
+    score_type = Column(String(30), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("issue_key", "summary_hash", name="uq_feature_score_cache_key_hash"),
+    )
+
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+
+
+class Notification(Base):
+    __tablename__ = 'notifications'
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, index=True) # Receiver of notification
+    title = Column(String)
+    message = Column(Text)
+    type = Column(String, default='info') # info, warning, success
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)

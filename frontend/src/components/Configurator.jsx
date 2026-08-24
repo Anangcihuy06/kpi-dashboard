@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Settings, Play, CheckCircle, RefreshCw, AlertCircle, Plus, Trash2, Globe, Server } from "lucide-react";
+import { Settings, Play, CheckCircle, RefreshCw, AlertCircle, Plus, Trash2, Globe, Server, Shield, UserCog, User, Building2, Layers, ShieldAlert, Lock, Sparkles, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Configurator() {
@@ -34,8 +34,13 @@ export default function Configurator() {
 
   const [saveLoading, setSaveLoading] = useState(false);
   const [calcLoading, setCalcLoading] = useState(false);
+  const [calcProgress, setCalcProgress] = useState(0);
+  const [syncDataLoading, setSyncDataLoading] = useState(false);
   const [testLoading, setTestLoading] = useState(false);
   const [integLoading, setIntegLoading] = useState(false);
+  const [showAIPrompt, setShowAIPrompt] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [indicatorDescription, setIndicatorDescription] = useState("");
 
   useEffect(() => {
     fetchSprints();
@@ -163,14 +168,100 @@ export default function Configurator() {
   };
 
   const addMetricRow = () => {
-    setMetrics([
-      ...metrics,
-      { metric_key: "new_metric", category: "ENGINEERING", weight: 0.10, calc_type: "FORMULA", formula_expression: "input * 10", variables: {}, cap_score: 100.0 }
-    ]);
+    const permissionLevel = getUserPermissionLevel();
+    if (permissionLevel === "EMPLOYEE") {
+      toast.error("Hanya manager dan admin yang dapat menambahkan indikator KPI.", {
+        description: "Hubungi manager Anda untuk perubahan indikator."
+      });
+      return;
+    }
+    setShowAIPrompt(true);
+  };
+
+  const handleAIGenerate = async () => {
+    if (!indicatorDescription.trim()) {
+      toast.error("Mohon isi deskripsi indikator");
+      return;
+    }
+
+    setAiLoading(true);
+    const controller = new AbortController();
+    const abortTimer = setTimeout(() => controller.abort(), 120000);
+    try {
+      const request = {
+        user_id: currentUser.id || "unknown",
+        user_name: currentUser.fullName || currentUser.name || "Unknown User",
+        user_role: getUserPermissionLevel(),
+        has_subordinates: currentUser.hasSubordinates || false,
+        division_id: currentUser.division_id,
+        division_name: divisions.find(d => d.id === currentUser.division_id)?.name || "Unknown",
+        division_code: divisions.find(d => d.id === currentUser.division_id)?.code || "UNKNOWN",
+        group_id: selectedGroupId,
+        group_name: currentUser.group_name || null,
+        creation_scope: selectedGroupId ? "group" : "division",
+        indicator_description: indicatorDescription
+      };
+
+      const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/ai/generate-formula", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+        signal: controller.signal
+      });
+
+      const data = await response.json();
+
+      if (data.status === "success" && data.formula) {
+        const newMetric = {
+          metric_key: data.variables?.metric_key || "kpi_" + Date.now(),
+          weight: 0.10,
+          calc_type: "FORMULA",
+          formula_expression: data.formula,
+          variables: data.variables || {},
+          cap_score: data.cap_score || 100
+        };
+
+        setMetrics([...metrics, newMetric]);
+        setShowAIPrompt(false);
+        setIndicatorDescription("");
+        toast.success("Indikator berhasil dibuat dengan AI!");
+      } else {
+        throw new Error(data.error || "Gagal generate formula");
+      }
+    } catch (error) {
+      toast.error(error.name === "AbortError" ? "Request timeout, coba lagi." : (error.message || "Terjadi kesalahan saat generate formula"));
+    } finally {
+      clearTimeout(abortTimer);
+      setAiLoading(false);
+    }
   };
 
   const removeMetricRow = (idx) => {
     setMetrics(metrics.filter((_, i) => i !== idx));
+  };
+
+  // Helper functions for role checking
+  const getUserPermissionLevel = () => {
+    if (currentUser.roles?.includes("ROLE_ADMIN")) return "ADMIN";
+    if (currentUser.roles?.includes("MANAGER") || currentUser.roles?.includes("SUPERVISOR") || currentUser.hasSubordinates) return "MANAGER";
+    return "EMPLOYEE";
+  };
+
+  const canCreateIndicators = () => {
+    return getUserPermissionLevel() !== "EMPLOYEE";
+  };
+
+  const getPermissionMessage = () => {
+    const permissionLevel = getUserPermissionLevel();
+    if (permissionLevel === "EMPLOYEE") {
+      return {
+        icon: <ShieldAlert size={24} />,
+        title: "Permission Required",
+        message: "Hanya manager dan admin yang dapat menambahkan indikator KPI.",
+        submessage: "Hubungi manager Anda untuk perubahan indikator."
+      };
+    }
+    return null;
   };
 
   const handleSaveRules = async () => {
@@ -196,7 +287,7 @@ export default function Configurator() {
       if (!response.ok) throw new Error("Gagal menyimpan aturan");
       const data = await response.json();
       toast.success(`Aturan berhasil diperbarui ke Versi ${data.version}!`);
-      fetchRulesForDivision(selectedDivisionId);
+      fetchRulesForDivision(selectedDivisionId, selectedGroupId);
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -265,86 +356,205 @@ export default function Configurator() {
     }
   };
 
-  const handleCalculateYear = async () => {
-    setCalcLoading(true);
+  const pollJobUntilDone = (jobId, onDone, timeoutMs = 60 * 60 * 1000, onProgress = null) => {
+    const startedAt = Date.now();
+    const poll = setInterval(async () => {
+      try {
+        const statusRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/jobs/${jobId}`);
+        if (statusRes.ok) {
+          const statusData = await statusRes.json();
+          if (onProgress && statusData.progress != null) onProgress(statusData.progress);
+          if (statusData.status === "COMPLETED" || statusData.status === "FAILED") {
+            clearInterval(poll);
+            onDone(statusData);
+            return;
+          }
+        }
+        if (Date.now() - startedAt > timeoutMs) {
+          clearInterval(poll);
+          onDone({ status: "TIMEOUT", error_message: "Waktu habis menunggu job. Cek ulang nanti atau jalankan ulang." });
+        }
+      } catch (e) {
+        console.error("Error polling job status:", e);
+      }
+    }, 10000);
+  };
+
+  const handleSyncData = async () => {
+    setSyncDataLoading(true);
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/sync/year/${selectedYear}`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/sync/data?supervisor_id=${currentUser.id || ""}`, {
         method: "POST"
       });
-      if (!response.ok) throw new Error("Gagal menjalankan kalkulasi");
+      if (!response.ok) throw new Error("Gagal menjalankan sync data");
       const data = await response.json();
-      
+
       if (data.job_id) {
-        toast.info("Memulai sinkronisasi dan kalkulasi KPI...");
-        const poll = setInterval(async () => {
-          try {
-            const statusRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/jobs/${data.job_id}`);
-            if (statusRes.ok) {
-              const statusData = await statusRes.json();
-              if (statusData.status === "COMPLETED" || statusData.status === "FAILED") {
-                clearInterval(poll);
-                setCalcLoading(false);
-                if (statusData.status === "COMPLETED") {
-                  toast.success(`Kalkulasi & Sinkronisasi selesai! Berhasil memperbarui data untuk tahun ${selectedYear}.`);
-                } else {
-                  toast.error("Sinkronisasi gagal: " + (statusData.error_message || "Unknown error"));
-                }
-              }
-            }
-          } catch (e) {
-            console.error("Error polling job status:", e);
+        toast.info("Sync data dari Jira/GitLab berjalan di background...");
+        pollJobUntilDone(data.job_id, async (statusData) => {
+          setSyncDataLoading(false);
+          if (statusData.status === "COMPLETED") {
+            toast.success("Sync data selesai! Jira & GitLab berhasil diperbarui.");
+          } else {
+            toast.error("Sync data gagal: " + (statusData.error_message || "Unknown error"));
           }
-        }, 3000);
+        });
       } else {
-        toast.success(`Kalkulasi & Sinkronisasi selesai! Berhasil memperbarui data untuk tahun ${selectedYear}.`);
+        toast.success("Sync data selesai!");
+        setSyncDataLoading(false);
+      }
+    } catch (err) {
+      toast.error(err.message);
+      setSyncDataLoading(false);
+    }
+  };
+
+  const handleCalcKPI = async () => {
+    if (metrics.length === 0) {
+      toast.warning("Matriks KPI belum dikonfigurasi. Silakan tambahkan indikator terlebih dahulu agar kalkulasi dapat berjalan.", { autoClose: 5000 });
+      return;
+    }
+    
+    setCalcLoading(true);
+    setCalcProgress(0);
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/calculate/${selectedYear}?force=true&supervisor_id=${currentUser.id || ""}`, {
+        method: "POST"
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        toast.error(errData.detail || "Gagal menjalankan kalkulasi");
         setCalcLoading(false);
+        setCalcProgress(0);
+        return;
+      }
+      const data = await response.json();
+
+      const checkEmptyData = async () => {
+        try {
+          const checkRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/yearly-performance?user_id=${currentUser.id}&year=${selectedYear}`);
+          const checkData = await checkRes.json();
+          if (checkData.status === "success" && (!checkData.data || (checkData.data.summary?.total_activities === 0 && checkData.data.summary?.total_issues_completed === 0))) {
+             toast.warning(`Kalkulasi selesai, tetapi data untuk tahun ${selectedYear} masih kosong. Silakan jalankan 'Sync Data' terlebih dahulu.`, { autoClose: 6000 });
+          } else {
+             toast.success(`Kalkulasi KPI selesai untuk tahun ${selectedYear}.`);
+          }
+        } catch(e) {
+          toast.success(`Kalkulasi KPI selesai untuk tahun ${selectedYear}.`);
+        }
+      };
+
+      if (data.job_id) {
+        toast.info("Menghitung KPI dari data lokal...");
+        pollJobUntilDone(data.job_id, async (statusData) => {
+          setCalcLoading(false);
+          setCalcProgress(100);
+          if (statusData.status === "COMPLETED") {
+            await checkEmptyData();
+          } else {
+            toast.error("Kalkulasi KPI gagal: " + (statusData.error_message || "Unknown error"));
+          }
+        }, 60 * 60 * 1000, setCalcProgress);
+      } else {
+        await checkEmptyData();
+        setCalcLoading(false);
+        setCalcProgress(100);
       }
     } catch (err) {
       toast.error(err.message);
       setCalcLoading(false);
+      setCalcProgress(0);
     }
   };
 
-  return (
-    <div>
+   return (
+    <div className="dashboard-premium-bold">
       <div className="header-ui">
         <div>
+          <span className="hero-eyebrow">Administration & Configuration</span>
           <h2>Matriks Configurator & Rule Builder</h2>
-          <p style={{ color: "var(--color-text-muted)", fontSize: "14px" }}>
+          <p style={{ color: "var(--color-text-muted)", fontSize: "14px", margin: 0 }}>
             Tentukan konfigurasi matriks KPI divisi, rumusan formula dinamis, dan koneksi server integrasi.
           </p>
         </div>
       </div>
 
-      {/* Sub Tabs Toggle */}
-      <div style={{ display: "flex", gap: "12px", borderBottom: "1px solid #cbd5e1", marginBottom: "28px", paddingBottom: "2px" }}>
-        <button
-          className={`switcher-btn ${activeSubTab === "rules" ? "active" : ""}`}
-          onClick={() => setActiveSubTab("rules")}
-          style={{ backgroundColor: activeSubTab === "rules" ? "var(--color-secondary)" : "transparent", color: activeSubTab === "rules" ? "#fff" : "var(--color-primary)", padding: "8px 24px", borderRadius: "16px 16px 0 0", fontSize: "14px" }}
-        >
-          <Settings size={14} style={{ display: "inline", marginRight: "6px" }} />
-          KPI Matrix Rules
-        </button>
-        <button
-          className={`switcher-btn ${activeSubTab === "integrations" ? "active" : ""}`}
-          onClick={() => setActiveSubTab("integrations")}
-          style={{ backgroundColor: activeSubTab === "integrations" ? "var(--color-secondary)" : "transparent", color: activeSubTab === "integrations" ? "#fff" : "var(--color-primary)", padding: "8px 24px", borderRadius: "16px 16px 0 0", fontSize: "14px" }}
-        >
-          <Globe size={14} style={{ display: "inline", marginRight: "6px" }} />
-          Jira & GitLab Integrations
-        </button>
+      {/* Bold Sub Tabs Toggle */}
+      <div className="glass-card-bold" style={{ padding: "0", marginBottom: "28px", overflow: "hidden" }}>
+        <div style={{ display: "flex", gap: "0", borderBottom: "1px solid rgba(102, 122, 209, 0.2)", padding: "0 24px" }}>
+          <button
+            onClick={() => setActiveSubTab("rules")}
+            style={{ 
+              background: activeSubTab === "rules" ? "linear-gradient(135deg, #121854, #4059c6)" : "transparent",
+              color: activeSubTab === "rules" ? "#ffffff" : "#64748b",
+              borderRadius: "0",
+              padding: "12px 24px",
+              fontSize: "14px",
+              fontWeight: 700,
+              boxShadow: "none",
+              border: "none",
+              cursor: "pointer",
+              transition: "all 0.3s ease",
+              position: "relative"
+            }}
+          >
+            <Settings size={14} style={{ display: "inline", marginRight: "8px", verticalAlign: "middle" }} />
+            KPI Matrix Rules
+            {activeSubTab === "rules" && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: "3px", background: "linear-gradient(90deg, #4059c6, #667ad1)" }} />}
+          </button>
+          <button
+            onClick={() => setActiveSubTab("integrations")}
+            style={{ 
+              background: activeSubTab === "integrations" ? "linear-gradient(135deg, #121854, #4059c6)" : "transparent",
+              color: activeSubTab === "integrations" ? "#ffffff" : "#64748b",
+              borderRadius: "0",
+              padding: "12px 24px",
+              fontSize: "14px",
+              fontWeight: 700,
+              boxShadow: "none",
+              border: "none",
+              cursor: "pointer",
+              transition: "all 0.3s ease",
+              position: "relative"
+            }}
+          >
+            <Globe size={14} style={{ display: "inline", marginRight: "8px", verticalAlign: "middle" }} />
+            Jira & GitLab Integrations
+            {activeSubTab === "integrations" && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: "3px", background: "linear-gradient(90deg, #4059c6, #667ad1)" }} />}
+          </button>
+        </div>
       </div>
 
       {activeSubTab === "rules" ? (
         <>
           {/* Calculate scores trigger */}
           <div className="card" style={{ background: "linear-gradient(90deg, var(--color-tint) 0%, rgba(255,255,255,1) 100%)", borderColor: "var(--color-accent)" }}>
-            <h3 style={{ marginBottom: "8px" }}>Trigger Sync & Kalkulasi Tahunan (Data dari Database Lokal)</h3>
+            <h3 style={{ marginBottom: "8px" }}>Sync Data & Hitung KPI</h3>
             <p style={{ fontSize: "13px", color: "var(--color-text-muted)", marginBottom: "20px" }}>
-              Jalankan sinkronisasi langsung untuk menarik data dari Jira/GitLab kantor, memproses formula, dan meng-update dashboard untuk satu tahun penuh.
+              <strong>Sync Data</strong> menarik data terbaru dari Jira/GitLab ke database lokal. <strong>Hitung KPI</strong> menghitung KPI karyawan menggunakan data yang sudah ada di database lokal.
             </p>
-            <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: "16px" }}>
+              <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+                <button
+                  className="btn-primary"
+                  onClick={handleSyncData}
+                  disabled={syncDataLoading}
+                  style={{ width: "auto", padding: "0 24px", height: "44px", display: "flex", alignItems: "center", gap: "8px" }}
+                >
+                  {syncDataLoading ? <RefreshCw className="animate-spin" size={16} /> : <Globe size={16} />}
+                  {syncDataLoading ? "Sync Data Berjalan..." : "Sync Data"}
+                </button>
+                <button
+                  className="btn-primary"
+                  onClick={handleCalcKPI}
+                  disabled={calcLoading}
+                  style={{ width: "auto", padding: "0 24px", height: "44px", display: "flex", alignItems: "center", gap: "8px" }}
+                >
+                  {calcLoading ? <RefreshCw className="animate-spin" size={16} /> : <Play size={16} />}
+                  {calcLoading ? "Menghitung KPI..." : "Hitung KPI"}
+                </button>
+              </div>
+              
               <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                 <label className="form-label" style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>Pilih Tahun</label>
                 <select
@@ -357,16 +567,27 @@ export default function Configurator() {
                   ))}
                 </select>
               </div>
-              <button
-                className="btn-primary"
-                onClick={handleCalculateYear}
-                disabled={calcLoading}
-                style={{ width: "auto", padding: "0 24px", height: "44px", marginTop: "16px" }}
-              >
-                {calcLoading ? <RefreshCw className="animate-spin" size={16} /> : <Play size={16} />}
-                Sync & Hitung KPI Karyawan
-              </button>
             </div>
+            {calcLoading && (
+              <div style={{ marginTop: "10px", width: "100%", maxWidth: "380px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                  <span className="status-pill syncing"><RefreshCw size={11} className="animate-spin" /> Sedang Menghitung</span>
+                  <span className="table-meta num">{calcProgress}%</span>
+                </div>
+                <div style={{
+                  height: "8px", background: "#e2e8f0", borderRadius: "4px", overflow: "hidden"
+                }}>
+                  <div style={{
+                    height: "100%", width: `${Math.max(calcProgress, 2)}%`,
+                    background: "var(--color-primary)", borderRadius: "4px",
+                    transition: "width 0.8s ease-in-out"
+                  }} />
+                </div>
+                <div className="table-meta" style={{ marginTop: "6px" }}>
+                  Kalkulasi hanya memproses tanggal yang belum terhitung, lalu memperbarui agregat tahunan.
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="configurator-grid">
@@ -442,9 +663,29 @@ export default function Configurator() {
                     <button className="btn-outline" onClick={() => setShowGuide(true)} style={{ padding: "8px 16px", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px", borderRadius: "8px", borderColor: "#cbd5e1", color: "#475569", background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
                       <AlertCircle size={16} /> Panduan Formula
                     </button>
-                    <button className="btn-primary" onClick={addMetricRow} style={{ padding: "8px 16px", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px", borderRadius: "8px", boxShadow: "0 1px 3px rgba(37,99,235,0.2)" }}>
-                      <Plus size={16} /> Tambah Indikator
-                    </button>
+                    {canCreateIndicators() ? (
+                      <button className="btn-primary" onClick={addMetricRow} style={{ padding: "8px 16px", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px", borderRadius: "8px", boxShadow: "0 1px 3px rgba(37,99,235,0.2)" }}>
+                        <Sparkles size={16} /> Tambah dengan AI
+                      </button>
+                    ) : (
+                      <div className="permission-message" style={{ 
+                        padding: "8px 12px", 
+                        fontSize: "12px", 
+                        display: "flex", 
+                        alignItems: "center", 
+                        gap: "8px", 
+                        borderRadius: "8px", 
+                        background: "#fef3c7", 
+                        color: "#92400e",
+                        border: "1px solid #fcd34d"
+                      }}>
+                        {getPermissionMessage()?.icon}
+                        <div>
+                          <div style={{ fontWeight: 600 }}>{getPermissionMessage()?.title}</div>
+                          <div style={{ fontSize: "11px" }}>{getPermissionMessage()?.message}</div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -454,16 +695,29 @@ export default function Configurator() {
                   <thead>
                     <tr>
                       <th>Key Indikator</th>
-                      <th style={{ width: "80px" }}>Bobot</th>
+                      <th data-align="right" style={{ width: "80px" }}>Bobot</th>
                       <th>Formula Ekspresi</th>
-                      <th style={{ width: "80px" }}>Cap</th>
+                      <th data-align="right" style={{ width: "80px" }}>Cap</th>
                       <th>Variables (JSON)</th>
                       <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {metrics.map((metric, idx) => (
-                      <tr key={idx}>
+                    {metrics.length === 0 ? (
+                      <tr>
+                        <td colSpan="6" style={{ textAlign: "center", padding: "40px 20px", background: "#f8fafc" }}>
+                          <div style={{ color: "var(--color-text-muted)", marginBottom: "12px" }}>
+                            <AlertCircle size={32} style={{ margin: "0 auto", color: "#94a3b8" }} />
+                          </div>
+                          <h4 style={{ margin: "0 0 8px 0", color: "var(--color-primary)" }}>Belum Ada Configure Matrix</h4>
+                          <p style={{ margin: 0, fontSize: "14px", color: "var(--color-text-muted)" }}>
+                            Silakan tambahkan indikator baru atau buat otomatis dengan AI.
+                          </p>
+                        </td>
+                      </tr>
+                    ) : (
+                      metrics.map((metric, idx) => (
+                        <tr key={idx}>
                         <td>
                           <input
                             type="text"
@@ -472,13 +726,13 @@ export default function Configurator() {
                             onChange={(e) => handleMetricChange(idx, "metric_key", e.target.value)}
                           />
                         </td>
-                        <td>
+                        <td data-align="right">
                           <input
                             type="number"
                             step="0.05"
                             min="0"
                             max="1"
-                            className="table-input"
+                            className="table-input num"
                             value={metric.weight}
                             onChange={(e) => handleMetricChange(idx, "weight", e.target.value)}
                           />
@@ -491,10 +745,10 @@ export default function Configurator() {
                             onChange={(e) => handleMetricChange(idx, "formula_expression", e.target.value)}
                           />
                         </td>
-                        <td>
+                        <td data-align="right">
                           <input
                             type="number"
-                            className="table-input"
+                            className="table-input num"
                             value={metric.cap_score}
                             onChange={(e) => handleMetricChange(idx, "cap_score", e.target.value)}
                           />
@@ -549,20 +803,29 @@ export default function Configurator() {
                           </button>
                         </td>
                       </tr>
-                    ))}
+                    )))}
                   </tbody>
                 </table>
               </div>
 
+              <div style={{ marginTop: "24px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
+              <span className="table-meta" style={{ fontSize: "12px" }}>
+                Total bobot:{" "}
+                <strong className={`num ${Math.abs((metrics.reduce((s, m) => s + (parseFloat(m.weight) || 0), 0)) - 1) <= 0.01 ? "text-success" : "text-danger"}`}>
+                  {(metrics.reduce((s, m) => s + (parseFloat(m.weight) || 0), 0) * 100).toFixed(0)}%
+                </strong>{" "}
+                (harus 100%)
+              </span>
               <button
                 className="btn-primary"
                 onClick={handleSaveRules}
                 disabled={saveLoading}
-                style={{ marginTop: "24px" }}
+                style={{ width: "auto", padding: "0 24px" }}
               >
                 {saveLoading && <RefreshCw className="animate-spin" size={16} />}
                 Simpan & Terapkan Perubahan (Buat Versi Baru)
               </button>
+            </div>
             </div>
 
             {/* Live Formula Tester Side Panel */}
@@ -605,21 +868,29 @@ export default function Configurator() {
 
               {testResult && (
                 <div className="tester-box">
-                  <h4 style={{ fontSize: "14px", marginBottom: "8px" }}>Hasil Evaluasi:</h4>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                    <h4 style={{ fontSize: "14px", margin: 0 }}>Hasil Evaluasi</h4>
+                    <span className={`status-pill ${testResult.success ? "live" : "stale"}`}>
+                      {testResult.success ? "Formula Valid" : "Gagal Parsing"}
+                    </span>
+                  </div>
                   {testResult.success ? (
                     <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "#15803d", fontWeight: 700, fontSize: "18px" }}>
                       <CheckCircle size={20} />
-                      <span>Output: {testResult.value}</span>
+                      <span className="num">Output: {testResult.value}</span>
                     </div>
                   ) : (
                     <div style={{ display: "flex", alignItems: "flex-start", gap: "8px", color: "#b91c1c", fontSize: "13px" }}>
                       <AlertCircle size={18} style={{ flexShrink: 0, marginTop: "2px" }} />
                       <div>
-                        <span style={{ fontWeight: 700 }}>Syntax Error / Parsing Gagal:</span>
-                        <p style={{ fontFamily: "monospace", marginTop: "4px" }}>{testResult.error}</p>
+                        <span style={{ fontWeight: 700 }}>Detail Kesalahan:</span>
+                        <p style={{ fontFamily: "var(--font-mono)", marginTop: "4px", marginBottom: 0 }}>{testResult.error}</p>
                       </div>
                     </div>
                   )}
+                  <p className="table-meta" style={{ marginTop: 10, marginBottom: 0 }}>
+                    Nilai dihitung menggunakan evaluator AST aman — tidak menggunakan eval().
+                  </p>
                 </div>
               )}
             </div>
@@ -693,6 +964,9 @@ export default function Configurator() {
                 onChange={(e) => setJiraToken(e.target.value)}
                 placeholder={jiraToken ? "••••••••••••••••" : "Masukkan API Token Jira Baru"}
               />
+              <p style={{ fontSize: "11px", color: "var(--color-text-muted)", marginTop: "8px" }}>
+                * Token disimpan dalam database dalam keadaan terenkripsi (AES). Token yang ada tidak akan pernah ditampilkan ulang.
+              </p>
             </div>
 
             <div className="form-group">
@@ -770,15 +1044,15 @@ export default function Configurator() {
       
       {/* Panduan Formula Modal */}
       {showGuide && (
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.5)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
-          <div style={{ background: "#fff", borderRadius: "12px", width: "100%", maxWidth: "600px", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)" }}>
-            <div style={{ padding: "20px 24px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, backgroundColor: "#fff", zIndex: 10 }}>
-              <h3 style={{ margin: 0, fontSize: "18px", color: "var(--color-primary)", display: "flex", alignItems: "center", gap: "8px" }}>
-                <AlertCircle size={20} /> Panduan Penulisan Formula
+        <div className="modal-backdrop-ui" onClick={() => setShowGuide(false)}>
+          <div className="modal-ui" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-ui-header">
+              <h3 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <AlertCircle size={20} style={{ color: "var(--color-secondary)" }} /> Panduan Penulisan Formula
               </h3>
-              <button onClick={() => setShowGuide(false)} style={{ background: "transparent", border: "none", fontSize: "24px", cursor: "pointer", color: "#64748b" }}>&times;</button>
+              <button className="modal-ui-close" onClick={() => setShowGuide(false)} aria-label="Tutup panduan">&times;</button>
             </div>
-            <div style={{ padding: "24px", fontSize: "14px", color: "#334155", lineHeight: "1.6" }}>
+            <div className="modal-ui-body" style={{ fontSize: "14px", color: "#334155", lineHeight: "1.6" }}>
               <p style={{ marginBottom: "16px" }}>Bapak/Ibu dapat menulis formula penilaian menggunakan ekspresi matematika standar. Sistem akan mengevaluasi formula tersebut berdasarkan data historis/otomatis yang ditarik dari Jira, GitLab, dan HRIS.</p>
               
               <h4 style={{ color: "var(--color-primary)", marginBottom: "8px", fontSize: "15px" }}>Pengaturan Indikator (Bobot & Cap)</h4>
@@ -823,12 +1097,129 @@ export default function Configurator() {
                 <code>max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)</code>
               </div>
             </div>
-            <div style={{ padding: "16px 24px", borderTop: "1px solid #e2e8f0", textAlign: "right", backgroundColor: "#f8fafc", borderRadius: "0 0 12px 12px" }}>
+            <div className="modal-ui-footer">
               <button onClick={() => setShowGuide(false)} className="btn-primary" style={{ padding: "8px 24px", fontSize: "14px" }}>Tutup</button>
             </div>
           </div>
         </div>
       )}
+
+      {showAIPrompt && (
+        <div className="modal-backdrop-ui">
+          <div className="modal-ui" style={{ maxWidth: "520px" }}>
+            <div className="modal-ui-header">
+              <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
+                <Sparkles size={20} style={{ color: "var(--color-secondary)" }} /> Buat Indikator dengan AI
+              </h3>
+              <button
+                className="modal-ui-close"
+                onClick={() => {
+                  setShowAIPrompt(false);
+                  setIndicatorDescription("");
+                }}
+                aria-label="Tutup"
+              >&times;</button>
+            </div>
+
+            <div className="modal-ui-body">
+              <div style={{ marginBottom: "16px" }}>
+                <label style={{
+                  display: "block",
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  color: "#374151",
+                  marginBottom: "8px"
+                }}>
+                  Deskripsi Indikator KPI
+                </label>
+                <textarea
+                  value={indicatorDescription}
+                  onChange={(e) => setIndicatorDescription(e.target.value)}
+                  placeholder="Contoh: Indikator kehadiran dengan target 22 hari kerja per bulan, penalti 0.5 poin untuk keterlambatan di atas 15 menit"
+                  rows={4}
+                  style={{
+                    width: "100%",
+                    padding: "12px",
+                    border: "1px solid #d1d5db",
+                    borderRadius: "8px",
+                    fontSize: "14px",
+                    fontFamily: "inherit",
+                    resize: "vertical",
+                    boxSizing: "border-box"
+                  }}
+                />
+              </div>
+
+            <div style={{
+              background: "#fef3c7",
+              padding: "12px",
+              borderRadius: "8px",
+              marginBottom: "16px",
+              fontSize: "12px",
+              color: "#92400e"
+            }}>
+              <strong>💡 Tips:</strong> Jelaskan secara detail tentang:
+              <ul style={{ margin: "8px 0 0 20px", padding: 0 }}>
+                <li>Target yang ingin dicapai</li>
+                <li>Metric apa yang diukur</li>
+                <li>Aturan penalti/pengurangan</li>
+              </ul>
+            </div>
+
+            <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+              <button
+                onClick={() => {
+                  setShowAIPrompt(false);
+                  setIndicatorDescription("");
+                }}
+                style={{
+                  padding: "10px 20px",
+                  border: "1px solid #d1d5db",
+                  background: "white",
+                  borderRadius: "8px",
+                  cursor: "pointer",
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  color: "#374151"
+                }}
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleAIGenerate}
+                disabled={aiLoading}
+                style={{
+                  padding: "10px 20px",
+                  background: aiLoading ? "#9ca3af" : "#2563eb",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "8px",
+                  cursor: aiLoading ? "not-allowed" : "pointer",
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px"
+                }}
+              >
+                {aiLoading ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    Sedang Generate...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={16} />
+                    Generate Formula
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

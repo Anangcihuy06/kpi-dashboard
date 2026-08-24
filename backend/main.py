@@ -1,6 +1,7 @@
+from sqlalchemy import and_
 import requests
 from datetime import datetime, timedelta
-from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
+from fastapi import Query, FastAPI, Depends, HTTPException, status, BackgroundTasks, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -13,19 +14,160 @@ from pydantic import BaseModel
 # In-memory store for supervisor HRIS tokens
 _supervisor_token_store = {}
 
+# Cache for expensive company-wide maxima computation (PASS 1).
+# Keyed by year; invalidated after sync operations. TTL prevents stale data.
+_company_maxima_cache = {}
+_COMPANY_MAXIMA_TTL = 1800  # 30 minutes
+
+# Background jobs tracking for team yearly KPI
+TEAM_YEARLY_JOBS = {}
+
 from database import engine, get_db
 import models
 from engine import DynamicKPIEngine, evaluate_kpi_formula
 from encrypt import encrypt_val, decrypt_val
 import os
+import time
 from contextlib import asynccontextmanager
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.inmemory import InMemoryBackend
 from fastapi_cache.decorator import cache
 from scheduler import init_scheduler
-from sync_service import sync_attendance_for_sprint, get_system_token
+from sync_service import sync_attendance_for_sprint
 from multi_board_sync import sync_all_boards_sprints, get_user_active_sprint
 from comprehensive_sync import sync_user_comprehensive, calculate_daily_aggregated_kpi
+
+def sync_subordinates_for_supervisor(db, supervisor, token):
+    """
+    Fetch subordinates of a supervisor from HRIS members API and sync the
+    full hierarchy recursively.  Each member's division/group/team/position
+    is taken from their own API data (not copied from supervisor).
+    Returns the number of employees processed.
+    """
+    if not supervisor or not token:
+        return 0
+
+    hdr = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    url = "https://hris-api.atibusinessgroup.com/api/app/users/members"
+    try:
+        res = requests.get(url, headers=hdr, timeout=15)
+        if res.status_code != 200:
+            print(f"[Sync] Failed to fetch members for {supervisor.id}: HTTP {res.status_code}")
+            return 0
+        members = res.json()  # returns array directly
+        if not isinstance(members, list):
+            print(f"[Sync] Unexpected response format for {supervisor.id}")
+            return 0
+    except Exception as e:
+        print(f"[Sync Warning] Failed to fetch members for {supervisor.id}: {str(e)}")
+        return 0
+
+    all_niks = set()
+
+    def _ensure_division(div_info):
+        """Ensure division exists in DB and return its id."""
+        if not div_info or not div_info.get("id"):
+            return None
+        div_id = str(div_info["id"])
+        div_db = db.query(models.Division).filter(models.Division.id == div_id).first()
+        if not div_db:
+            div_db = models.Division(
+                id=div_id,
+                code=div_info.get("divCode", div_info.get("division", "UNKNOWN")),
+                name=div_info.get("division", "Unknown Division")
+            )
+            db.add(div_db)
+            db.commit()
+        return div_id
+
+    def _process_member(member, parent_id):
+        """Process a single member and recursively process their children."""
+        nonlocal all_niks
+
+        nik = member.get("nik")
+        if not nik:
+            return 0
+        if nik == supervisor.nik and parent_id == supervisor.id:
+            return 0  # skip self
+
+        all_niks.add(nik)
+        first_name = member.get("firstName", "")
+        last_name = member.get("lastName", "")
+        full_name = f"{first_name} {last_name}".strip()
+        emp_id = member.get("id")
+        office_email = member.get("officeEmail", "")
+        children = member.get("children", [])
+        has_children = len(children) > 0
+
+        # Force members to inherit division and group from the logged-in supervisor
+        division_id = supervisor.division_id
+        group_id = supervisor.group_id
+        group_name = supervisor.group_name
+
+        sub = db.query(models.User).filter(models.User.nik == nik).first()
+        if sub:
+            sub.supervisor_id = parent_id
+            sub.employee_id = str(emp_id) if emp_id else sub.employee_id
+            sub.full_name = full_name or sub.full_name
+            if office_email:
+                sub.email = office_email
+            if division_id:
+                sub.division_id = division_id
+            if group_id:
+                sub.group_id = group_id
+                sub.group_name = group_name
+            sub.has_subordinates = has_children
+            db.commit()
+        else:
+            temp_id = str(emp_id) if emp_id else f"ext_{nik}"
+            id_exists = db.query(models.User).filter(models.User.id == temp_id).first()
+            if id_exists:
+                temp_id = f"ext_{emp_id}"
+            new_sub = models.User(
+                id=temp_id,
+                nik=nik,
+                employee_id=str(emp_id) if emp_id else None,
+                full_name=full_name or f"User {nik}",
+                email=office_email or None,
+                roles=["EMPLOYEE"],
+                has_subordinates=has_children,
+                is_active=True,
+                division_id=division_id,
+                group_id=group_id,
+                group_name=group_name,
+                supervisor_id=parent_id,
+                jira_account_id=f"jira_user_{temp_id}",
+                gitlab_username=f"gitlab_user_{temp_id}"
+            )
+            db.add(new_sub)
+            db.commit()
+            sub = db.query(models.User).filter(models.User.nik == nik).first()
+
+        processed = 1
+
+        # Recursively process children — their supervisor is this member
+        child_parent_id = sub.id if sub else parent_id
+        for child in children:
+            processed += _process_member(child, child_parent_id)
+
+        return processed
+
+    # Process all top-level members — they are direct subordinates of the logged-in supervisor
+    processed = 0
+    for member in members:
+        processed += _process_member(member, supervisor.id)
+
+    # Remove supervisor links for subordinates no longer returned by HRIS
+    if "ROLE_ADMIN" not in (supervisor.roles or []) and all_niks:
+        db.query(models.User).filter(
+            models.User.supervisor_id == supervisor.id,
+            ~models.User.nik.in_(list(all_niks))
+        ).update({"supervisor_id": None}, synchronize_session=False)
+        db.commit()
+
+    print(f"[Sync] Processed {processed} members for supervisor {supervisor.id} ({supervisor.full_name})")
+    return processed
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -35,41 +177,416 @@ async def lifespan(app: FastAPI):
     from seed import seed_data
     from sqlalchemy import text
     
-    # Auto-migrate new columns
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE users ADD COLUMN group_id VARCHAR(50);"))
-    except Exception:
-        pass
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE users ADD COLUMN group_name VARCHAR(150);"))
-    except Exception:
-        pass
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE kpi_rules ADD COLUMN group_id VARCHAR(50);"))
-    except Exception:
-        pass
-    try:
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE kpi_rules ADD COLUMN group_name VARCHAR(150);"))
-    except Exception:
-        pass
-
-    models.Base.metadata.create_all(bind=engine)
+    print("Starting KPI Dashboard backend...")
     
-    db = SessionLocal()
-    if not db.query(models.User).first():
-        print("Database is empty, running seed script...")
-        seed_data()
-    db.close()
+    try:
+        print("Starting database initialization...")
+        
+        # Create tables first
+        print("Creating database tables...")
+        models.Base.metadata.create_all(bind=engine)
+        print("Database tables created successfully")
 
-    FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
-    # init_scheduler() is removed for standalone worker approach
-    yield
+        # Auto-migrate columns added to existing tables (create_all only adds new tables).
+        # Uses SQLAlchemy Inspector so it works on both SQLite and PostgreSQL.
+        try:
+            from sqlalchemy import inspect as sa_inspect
+            _insp = sa_inspect(engine)
+
+            def _existing_cols(table_name):
+                try:
+                    return {c["name"] for c in _insp.get_columns(table_name)}
+                except Exception:
+                    return set()
+
+            ri_cols = _existing_cols("raw_jira_issues")
+            if ri_cols and "complexity_score" not in ri_cols:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE raw_jira_issues ADD COLUMN complexity_score FLOAT"))
+                print("Migrated: raw_jira_issues.complexity_score")
+            if ri_cols and "complexity_detail" not in ri_cols:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE raw_jira_issues ADD COLUMN complexity_detail JSON"))
+                print("Migrated: raw_jira_issues.complexity_detail")
+
+            cm_cols = _existing_cols("company_maxima")
+            if cm_cols and "group_id" not in cm_cols:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE company_maxima ADD COLUMN group_id VARCHAR(50)"))
+                print("Migrated: company_maxima.group_id")
+            if cm_cols and "division_id" not in cm_cols:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE company_maxima ADD COLUMN division_id VARCHAR(50)"))
+                print("Migrated: company_maxima.division_id")
+
+            uym_cols = _existing_cols("user_yearly_metrics")
+            if uym_cols and "last_processed_date" not in uym_cols:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE user_yearly_metrics ADD COLUMN last_processed_date TIMESTAMP"))
+                print("Migrated: user_yearly_metrics.last_processed_date")
+
+            # Performance indexes for KPI calculation hot paths
+            with engine.begin() as conn:
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_kpi_daily_user_date ON kpi_employee_daily (user_id, date)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_activities_user_date ON activities (user_id, activity_date)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_attendance_user_date ON attendance_records (user_id, date)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_emp_identity_user_source ON employee_identity (user_id, source)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_raw_jira_assignee_resolved ON raw_jira_issues (assignee_account_id, resolved_date)"))
+            print("Performance indexes ensured")
+
+            # Unique constraints (dedup leftovers) + extra query-path indexes.
+            # Single source of truth shared with fix_production_db.py.
+            from db_maintenance import ensure_constraints_and_indexes
+            ensure_constraints_and_indexes(engine)
+        except Exception as mig_e:
+            print(f"Warning: auto-migration skipped: {mig_e}")
+
+        db = SessionLocal()
+        
+        # Check if database is empty and needs seeding
+        user_count = db.query(models.User).count()
+        print(f"Current users count: {user_count}")
+        
+        if user_count == 0:
+            print("Database is empty, running seed script...")
+            seed_data()
+            print("Seed data populated successfully")
+        else:
+            print(f"Database already contains {user_count} users")
+        
+        # Ensure default divisions exist
+        it_division = db.query(models.Division).filter(models.Division.code == "IT").first()
+        if not it_division:
+            print("Creating default IT division...")
+            it_div = models.Division(code="IT", name="IT & Engineering", description="Information Technology Division")
+            db.add(it_div)
+            db.commit()
+            print("Default IT division created")
+        else:
+            print("Default IT division already exists")
+            
+        # Ensure integration settings exist
+        integration_settings = db.query(models.IntegrationSetting).first()
+        if not integration_settings:
+            print("Creating default integration settings...")
+            default_settings = models.IntegrationSetting(
+                jira_url="",
+                jira_email="", 
+                jira_token_encrypted="",
+                jira_board_ids=[],
+                default_jira_board_id="",
+                jira_sp_field="customfield_10016",
+                gitlab_url="https://gitlab.com",
+                gitlab_token_encrypted=""
+            )
+            db.add(default_settings)
+            db.commit()
+            print("Default integration settings created")
+        else:
+            print("Integration settings already exist")
+        
+        db.close()
+        print("Database initialization complete")
+
+        # Clean up zombie jobs from a previous container: Railway (re)deploys kill
+        # in-process background workers, leaving PENDING/RUNNING jobs that the
+        # frontend keeps polling forever. Mark every stale job failed so the UI
+        # stops waiting on jobs that will never complete.
+        try:
+            _cleanup_db = SessionLocal()
+            try:
+                from sync_engine import mark_stale_jobs_failed
+                _marked = mark_stale_jobs_failed(_cleanup_db, max_age_minutes=15)
+                if _marked:
+                    print(f"Startup: {_marked} zombie job(s) marked FAILED (worker killed by redeploy)")
+            finally:
+                _cleanup_db.close()
+        except Exception as _z:
+            print(f"Warning: zombie job cleanup skipped: {_z}")
+
+        FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
+        print("Cache initialized")
+        
+        # init_scheduler() is removed for standalone worker approach
+        print("Application ready to accept requests")
+        yield
+        
+    except Exception as e:
+        print(f"CRITICAL ERROR during startup: {e}")
+        import traceback
+        traceback.print_exc()
+        # Still try to start even if DB init fails
+        FastAPICache.init(InMemoryBackend(), prefix="fastapi-cache")
+        yield
 
 app = FastAPI(title="Dynamic KPI Dashboard API", lifespan=lifespan)
+
+# Health check endpoint for Railway
+@app.get("/health")
+def health_check():
+    """Health check endpoint for Railway monitoring"""
+    try:
+        from database import engine
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "database": "disconnected",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }, 503
+
+@app.get("/api/v1/db/fix-rules")
+def fix_rules(db: Session = Depends(get_db)):
+    result = {}
+    
+    # 1. Force create default rule for division 23
+    try:
+        rule23 = db.query(models.KPIRule).filter(models.KPIRule.division_id == '23', models.KPIRule.group_id.is_(None)).first()
+        if not rule23:
+            rule23 = models.KPIRule(
+                id="def-div-23",
+                division_id="23",
+                name="Technology KPI Matrix",
+                version=1,
+                is_active=True
+            )
+            db.add(rule23)
+            db.commit()
+            db.refresh(rule23)
+            result["created_rule23"] = True
+            
+            # Add metrics
+            m1 = models.KPIRuleMetric(
+                kpi_rule_id=rule23.id,
+                metric_key="feature_complexity",
+                category="ENGINEERING",
+                weight=0.90,
+                calc_type="FORMULA",
+                formula_expression="min((complexity_sp / target_complexity_pts) * 100, 100)",
+                variables={"target_complexity_pts": 300, "max_c": 5, "max_i": 5, "max_s": 5, "max_r": 3, "max_o": 2},
+                cap_score=100.0
+            )
+            m2 = models.KPIRuleMetric(
+                kpi_rule_id=rule23.id,
+                metric_key="attendance",
+                category="DISCIPLINE",
+                weight=0.10,
+                calc_type="FORMULA",
+                formula_expression="max((attendance_days / target_days) * 100 - (late_percentage * 0.5), 0)",
+                variables={"target_days": 261, "late_percentage": 5},
+                cap_score=100.0
+            )
+            db.add_all([m1, m2])
+            db.commit()
+    except Exception as e:
+        result["create_error"] = str(e)
+        
+    # 2. Delete group rules that only have attendance
+    try:
+        group_rules = db.query(models.KPIRule).filter(models.KPIRule.group_id.isnot(None)).all()
+        deleted = []
+        for r in group_rules:
+            metrics = [m.metric_key for m in r.metrics]
+            if len(metrics) == 1 and metrics[0] == "attendance":
+                db.delete(r)
+                deleted.append(r.group_id)
+        db.commit()
+        result["deleted_groups"] = deleted
+    except Exception as e:
+        result["delete_error"] = str(e)
+        
+    return result
+
+# Database diagnostics endpoint
+@app.get("/api/v1/db/diagnostics-tickets")
+def get_diagnostics_tickets(db: Session = Depends(get_db)):
+    tickets = db.query(models.RawJiraIssue).filter(models.RawJiraIssue.issue_key.like("KD-%")).all()
+    return {"tickets": [{"key": t.issue_key, "status": t.status, "resolved": str(t.resolved_date)} for t in tickets]}
+
+@app.get("/api/v1/db/diagnostics")
+def db_diagnostics():
+    """Database diagnostics endpoint for debugging production issues"""
+    from database import engine
+    from models import User, Division, Sprint, KPIRule, IntegrationSetting
+    from sqlalchemy import inspect
+    
+    diagnostics = {
+        "timestamp": datetime.now().isoformat(),
+        "database_url_type": "postgresql" if "postgresql" in str(engine.url) else "sqlite",
+        "status": "unknown"
+    }
+    
+    try:
+        with engine.connect() as conn:
+            # Test basic connection
+            result = conn.execute(text("SELECT 1"))
+            assert result.scalar() == 1
+            
+            # Get table info
+            inspector = inspect(engine)
+            tables = inspector.get_table_names()
+            diagnostics["tables"] = tables
+            
+            # Check data counts
+            from database import SessionLocal
+            db = SessionLocal()
+            try:
+                diagnostics["counts"] = {
+                    "users": db.query(User).count(),
+                    "divisions": db.query(Division).count(),
+                    "sprints": db.query(Sprint).count(),
+                    "kpi_rules": db.query(KPIRule).count(),
+                    "integration_settings": db.query(IntegrationSetting).count()
+                }
+                
+                # Check critical data
+                it_division = db.query(Division).filter(Division.code == "IT").first()
+                diagnostics["it_division_exists"] = it_division is not None
+                
+                integration_settings = db.query(IntegrationSetting).first()
+                diagnostics["integration_settings_exist"] = integration_settings is not None
+                
+                # Determine overall status
+                if (diagnostics["counts"]["divisions"] > 0 and 
+                    diagnostics["integration_settings_exist"]):
+                    diagnostics["status"] = "healthy"
+                else:
+                    diagnostics["status"] = "needs_setup"
+                    
+            finally:
+                db.close()
+                
+        return diagnostics, 200
+        
+    except Exception as e:
+        diagnostics["status"] = "error"
+        diagnostics["error"] = str(e)
+        return diagnostics, 500
+
+
+@app.get("/api/v1/db/index-diagnostics")
+def db_index_diagnostics():
+    """List expected vs actual indexes (verifies the AUTO_INDEX maintenance)."""
+    from database import engine
+    from sqlalchemy import inspect
+    from db_maintenance import UNIQUE_INDEXES, EXTRA_INDEXES
+
+    inspector = inspect(engine)
+    actual = {}
+    for table in inspector.get_table_names():
+        actual[table] = [i.get("name") for i in inspector.get_indexes(table)]
+
+    expected = {name: f"{table}({', '.join(cols)})"
+                for name, table, cols in (UNIQUE_INDEXES + EXTRA_INDEXES)}
+    missing = {name: spec for name, spec in expected.items()
+               if name not in {idx for lst in actual.values() for idx in lst}}
+
+    return {
+        "status": "ok" if not missing else "missing_indexes",
+        "expected": expected,
+        "actual": actual,
+        "missing": missing,
+    }
+
+
+@app.get("/api/v1/kpi/formula-errors")
+def kpi_formula_errors(year: int = None, limit: int = 100, db: Session = Depends(get_db)):
+    """List daily rows whose kpi_breakdown recorded formula evaluation errors.
+
+    Lets operators find mis-configured formula rules instead of users silently
+    scoring 0.0 because of a typo in the Configurator matrix.
+    """
+    from datetime import datetime as _dt
+    if not year:
+        year = _dt.now().year
+    start = _dt(year, 1, 1)
+    end = _dt(year, 12, 31, 23, 59, 59)
+
+    rows = (
+        db.query(models.KPIEmployeeDaily)
+        .filter(
+            models.KPIEmployeeDaily.date >= start,
+            models.KPIEmployeeDaily.date <= end,
+        )
+        .order_by(models.KPIEmployeeDaily.date.desc())
+        .limit(limit)
+        .all()
+    )
+    matches = []
+    for r in rows:
+        breakdown = r.kpi_breakdown or {}
+        if isinstance(breakdown, str):
+            try:
+                import json as _json
+                breakdown = _json.loads(breakdown)
+            except Exception:
+                breakdown = {}
+        errs = breakdown.get("formula_errors") if isinstance(breakdown, dict) else None
+        if errs:
+            matches.append({
+                "user_id": r.user_id,
+                "date": r.date.strftime("%Y-%m-%d") if r.date else None,
+                "errors": errs,
+            })
+    return {"year": year, "found": len(matches), "errors": matches[:limit]}
+
+# Force database initialization endpoint
+@app.post("/api/v1/db/initialize")
+def force_db_initialize():
+    """Force database initialization - useful for production setup"""
+    from database import engine, SessionLocal
+    import models
+    from models import Division, IntegrationSetting
+    from sqlalchemy import text
+    
+    try:
+        # Create tables
+        models.Base.metadata.create_all(bind=engine)
+        
+        # Ensure divisions exist
+        db = SessionLocal()
+        try:
+            if not db.query(Division).filter(Division.code == "IT").first():
+                it_div = Division(code="IT", name="IT & Engineering", description="Information Technology Division")
+                db.add(it_div)
+                db.commit()
+                
+            # Ensure integration settings exist  
+            if not db.query(IntegrationSetting).first():
+                default_settings = IntegrationSetting(
+                    jira_url="",
+                    jira_email="", 
+                    jira_token_encrypted="",
+                    jira_board_ids=[],
+                    default_jira_board_id="",
+                    jira_sp_field="customfield_10016",
+                    gitlab_url="https://gitlab.com",
+                    gitlab_token_encrypted=""
+                )
+                db.add(default_settings)
+                db.commit()
+                
+            return {
+                "status": "success",
+                "message": "Database initialized successfully",
+                "timestamp": datetime.now().isoformat()
+            }
+        finally:
+            db.close()
+            
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }, 500
 
 # Enable CORS for frontend integration
 app.add_middleware(
@@ -84,6 +601,7 @@ app.add_middleware(
         "https://kpi-dashboard-xi-murex.vercel.app",
         os.environ.get("FRONTEND_URL", "https://kpi-dashboard-xi-murex.vercel.app"),
     ],
+    allow_origin_regex=r"^https?://.*$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
@@ -134,12 +652,34 @@ class UserBoardAssignmentInput(BaseModel):
     jira_board_ids: List[str] = []
     current_active_board: Optional[str] = None
 
+# NEW: AI INDICATOR CREATOR MODELS
+class AIFormulaRequest(BaseModel):
+    user_id: str
+    user_name: str
+    user_role: str
+    has_subordinates: bool
+    division_id: str
+    division_name: str
+    division_code: str
+    group_id: Optional[str] = None
+    group_name: Optional[str] = None
+    creation_scope: str = "personal"
+    indicator_description: str
+
 # Helper: Recursive Subordinates Lookup
 def get_recursive_subordinates(db: Session, supervisor_id: str) -> List[models.User]:
+    return _recursive_subordinates(db, supervisor_id, set())
+
+
+def _recursive_subordinates(db: Session, supervisor_id: str, visited: set) -> List[models.User]:
+    if supervisor_id in visited:
+        return []
+    visited = set(visited)
+    visited.add(supervisor_id)
     direct_subs = db.query(models.User).filter(models.User.supervisor_id == supervisor_id).all()
     all_subs = list(direct_subs)
     for sub in direct_subs:
-        all_subs.extend(get_recursive_subordinates(db, sub.id))
+        all_subs.extend(_recursive_subordinates(db, sub.id, visited))
     return all_subs
 
 # Endpoints
@@ -150,7 +690,7 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
         response = requests.post(external_url, json={
             "username": payload.username,
             "password": payload.password
-        }, timeout=10)
+        }, timeout=30)
     except requests.exceptions.RequestException as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -169,7 +709,7 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
     if token:
         try:
             profile_url = "https://hris-api.atibusinessgroup.com/api/app/users/profile"
-            profile_resp = requests.get(profile_url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
+            profile_resp = requests.get(profile_url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
             print("PROFILE_STATUS:", profile_resp.status_code)
             if profile_resp.status_code == 200:
                 profile_data = profile_resp.json()
@@ -196,10 +736,10 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
     roles = user_data.get("roles", [])
     has_subs = user_data.get("hasSubordinates", False)
     
-    # Handle supervisor link
+    # Handle supervisor link — purely from HRIS, no special-casing
     supervisor_id = None
     direct_spv = user_data.get("directSpv")
-    if direct_spv and direct_spv.get("id") and nik != "01.05.13.500":
+    if direct_spv and direct_spv.get("id"):
         spv_id = str(direct_spv["id"])
         spv_in_db = db.query(models.User).filter(models.User.id == spv_id).first()
         if not spv_in_db:
@@ -298,37 +838,9 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
         from database import SessionLocal
         _db = SessionLocal()
         try:
-            hdr = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-            url = "https://hris-api.atibusinessgroup.com/api/app/overtime/request-data"
-            res = requests.get(url, headers=hdr, timeout=8)
-            if res.status_code == 200:
-                employees = res.json().get("employee", [])
-                for emp in employees:
-                    emp_nik = emp.get("nik")
-                    emp_name = emp.get("name")
-                    emp_id = emp.get("id")
-                    if not emp_nik or emp_nik == supervisor_nik:
-                        continue
-                    sub = _db.query(models.User).filter(models.User.nik == emp_nik).first()
-                    if sub:
-                        sub.supervisor_id = supervisor_user_id
-                        sub.employee_id = str(emp_id)
-                        sub.full_name = emp_name
-                        _db.commit()
-                    else:
-                        new_sub = models.User(
-                            id=f"api_{emp_id}",
-                            nik=emp_nik,
-                            full_name=emp_name,
-                            supervisor_id=supervisor_user_id,
-                            employee_id=str(emp_id),
-                            roles=["ROLE_USER"],
-                            is_active=True,
-                            jira_account_id=f"jira_user_api_{emp_id}",
-                            gitlab_username=f"gitlab_user_api_{emp_id}"
-                        )
-                        _db.add(new_sub)
-                        _db.commit()
+            supervisor = _db.query(models.User).filter(models.User.id == supervisor_user_id).first()
+            if supervisor:
+                sync_subordinates_for_supervisor(_db, supervisor, token)
         except Exception as e:
             print(f"[BG Sync] Subordinate sync failed for {supervisor_user_id}: {e}")
         finally:
@@ -353,7 +865,8 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
             "group_id": user.group_id,
             "group_name": user.group_name,
             "supervisor_id": user.supervisor_id
-        }
+        },
+        "hris_token": user_data.get("id_token")  # Include HRIS token in response
     }
 
 class UpdateUserEmailRequest(BaseModel):
@@ -411,6 +924,22 @@ def verify_local_session(user_id: str, db: Session = Depends(get_db)):
         }
     }
 
+def _has_kpi_indicator_data(db) -> bool:
+    """
+    True when at least one active KPI rule with metric definitions exists.
+    Without indicators the matrix configurator has nothing to score, so both
+    'Hitung KPI' and 'Sync Attendance' refuse to run and tell the user to add
+    indicators first.
+    """
+    rule = db.query(models.KPIRule.id).filter(models.KPIRule.is_active == True).first()
+    if not rule:
+        return False
+    metric = db.query(models.KPIRuleMetric.id).filter(
+        models.KPIRuleMetric.kpi_rule_id == rule[0]
+    ).first()
+    return metric is not None
+
+
 @app.post("/api/v1/attendance/sync-year")
 def sync_attendance_year(
     supervisor_id: str,
@@ -420,8 +949,15 @@ def sync_attendance_year(
 ):
     """
     Trigger yearly attendance sync for all subordinates of a supervisor.
-    Uses the HRIS admin endpoint per-NIK, paginated. Results cached in SQLite.
+    Uses the supervisor's stored HRIS token to fetch attendance data for their subordinates.
+    Results cached in SQLite.
     """
+    if not _has_kpi_indicator_data(db):
+        raise HTTPException(
+            status_code=400,
+            detail="Belum ada indikator KPI yang dikonfigurasi. Tambahkan indikator di Configurator terlebih dahulu, lalu coba lagi."
+        )
+
     from sync_service import sync_attendance_for_year
     from sync_engine import create_sync_job, update_job_progress, mark_job_completed, mark_job_failed
     
@@ -440,14 +976,69 @@ def sync_attendance_year(
         _db = SessionLocal()
         try:
             update_job_progress(_db, j_id, 10, "RUNNING")
+            
+            # Sync attendance using the supervisor's stored HRIS token
             sync_attendance_for_year(_db, sub_list, y)
+            update_job_progress(_db, j_id, 60, "RUNNING")
+            
+            # Then recalculate KPI for all subordinates
+            from datetime import datetime
+            from_date = datetime(y, 1, 1)
+            to_date = datetime(y, 12, 31, 23, 59, 59)
+            
+            for idx, user in enumerate(sub_list):
+                try:
+                    from comprehensive_sync import calculate_daily_aggregated_kpi
+                    from sqlalchemy import and_
+                    
+                    # Get all dates that have attendance records for this user
+                    att_dates = _db.query(models.AttendanceRecord.date).filter(
+                        and_(
+                            models.AttendanceRecord.user_id == user.id,
+                            models.AttendanceRecord.date >= from_date.date().isoformat(),
+                            models.AttendanceRecord.date <= to_date.date().isoformat()
+                        )
+                    ).distinct().all()
+                    
+                    # Recalculate KPI for each date with attendance
+                    for r in att_dates:
+                        if r[0]:
+                            try:
+                                dt_obj = datetime.strptime(r[0][:10], "%Y-%m-%d") if isinstance(r[0], str) else r[0]
+                                dt_midnight = datetime.combine(dt_obj.date() if hasattr(dt_obj, 'date') else dt_obj, datetime.min.time())
+                                calculate_daily_aggregated_kpi(_db, user, dt_midnight)
+                            except Exception:
+                                pass
+                except Exception as e:
+                    logger.error(f"Error recalculating KPI for {user.full_name}: {e}")
+                
+                # Update progress
+                prog = 60 + int(30 * (idx + 1) / len(sub_list))
+                update_job_progress(_db, j_id, prog, "RUNNING")
+            
+            # Invalidate cache after sync
+            try:
+                from fastapi_cache import FastAPICache
+                FastAPICache.clear()
+                
+                # _company_maxima_cache is a global variable in main.py, we need to import it properly or clear it
+                global _company_maxima_cache
+                _company_maxima_cache.clear()
+            except Exception:
+                pass
+                
             mark_job_completed(_db, j_id, {"count": len(sub_list), "year": y})
         except Exception as e:
             mark_job_failed(_db, j_id, str(e))
         finally:
+            try:
+                _db.rollback()
+            except Exception:
+                pass
             _db.close()
     
     background_tasks.add_task(_do_sync, job_id, subordinates, year)
+    
     return {
         "status": "syncing",
         "message": f"Sinkronisasi attendance {year} dimulai untuk {len(subordinates)} karyawan",
@@ -516,76 +1107,20 @@ def get_my_performance(user_id: str, db: Session = Depends(get_db)):
     }
 
 @app.get("/api/v1/kpi/subordinates")
-@cache(expire=60)
 def get_subordinates_list(supervisor_id: str, db: Session = Depends(get_db)):
     spv = db.query(models.User).filter(models.User.id == supervisor_id).first()
     if not spv:
         raise HTTPException(status_code=404, detail="Supervisor tidak ditemukan")
 
-    # Fetch team from external API
-    token = get_system_token()
-    employees = []
+    # Use the supervisor's OWN token (stored at their login). Never fall back to a
+    # shared/system account — every manager must see only their own team.
+    stored = _supervisor_token_store.get(supervisor_id)
+    token = None
+    if stored and stored.get("token") and stored.get("expires_at", datetime.min) > datetime.now():
+        token = stored["token"]
+
     if token:
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json"
-        }
-        url = "https://hris-api.atibusinessgroup.com/api/app/overtime/request-data"
-        try:
-            res = requests.get(url, headers=headers, timeout=8)
-            if res.status_code == 200:
-                employees = res.json().get("employee", [])
-        except Exception as e:
-            print(f"[Sync Warning] Failed to fetch subordinates from API: {str(e)}")
-
-    if employees:
-        api_niks = {emp["nik"] for emp in employees if emp.get("nik")}
-        for emp in employees:
-            emp_nik = emp.get("nik")
-            emp_name = emp.get("name")
-            emp_id = emp.get("id")
-
-            if not emp_nik:
-                continue
-
-            # Skip the supervisor themselves
-            if emp_nik == spv.nik:
-                continue
-
-            sub = db.query(models.User).filter(models.User.nik == emp_nik).first()
-            if sub:
-                sub.supervisor_id = spv.id
-                sub.employee_id = str(emp_id)
-                sub.full_name = emp_name
-                db.commit()
-            else:
-                temp_id = str(emp_id)
-                id_exists = db.query(models.User).filter(models.User.id == temp_id).first()
-                if id_exists:
-                    temp_id = f"ext_{emp_id}"
-                
-                new_user = models.User(
-                    id=temp_id,
-                    nik=emp_nik,
-                    employee_id=str(emp_id),
-                    full_name=emp_name,
-                    roles=["EMPLOYEE"],
-                    has_subordinates=False,
-                    is_active=True,
-                    division_id=spv.division_id,
-                    supervisor_id=spv.id,
-                    jira_account_id=f"jira_user_{temp_id}",
-                    gitlab_username=f"gitlab_user_{temp_id}"
-                )
-                db.add(new_user)
-                db.commit()
-
-        if "ROLE_ADMIN" not in spv.roles:
-            db.query(models.User).filter(
-                models.User.supervisor_id == spv.id,
-                ~models.User.nik.in_(list(api_niks))
-            ).update({"supervisor_id": None}, synchronize_session=False)
-            db.commit()
+        sync_subordinates_for_supervisor(db, spv, token)
 
     users = get_recursive_subordinates(db, supervisor_id)
 
@@ -642,16 +1177,21 @@ def get_sprint_report(sprint_id: str, supervisor_id: str, db: Session = Depends(
 
 @app.get("/api/v1/kpi-rules")
 def get_kpi_rules(division_id: str, group_id: Optional[str] = None, db: Session = Depends(get_db)):
-    query = db.query(models.KPIRule).filter(
-        models.KPIRule.division_id == division_id,
-        models.KPIRule.is_active == True
-    )
+    rule = None
     if group_id:
-        query = query.filter(models.KPIRule.group_id == group_id)
-    else:
-        query = query.filter(models.KPIRule.group_id.is_(None))
+        rule = db.query(models.KPIRule).filter(
+            models.KPIRule.division_id == division_id,
+            models.KPIRule.group_id == group_id,
+            models.KPIRule.is_active == True
+        ).first()
         
-    rule = query.first()
+    if not rule:
+        # Fallback to division rule
+        rule = db.query(models.KPIRule).filter(
+            models.KPIRule.division_id == division_id,
+            models.KPIRule.group_id.is_(None),
+            models.KPIRule.is_active == True
+        ).first()
 
     if not rule:
         return []
@@ -734,6 +1274,395 @@ def evaluate_test(payload: TestFormulaRequest):
         return {"status": "success", "result": round(score, 2)}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+# NEW: AI INDICATOR CREATOR ENDPOINTS
+@app.get("/api/v1/ai/division-context")
+def get_ai_division_context(division_id: str, user_id: str, db: Session = Depends(get_db)):
+    """Get division context for AI-powered indicator creation"""
+    try:
+        # Get user information
+        user = db.query(models.User).filter(models.User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Get division information
+        division = db.query(models.Division).filter(models.Division.id == division_id).first()
+        if not division:
+            raise HTTPException(status_code=404, detail="Division not found")
+        
+        # Import division variables registry
+        from division_variables import (
+            get_division_variables,
+            get_division_example_prompts,
+            get_division_common_targets,
+            get_all_divisions
+        )
+        
+        # Get user's permission level — match on the whole role set, not just the first entry
+        user_roles = user.roles or []
+        if "ROLE_ADMIN" in user_roles:
+            user_role = "ADMIN"
+        elif "MANAGER" in user_roles or "SUPERVISOR" in user_roles or user.has_subordinates:
+            user_role = "MANAGER"
+        else:
+            user_role = "EMPLOYEE"
+        
+        # Get division-specific data
+        division_variables = get_division_variables(division.code)
+        example_prompts = get_division_example_prompts(division.code)
+        common_targets = get_division_common_targets(division.code)
+        
+        # Determine creation scope based on user role
+        if "ROLE_ADMIN" in user.roles:
+            creation_scopes = ["division", "group", "personal"]
+        elif "MANAGER" in user.roles or "SUPERVISOR" in user.roles or user.has_subordinates:
+            creation_scopes = ["division", "group", "personal"]
+        else:
+            creation_scopes = ["personal"]
+        
+        return {
+            "status": "success",
+            "user_context": {
+                "user_id": user.id,
+                "user_name": user.full_name,
+                "user_role": user_role,
+                "has_subordinates": user.has_subordinates,
+                "division_id": user.division_id,
+                "group_id": user.group_id,
+                "group_name": user.group_name,
+                "creation_scopes": creation_scopes
+            },
+            "division_context": {
+                "division_id": division.id,
+                "division_name": division.name,
+                "division_code": division.code,
+                "variables": division_variables,
+                "example_prompts": example_prompts,
+                "common_targets": common_targets
+            },
+            "available_divisions": get_all_divisions()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting AI division context: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/v1/ai/generate-formula")
+async def ai_generate_formula(request: AIFormulaRequest, db: Session = Depends(get_db)):
+    """Generate KPI formula using AI based on natural language description"""
+    try:
+        # Validate user exists
+        user = db.query(models.User).filter(models.User.id == request.user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Validate user permissions — any manager/supervisor/admin role or having
+        # subordinates grants creation rights (role order from HRIS is not guaranteed)
+        user_roles = user.roles or []
+        is_privileged = (
+            "ROLE_ADMIN" in user_roles
+            or "MANAGER" in user_roles
+            or "SUPERVISOR" in user_roles
+            or user.has_subordinates
+        )
+        if not is_privileged:
+            raise HTTPException(status_code=403, detail="Employees cannot create KPI indicators")
+        
+        # Validate division access
+        if request.division_id != user.division_id and "ROLE_ADMIN" not in user.roles:
+            raise HTTPException(status_code=403, detail="Cannot create indicators for other divisions")
+        
+        # Validate group access if group specified
+        if request.group_id and request.group_id != user.group_id and "ROLE_ADMIN" not in user.roles:
+            raise HTTPException(status_code=403, detail="Cannot create indicators for other groups")
+        
+        # Import AI formula generator
+        from ai_formula_generator import AIFeatureScorer
+        from ai_formula_generator import AIFormulaRequest as AIRequestModel
+        
+        # Create AI request
+        ai_request = AIRequestModel(
+            user_id=request.user_id,
+            user_name=request.user_name,
+            user_role=request.user_role,
+            has_subordinates=request.has_subordinates,
+            division_id=request.division_id,
+            division_name=request.division_name,
+            division_code=request.division_code,
+            group_id=request.group_id,
+            group_name=request.group_name,
+            creation_scope=request.creation_scope,
+            indicator_description=request.indicator_description
+        )
+        
+        # Generate formula
+        scorer = AIFeatureScorer()
+        response = scorer.generate_formula(ai_request)
+        
+        # Add division-specific suggestions if AI fails
+        if response.status == "error":
+            from division_variables import get_division_example_prompts
+            example_prompts = get_division_example_prompts(request.division_code)
+            response.error = f"{response.error}. Try these examples: {', '.join(example_prompts[:2])}"
+        
+        return response.dict()
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating AI formula: {str(e)}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "message": "Failed to generate formula. Please try again or use manual formula creation."
+        }
+
+@app.post("/api/v1/ai/validate-permission")
+def validate_indicator_creation_permission(user_id: str, scope: str, division_id: str, group_id: str = None, db: Session = Depends(get_db)):
+    """Validate if user has permission to create indicators for given scope"""
+    try:
+        # Get user information
+        user = db.query(models.User).filter(models.User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Determine user permission level
+        user_role = user.roles[0] if user.roles else "EMPLOYEE"
+        
+        # Check basic access
+        if user_role == "EMPLOYEE":
+            return {
+                "status": "denied",
+                "reason": "Employees cannot create KPI indicators",
+                "suggestion": "Contact your manager for indicator changes"
+            }
+        
+        # Check scope permissions
+        if scope == "division":
+            if "ROLE_ADMIN" not in user.roles:
+                return {
+                    "status": "denied",
+                    "reason": "Only admins can create division-wide indicators",
+                    "suggestion": "Create group-specific indicators instead"
+                }
+        
+        if scope == "group":
+            if group_id and group_id != user.group_id and "ROLE_ADMIN" not in user.roles:
+                return {
+                    "status": "denied",
+                    "reason": "Cannot create indicators for other groups",
+                    "suggestion": "Create indicators for your own group"
+                }
+        
+        return {
+            "status": "allowed",
+            "user_role": user_role,
+            "scope": scope,
+            "division_access": division_id == user.division_id or "ROLE_ADMIN" in user.roles,
+            "group_access": not group_id or group_id == user.group_id or "ROLE_ADMIN" in user.roles
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error validating permissions: {str(e)}")
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+# Enhanced debugging endpoint for checking employee calculations
+
+@app.get("/api/v1/kpi/user-calculation-details")
+def get_user_calculation_details(user_id: str, year: int, db: Session = Depends(get_db)):
+    """Get detailed calculation breakdown for a user for debugging"""
+    try:
+        from_date = datetime(year, 1, 1)
+        to_date = datetime(year, 12, 31)
+        
+        user = db.query(models.User).filter(models.User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Get rules for user
+        rule = db.query(models.KPIRule).filter(
+            models.KPIRule.division_id == user.division_id,
+            models.KPIRule.group_id == user.group_id,
+            models.KPIRule.is_active == True
+        ).first()
+        
+        if not rule:
+            rule = db.query(models.KPIRule).filter(
+                models.KPIRule.division_id == user.division_id,
+                models.KPIRule.group_id.is_(None),
+                models.KPIRule.is_active == True
+            ).first()
+        
+        if not rule:
+            return {"error": "No active KPI rule found for user"}
+        
+        metrics = db.query(models.KPIRuleMetric).filter(
+            models.KPIRuleMetric.kpi_rule_id == rule.id
+        ).all()
+        
+        # Get actual metrics for user for this year
+        from yearly_kpi_engine import YearlyKPIEngine, METRIC_RAW_KEY_MAP, _resolve_formula_raw_value
+        
+        working_days = YearlyKPIEngine.calculate_working_days(from_date, to_date)
+        
+        # Get user's actual metrics from database
+        user_metrics = {}
+        
+        # Get daily KPI data
+        daily_kpis = db.query(models.KPIEmployeeDaily).filter(
+            models.KPIEmployeeDaily.user_id == user.id,
+            models.KPIEmployeeDaily.date >= from_date,
+            models.KPIEmployeeDaily.date <= to_date
+        ).all()
+        
+        # Aggregate metrics
+        user_metrics["attendance_days"] = sum(d.attendance_days for d in daily_kpis)
+        user_metrics["target_days"] = working_days
+        user_metrics["late_percentage"] = (sum(d.late_count for d in daily_kpis) / working_days * 100) if working_days > 0 else 0
+        
+        # Get Jira data
+        jira_ident = db.query(models.EmployeeIdentity).filter(
+            models.EmployeeIdentity.user_id == user.id,
+            models.EmployeeIdentity.source == 'jira'
+        ).first()
+        
+        if jira_ident and jira_ident.external_user_id:
+            raw_jira_issues = db.query(models.RawJiraIssue).filter(
+                models.RawJiraIssue.assignee_account_id == jira_ident.external_user_id
+            ).all()
+
+            from feature_analyzer import stored_feature_weight
+
+            raw_jira_sp = 0.0
+            complexity_sp = 0.0
+            issues_completed = 0
+            
+            for ji in raw_jira_issues:
+                # Extract date and check if within range
+                r_dt_naive = None
+                if ji.resolved_date:
+                    r_dt = ji.resolved_date
+                    r_dt_naive = r_dt.replace(tzinfo=None) if hasattr(r_dt, 'replace') else r_dt
+                elif ji.raw_data and 'fields' in ji.raw_data:
+                    fields = ji.raw_data['fields']
+                    r_date_str = fields.get('resolutiondate') or fields.get('updated') or fields.get('created')
+                    if r_date_str:
+                        try:
+                            clean_date = r_date_str.split('.')[0]
+                            if 'T' in clean_date:
+                                r_dt_naive = datetime.strptime(clean_date, "%Y-%m-%dT%H:%M:%S")
+                            else:
+                                r_dt = datetime.fromisoformat(clean_date.replace('Z', '+00:00'))
+                                r_dt_naive = r_dt.replace(tzinfo=None)
+                        except Exception:
+                            pass
+                
+                if r_dt_naive and from_date <= r_dt_naive <= to_date:
+                    status_lower = (ji.status or "").lower()
+                    if status_lower in ["done", "resolved", "ready to release", "ready for uat", "uat (user)", "ready for qa", "in qa", "in review"]:
+                        issues_completed += 1
+                        sp = float(ji.story_points or 0.0)
+                        cw = stored_feature_weight(ji)
+                        raw_jira_sp += sp
+                        complexity_sp += cw
+            
+            user_metrics["raw_jira_sp"] = raw_jira_sp
+            user_metrics["jira_sp"] = raw_jira_sp
+            user_metrics["complexity_sp"] = complexity_sp
+            user_metrics["jira_issues_completed"] = issues_completed
+            
+            # Get founder credits
+            from founder_engine import get_founder_credits_for_user
+            user_metrics["founder_sp_credit"] = get_founder_credits_for_user(user.id, year)
+            
+            # Get company maxima for relative scoring (scoped to the user's group)
+            from_date = datetime(year, 1, 1)
+            to_date = datetime(year, 12, 31, 23, 59, 59)
+            cmax = _get_company_maxima(db, from_date, to_date, group_id=user.group_id)
+            max_raw_sp = cmax["max_raw_sp"]
+            max_complexity_sp = cmax["max_complexity_sp"]
+            max_issues_cnt = cmax["max_issues_cnt"]
+            max_founder_sp = cmax["max_founder_sp"]
+            
+            user_metrics["max_raw_sp"] = max_raw_sp
+            user_metrics["max_complexity_sp"] = max_complexity_sp
+            user_metrics["max_issues_cnt"] = max_issues_cnt
+            user_metrics["max_founder_sp"] = max_founder_sp
+        
+        # Calculate each metric with detailed breakdown
+        breakdown_details = []
+        for m_def in metrics:
+            try:
+                # Build eval context
+                eval_context = dict(user_metrics)
+                
+                # Add variables from rule (actual metrics take precedence)
+                try:
+                    if m_def.variables:
+                        from engine import merge_rule_variables
+                        eval_context = merge_rule_variables(eval_context, m_def.variables)
+                except Exception as e:
+                    print(f"Error parsing variables for {m_def.metric_key}: {e}")
+                
+                # Calculate score
+                from engine import evaluate_kpi_formula
+                score = evaluate_kpi_formula(m_def.formula_expression, eval_context)
+                capped_score = min(max(score, 0.0), float(m_def.cap_score))
+                weighted_score = capped_score * float(m_def.weight)
+
+                raw_key = METRIC_RAW_KEY_MAP.get(m_def.metric_key, m_def.metric_key)
+                if raw_key in user_metrics:
+                    actual_val = user_metrics.get(raw_key, user_metrics.get(m_def.metric_key, 0.0))
+                else:
+                    # AI-generated formula metric: resolve the raw measure behind the formula
+                    # (e.g. jira_sp) so the dashboard "Nilai Raw" column shows real data.
+                    actual_val = _resolve_formula_raw_value(m_def.formula_expression, user_metrics, eval_context)
+
+                breakdown_details.append({
+                    "metric_key": m_def.metric_key,
+                    "formula": m_def.formula_expression,
+                    "formula_used": m_def.formula_expression,
+                    "variables": eval_context,
+                    "variables_used": eval_context,
+                    "actual_value": round(actual_val, 2),
+                    "raw_score": round(score, 2),
+                    "calculated_score": round(capped_score, 2),
+                    "capped_score": round(capped_score, 2),
+                    "weight": float(m_def.weight),
+                    "weighted_score": round(weighted_score, 2),
+                    "category": m_def.category or "ENGINEERING"
+                })
+            except Exception as e:
+                breakdown_details.append({
+                    "metric_key": m_def.metric_key,
+                    "error": str(e),
+                    "raw_score": 0,
+                    "capped_score": 0,
+                    "weighted_score": 0,
+                    "weight": float(m_def.weight)
+                })
+        
+        total_score = sum(b["weighted_score"] for b in breakdown_details)
+        
+        return {
+            "user_id": user.id,
+            "full_name": user.full_name,
+            "year": year,
+            "rule_name": rule.name,
+            "total_score": round(total_score, 2),
+            "working_days": working_days,
+            "user_metrics": user_metrics,
+            "breakdown": breakdown_details
+        }
+        
+    except Exception as e:
+        return {"error": str(e)}, 500
 
 # Integration Settings Endpoints (Opsi 2: Secure Decrypted Views)
 @app.get("/api/v1/integrations")
@@ -926,6 +1855,50 @@ class ManualAttendanceInput(BaseModel):
     clock_out: str = None
     status: str = "PRESENT"  # PRESENT, ABSENT, LATE, LEAVE
 
+@app.get("/api/v1/attendance/records")
+def get_attendance_records(user_id: str = None, supervisor_id: str = None, year: int = None, db: Session = Depends(get_db)):
+    """
+    Get raw attendance records from database.
+    Can filter by user_id, supervisor_id (for all subordinates), or year.
+    """
+    query = db.query(models.AttendanceRecord)
+    
+    if user_id:
+        query = query.filter(models.AttendanceRecord.user_id == user_id)
+    elif supervisor_id:
+        # Get all subordinates of this supervisor
+        subordinates = get_recursive_subordinates(db, supervisor_id)
+        subordinate_ids = [s.id for s in subordinates]
+        query = query.filter(models.AttendanceRecord.user_id.in_(subordinate_ids))
+    
+    if year:
+        start_date = f"{year}-01-01"
+        end_date = f"{year}-12-31"
+        query = query.filter(models.AttendanceRecord.date >= start_date, models.AttendanceRecord.date <= end_date)
+    
+    records = query.order_by(models.AttendanceRecord.date).all()
+    
+    result = []
+    for record in records:
+        user = db.query(models.User).filter(models.User.id == record.user_id).first()
+        result.append({
+            "user_id": record.user_id,
+            "user_name": user.full_name if user else "Unknown",
+            "user_nik": user.nik if user else "Unknown",
+            "date": record.date,
+            "status": record.status,
+            "is_late": record.is_late,
+            "clock_in": record.clock_in,
+            "clock_out": record.clock_out,
+            "late_minutes": record.late_minutes,
+            "source": record.source
+        })
+    
+    return {
+        "total_records": len(result),
+        "records": result
+    }
+
 @app.post("/api/v1/attendance/manual")
 def add_manual_attendance(payload: ManualAttendanceInput, db: Session = Depends(get_db)):
     """Add or update a manual attendance record."""
@@ -995,15 +1968,196 @@ async def sync_year(year: int, background_tasks: BackgroundTasks, db: Session = 
                 FastAPICache.clear()
             except Exception:
                 pass
+            _company_maxima_cache.clear()
             mark_job_completed(bg_db, jid, {"message": "Sync completed successfully"})
         except Exception as e:
             print(f"Error in background calculation: {str(e)}")
-            mark_job_failed(bg_db, jid, str(e))
+            try:
+                bg_db.rollback()
+            except Exception:
+                pass
+            _safe_mark_job_failed(bg_db, jid, str(e))
         finally:
+            try:
+                bg_db.rollback()
+            except Exception:
+                pass
             bg_db.close()
             
     background_tasks.add_task(run_calculation, job_id)
     return {"status": "success", "message": f"Sinkronisasi tahun {year} berjalan di background", "job_id": job_id}
+
+@app.post("/api/v1/sync/data")
+async def sync_data_only(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    supervisor_id: str = None,
+    year: int = None,
+    hris_username: str = None,
+    hris_password: str = None
+):
+    """Sync data from Jira/GitLab into local DB only (no KPI calculation).
+    Supports optional HRIS credentials override for testing.
+    """
+    from sync_engine import create_sync_job, update_job_progress, mark_job_completed, mark_job_failed, mark_stale_jobs_failed
+    import os
+    
+    mark_stale_jobs_failed(db, "DATA_SYNC_ONLY")
+    job_id = create_sync_job(db, None, "DATA_SYNC_ONLY")
+    
+    # Override HRIS credentials if provided
+    old_username = os.getenv("HRIS_SYSTEM_USERNAME")
+    old_password = os.getenv("HRIS_SYSTEM_PASSWORD")
+    if hris_username and hris_password:
+        os.environ["HRIS_SYSTEM_USERNAME"] = hris_username
+        os.environ["HRIS_SYSTEM_PASSWORD"] = hris_password
+
+    def run_sync(jid):
+        from scheduler import sync_data_only_job
+        from database import SessionLocal
+        bg_db = SessionLocal()
+        try:
+            update_job_progress(bg_db, jid, 10, "RUNNING")
+            
+            # If supervisor_id and year provided, do attendance sync first
+            if supervisor_id and year:
+                from sync_service import sync_attendance_for_year
+                supervisor = bg_db.query(models.User).filter(models.User.id == supervisor_id).first()
+                if supervisor:
+                    subordinates = bg_db.query(models.User).filter(models.User.supervisor_id == supervisor_id).all()
+                    if subordinates:
+                        update_job_progress(bg_db, jid, 20, "RUNNING")
+                        sync_attendance_for_year(bg_db, subordinates, year)
+                        update_job_progress(bg_db, jid, 80, "RUNNING")
+            
+            # Then do regular sync
+            result = sync_data_only_job(supervisor_id=supervisor_id)
+            try:
+                _company_maxima_cache.clear()
+            except Exception:
+                pass
+            mark_job_completed(bg_db, jid, result or {"message": "Sync data completed"})
+        except Exception as e:
+            print(f"Error in background data sync: {str(e)}")
+            try:
+                bg_db.rollback()
+            except Exception:
+                pass
+            _safe_mark_job_failed(bg_db, jid, str(e))
+        finally:
+            try:
+                bg_db.rollback()
+            except Exception:
+                pass
+            bg_db.close()
+            
+            # Restore original credentials
+            if hris_username and hris_password:
+                if old_username is not None:
+                    os.environ["HRIS_SYSTEM_USERNAME"] = old_username
+                if old_password is not None:
+                    os.environ["HRIS_SYSTEM_PASSWORD"] = old_password
+
+    background_tasks.add_task(run_sync, job_id)
+    return {"status": "success", "message": "Sync data dari Jira/GitLab berjalan di background", "job_id": job_id}
+
+def _safe_mark_job_failed(db, job_id, error):
+    """Mark a job FAILED even when the session is broken/poisoned.
+
+    A DB network error leaves the session with an invalid transaction, so the
+    failure-marking query itself raises PendingRollbackError. Here we reset the
+    session (rollback) before retrying and swallow the error so a poisoned
+    session can never turn a background failure into an unhandled ASGI 500.
+    """
+    try:
+        db.rollback()
+    except Exception:
+        pass
+    try:
+        from sync_engine import mark_job_failed
+        mark_job_failed(db, job_id, error)
+    except Exception as e:
+        print(f"Failed to mark job {job_id} as failed: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+@app.post("/api/v1/kpi/calculate/{year}")
+async def calculate_kpi_only(year: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), force: bool = False, supervisor_id: str = None):
+    """Calculate KPI using local DB data only (no external sync).
+
+    By default only dates that are not already calculated are processed
+    (incremental). Pass ?force=true to recalculate the whole year.
+    """
+    from sync_engine import create_sync_job, update_job_progress, mark_job_completed, mark_job_failed, mark_stale_jobs_failed, cancel_running_jobs
+    mark_stale_jobs_failed(db, "KPI_CALC_ONLY")
+    cancel_running_jobs(db, "KPI_CALC_ONLY")
+
+    if not _has_kpi_indicator_data(db):
+        raise HTTPException(
+            status_code=400,
+            detail="Belum ada indikator KPI yang dikonfigurasi. Tambahkan indikator di Configurator terlebih dahulu, lalu coba lagi."
+        )
+
+    job_id = create_sync_job(db, None, "KPI_CALC_ONLY")
+
+    def run_calc(jid):
+        import threading
+        from scheduler import calculate_kpi_only_job
+        from database import SessionLocal
+        bg_db = SessionLocal()
+        # scheduler.py runs per-user work in a ThreadPoolExecutor and calls
+        # progress_cb concurrently from many threads. bg_db is a single
+        # SQLAlchemy session — it is NOT thread-safe, so every write to it must
+        # be serialised or two threads hit each other with commit()/rollback()
+        # at the same time (ISCE "Method rollback() can't be called here").
+        _bg_lock = threading.Lock()
+        try:
+            update_job_progress(bg_db, jid, 10, "RUNNING")
+            def _progress_cb(pct):
+                with _bg_lock:
+                    update_job_progress(bg_db, jid, int(pct), "RUNNING")
+            result = calculate_kpi_only_job(year, job_id=jid, progress_cb=_progress_cb, force=force, supervisor_id=supervisor_id)
+            try:
+                FastAPICache.clear()
+                _company_maxima_cache.clear()
+            except Exception:
+                pass
+            status = (result or {}).get("status", "error")
+            if status == "cancelled":
+                # Job row was already marked FAILED by cancel_running_jobs;
+                # do not resurrect it as COMPLETED.
+                return
+            if status == "error":
+                with _bg_lock:
+                    _safe_mark_job_failed(bg_db, jid, (result or {}).get("message", "Kalkulasi KPI gagal"))
+                return
+            with _bg_lock:
+                mark_job_completed(bg_db, jid, result or {"message": "KPI calculation completed"})
+        except Exception as e:
+            print(f"Error in background KPI calculation: {str(e)}")
+            # The session may be left with an invalid transaction after a DB
+            # network error. Roll back BEFORE reusing it, otherwise the failure
+            # marking itself raises PendingRollbackError and the job stays
+            # RUNNING forever (frontend polls a 200 OK that never changes).
+            try:
+                with _bg_lock:
+                    bg_db.rollback()
+            except Exception:
+                pass
+            with _bg_lock:
+                _safe_mark_job_failed(bg_db, jid, str(e))
+        finally:
+            try:
+                with _bg_lock:
+                    bg_db.rollback()
+            except Exception:
+                pass
+            bg_db.close()
+
+    background_tasks.add_task(run_calc, job_id)
+    return {"status": "success", "message": f"Kalkulasi KPI tahun {year} dari data lokal berjalan di background", "job_id": job_id}
 
 # ─────────────────────────────────────────────────────────────
 # SYNC TRIGGER ENDPOINTS
@@ -1033,6 +2187,94 @@ def get_sync_status(db: Session = Depends(get_db)):
     from sync_engine import get_active_sync_status
     return get_active_sync_status(db)
 
+class RescoreRequest(BaseModel):
+    year: Optional[int] = None
+    user_id: Optional[str] = None
+    force: bool = False
+
+@app.post("/api/v1/kpi/rescore")
+def rescore_features(payload: RescoreRequest, background_tasks: BackgroundTasks):
+    """Re-score stored Jira issues with the configured FeatureScorer (rules or LLM)
+    and refresh the precomputed maxima/metrics. Runs in the background."""
+    def _run_rescore():
+        from database import SessionLocal, engine as _engine
+        from locks import AppLock
+        from feature_analyzer import FeatureScorer, resolve_feature_config, stored_feature_weight
+        # A rescore both re-writes complexity scores and re-runs the precompute
+        # (company maxima + daily aggregates), so it must not overlap a running
+        # KPI calc on another worker/instance.
+        _lock = AppLock(_engine, "KPI_CALC")
+        if not _lock.try_acquire():
+            logger.warning("Rescore skipped: another KPI calc/rescore holds the DB lock")
+            return
+        bg_db = SessionLocal()
+        try:
+            cfg = resolve_feature_config(bg_db)
+            scorer = FeatureScorer(config=cfg)
+            target_year = payload.year or datetime.now().year
+
+            query = bg_db.query(models.RawJiraIssue)
+            if payload.user_id:
+                jira_ident = bg_db.query(models.EmployeeIdentity).filter(
+                    models.EmployeeIdentity.user_id == payload.user_id,
+                    models.EmployeeIdentity.source == 'jira'
+                ).first()
+                if not jira_ident or not jira_ident.external_user_id:
+                    return
+                query = query.filter(models.RawJiraIssue.assignee_account_id == jira_ident.external_user_id)
+            issues = query.all()
+
+            updated = 0
+            for ji in issues:
+                if not payload.force and ji.complexity_score is not None:
+                    continue
+                res = scorer.score(ji.raw_data or {})
+                ji.complexity_score = float(res["kpi_points"])
+                ji.complexity_detail = {
+                    "technical_complexity": res["technical_complexity"],
+                    "business_impact": res["business_impact"],
+                    "system_scope": res["system_scope"],
+                    "delivery_risk": res["delivery_risk"],
+                    "ownership_level": res["ownership_level"],
+                    "total_score": res["total_score"],
+                    "kpi_points": float(res["kpi_points"]),
+                    "score_type": res.get("score_type", "rules"),
+                    "model": res.get("model"),
+                    "prompt_version": res.get("prompt_version"),
+                }
+                updated += 1
+                if updated % 20 == 0:
+                    bg_db.commit()
+            bg_db.commit()
+            logger.info(f"Rescore completed: {updated} issues scored ({scorer.mode} mode)")
+
+            # Refresh precomputed aggregates for the target year (full recompute,
+            # because backfilled complexity values change old dates too).
+            try:
+                from precompute_metrics import compute_all_year_metrics
+                compute_all_year_metrics(bg_db, target_year, force=True)
+            except Exception as e:
+                logger.error(f"Precompute after rescore failed: {e}")
+
+            try:
+                from fastapi_cache import FastAPICache
+                FastAPICache.clear()
+            except Exception:
+                pass
+            _company_maxima_cache.clear()
+        except Exception as e:
+            logger.error(f"Rescore failed: {e}")
+            bg_db.rollback()
+        finally:
+            bg_db.close()
+            try:
+                _lock.release()
+            except Exception:
+                pass
+
+    background_tasks.add_task(_run_rescore)
+    return {"status": "success", "message": "Re-scoring dijalankan di background", "mode": "llm" if os.getenv("ZAI_API_KEY") else "rules"}
+
 @app.get("/api/v1/jobs/{job_id}")
 def get_job_status_endpoint(job_id: str, db: Session = Depends(get_db)):
     from sync_engine import get_job_status
@@ -1060,6 +2302,7 @@ def trigger_sync(background_tasks: BackgroundTasks):
             # Invalidate cache after sync completes
             try:
                 FastAPICache.clear()
+                _company_maxima_cache.clear()
                 logger.info("Cache invalidated after manual sync")
             except Exception as e:
                 logger.warning(f"Failed to invalidate cache: {e}")
@@ -1075,7 +2318,8 @@ def trigger_sync(background_tasks: BackgroundTasks):
 # ─────────────────────────────────────────────────────────────
 
 @app.get("/api/v1/kpi/yearly-performance")
-def get_yearly_performance(year: int, user_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+@cache(expire=300)
+def get_yearly_performance(year: int, user_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db), force_refresh: bool = False):
     """
     Get accumulated KPI data for a specific year (Jan 1 - Dec 31) for the current user.
     Uses company-wide relative scoring benchmark.
@@ -1105,10 +2349,76 @@ def get_yearly_performance(year: int, user_id: str, background_tasks: Background
     return {"status": "success", "data": None, "message": "No data found for the year."}
 
 
+
+def create_notification(db: Session, user_id: str, title: str, message: str, type: str = 'info'):
+    import models
+    n = models.Notification(user_id=user_id, title=title, message=message, type=type)
+    db.add(n)
+    db.commit()
+
+
+def _run_team_yearly_kpi_job(db: Session, request: 'TimeRangeKPIRequest', user_id: str, job_key: str):
+    """
+    Compute team KPI per-user and update the cached result progressively so the
+    frontend can render each row as soon as its calculation finishes (seamless,
+    no full-page loading while the whole team is being processed).
+    """
+    import traceback
+    try:
+        total = len(request.user_ids)
+        partial = []
+        # Maxima is cached (30-min TTL), so per-user calls are cheap after the first.
+        for i, uid in enumerate(request.user_ids):
+            try:
+                single_req = TimeRangeKPIRequest(
+                    from_date=request.from_date,
+                    to_date=request.to_date,
+                    user_ids=[uid]
+                )
+                r = get_time_range_kpi(request=single_req, user_id=user_id, db=db)
+                users = r.get("users", [])
+                if users:
+                    partial.append(users[0])
+            except Exception as e:
+                logger.error(f"Error computing team KPI for user {uid}: {e}")
+
+            # Publish whatever rows are done so far — frontend polls this live.
+            TEAM_YEARLY_JOBS[job_key] = {
+                "status": "processing",
+                "data": partial,
+                "total": total,
+                "done": i + 1,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+        TEAM_YEARLY_JOBS[job_key] = {
+            "status": "success",
+            "data": partial,
+            "total": total,
+            "done": total,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error in team yearly background job: {e}")
+        logger.error(traceback.format_exc())
+        TEAM_YEARLY_JOBS[job_key] = {"status": "error", "data": [], "timestamp": datetime.now().isoformat()}
+
+
 @app.get("/api/v1/kpi/team-yearly")
-def get_team_yearly_performance(year: int, user_id: str, db: Session = Depends(get_db)):
+def get_team_yearly_performance(
+    year: int, 
+    user_id: str, 
+    background_tasks: BackgroundTasks,
+    response: Response,
+    direct_only: bool = False, 
+    force_refresh: bool = False,
+    db: Session = Depends(get_db)
+):
     """
     Get accumulated KPI data for a specific year (Jan 1 - Dec 31) for all subordinates.
+
+    By default returns the full recursive tree below the user. Pass ``direct_only=true``
+    to limit the result to the user's direct reports only.
     """
     current_user = db.query(models.User).filter(models.User.id == user_id).first()
     if not current_user:
@@ -1117,24 +2427,209 @@ def get_team_yearly_performance(year: int, user_id: str, db: Session = Depends(g
     if not (current_user.has_subordinates or "ROLE_ADMIN" in current_user.roles):
         raise HTTPException(status_code=403, detail="Not authorized to view team KPI")
         
-    # Get recursive subordinates for the user
-    users = get_recursive_subordinates(db, user_id)
-    # Filter active users
-    users = [u for u in users if u.is_active]
+    # Get recursive subordinates for the user (or direct reports only)
+    if direct_only:
+        users = db.query(models.User).filter(
+            models.User.supervisor_id == user_id,
+            models.User.is_active == True
+        ).all()
+    else:
+        users = get_recursive_subordinates(db, user_id)
+        users = [u for u in users if u.is_active]
         
     target_user_ids = [u.id for u in users]
     
     from_date_str = f"{year}-01-01"
     to_date_str = f"{year}-12-31"
     
-    request = TimeRangeKPIRequest(from_date=from_date_str, to_date=to_date_str, user_ids=target_user_ids)
-    kpi_data = get_time_range_kpi(request=request, user_id=user_id, db=db)
+    job_key = f"{user_id}_{year}_{direct_only}"
     
-    return {"status": "success", "data": kpi_data.get("users", [])}
+    if force_refresh:
+        for b in [True, False]:
+            k = f"{user_id}_{year}_{b}"
+            if k in TEAM_YEARLY_JOBS:
+                del TEAM_YEARLY_JOBS[k]
+        
+    if job_key in TEAM_YEARLY_JOBS:
+        job = TEAM_YEARLY_JOBS[job_key]
+        
+        # Check if job is older than 5 minutes
+        is_stale = False
+        if "timestamp" in job:
+            try:
+                job_time = datetime.fromisoformat(job["timestamp"])
+                if (datetime.now() - job_time).total_seconds() > 300:
+                    is_stale = True
+            except ValueError:
+                pass
+                
+        if is_stale and job["status"] != "processing":
+            old_data = job.get("data")
+            TEAM_YEARLY_JOBS[job_key] = {
+                "status": "processing", 
+                "data": old_data, 
+                "timestamp": datetime.now().isoformat(),
+                "done": 0,
+                "total": len(target_user_ids)
+            }
+            background_tasks.add_task(_run_team_yearly_kpi_job, db, request, user_id, job_key)
+            response.status_code = 202
+            return {
+                "status": "processing",
+                "message": "Sedang memperbarui perhitungan KPI tim...",
+                "partial_data": old_data or [],
+                "progress": 0,
+                "total": len(target_user_ids),
+            }
+        else:
+            if job["status"] == "processing":
+                response.status_code = 202
+                return {
+                    "status": "processing",
+                    "message": "Sedang menghitung data KPI tim...",
+                    "partial_data": job.get("data", []),
+                    "progress": job.get("done", 0),
+                    "total": job.get("total", 0),
+                }
+            elif job["status"] == "success":
+                data = job["data"]
+                return {"status": "success", "data": data}
+            elif job["status"] == "error":
+                del TEAM_YEARLY_JOBS[job_key]
+                return {"status": "error", "message": "Gagal menghitung KPI tim"}
+            
+    request = TimeRangeKPIRequest(from_date=from_date_str, to_date=to_date_str, user_ids=target_user_ids)
+    
+    # Start job
+    TEAM_YEARLY_JOBS[job_key] = {"status": "processing", "data": None, "timestamp": datetime.now().isoformat()}
+    background_tasks.add_task(_run_team_yearly_kpi_job, db, request, user_id, job_key)
+    
+    response.status_code = 202
+    return {"status": "processing", "message": "Sedang memulai perhitungan KPI tim..."}
 
 # ─────────────────────────────────────────────────────────────
 # TIME RANGE BASED KPI ENDPOINTS (NEW ARCHITECTURE)
 # ─────────────────────────────────────────────────────────────
+
+def _compute_company_maxima(db: Session, from_date: datetime, to_date: datetime, users=None) -> Dict[str, float]:
+    """
+    Calculate 5-pillar company maxima (raw SP, complexity SP, issues, founder credits)
+    for the given period by scanning the raw Jira data. When `users` is provided the
+    benchmark is scoped to that group's indicator matrix; otherwise it is company-wide.
+    Used only as a fallback when the precomputed CompanyMaxima row is missing.
+    """
+    req_year = from_date.year
+    if users is None:
+        users = db.query(models.User).filter(models.User.is_active == True).all()
+
+    from founder_engine import get_founder_credits_for_user
+    from feature_analyzer import stored_feature_weight
+
+    user_metrics = {}
+    for u in users:
+        raw_sp = 0.0
+        complexity_sp = 0.0
+        issues_cnt = 0
+
+        jira_ident = db.query(models.EmployeeIdentity).filter(
+            models.EmployeeIdentity.user_id == u.id,
+            models.EmployeeIdentity.source == 'jira'
+        ).first()
+
+        if jira_ident and jira_ident.external_user_id:
+            raw_issues = db.query(models.RawJiraIssue).filter(
+                models.RawJiraIssue.assignee_account_id == jira_ident.external_user_id
+            ).all()
+            for ji in raw_issues:
+                r_dt_naive = None
+                if ji.resolved_date:
+                    r_dt = ji.resolved_date
+                    r_dt_naive = r_dt.replace(tzinfo=None) if hasattr(r_dt, 'replace') else r_dt
+                elif ji.raw_data and 'fields' in ji.raw_data:
+                    fields = ji.raw_data['fields']
+                    r_date_str = fields.get('resolutiondate') or fields.get('updated') or fields.get('created')
+                    if r_date_str:
+                        try:
+                            clean_date = r_date_str.split('.')[0]
+                            if 'T' in clean_date:
+                                r_dt_naive = datetime.strptime(clean_date, "%Y-%m-%dT%H:%M:%S")
+                            else:
+                                r_dt = datetime.fromisoformat(clean_date.replace('Z', '+00:00'))
+                                r_dt_naive = r_dt.replace(tzinfo=None)
+                        except Exception:
+                            pass
+                if not r_dt_naive and (ji.updated_date or ji.created_date):
+                    r_dt = ji.updated_date or ji.created_date
+                    r_dt_naive = r_dt.replace(tzinfo=None) if hasattr(r_dt, 'replace') else r_dt
+
+                if r_dt_naive and from_date <= r_dt_naive <= to_date:
+                    try:
+                        status_lower = (ji.status or "").lower()
+                        if status_lower in ["done", "resolved", "ready to release", "ready for uat", "uat (user)", "ready for qa", "in qa", "in review"]:
+                            issues_cnt += 1
+                            sp = float(ji.story_points or 0.0)
+                            cw = stored_feature_weight(ji)
+                            raw_sp += sp
+                            complexity_sp += cw
+                    except Exception:
+                        pass
+
+        founder = get_founder_credits_for_user(u.id, target_year=req_year)
+
+        user_metrics[u.id] = {
+            "raw_sp": raw_sp,
+            "complexity_sp": complexity_sp,
+            "issues_cnt": issues_cnt,
+            "founder_sp": founder
+        }
+
+    maxima = {
+        "max_raw_sp": max((m["raw_sp"] for m in user_metrics.values()), default=1.0) or 1.0,
+        "max_complexity_sp": max((m["complexity_sp"] for m in user_metrics.values()), default=1.0) or 1.0,
+        "max_issues_cnt": max((m["issues_cnt"] for m in user_metrics.values()), default=1.0) or 1.0,
+        "max_founder_sp": max((m["founder_sp"] for m in user_metrics.values()), default=1.0) or 1.0,
+    }
+    logger.info(
+        f"Calculated 5-pillar maxima: raw_sp={maxima['max_raw_sp']}, "
+        f"complexity={maxima['max_complexity_sp']}, issues={maxima['max_issues_cnt']}, "
+        f"founder={maxima['max_founder_sp']}"
+    )
+    return maxima
+
+
+def _get_company_maxima(db: Session, from_date: datetime, to_date: datetime, group_id: Optional[str] = None) -> Dict[str, float]:
+    """Read persisted company maxima at the given scope (fast DB lookup),
+    falling back to a scan. group_id=None -> company-wide benchmark; a group_id
+    -> that group's own indicator-matrix benchmark.
+
+    The precompute job (scheduler / sync completion) keeps CompanyMaxima fresh,
+    so the expensive scan is only used as a safety net on cold data.
+    """
+    year = from_date.year
+    cache_key = f"{year}:{group_id or 'GLOBAL'}"
+    now = time.time()
+    hit = _company_maxima_cache.get(cache_key)
+    if hit and now - hit[0] < _COMPANY_MAXIMA_TTL:
+        return hit[1]
+
+    try:
+        from precompute_metrics import get_company_maxima
+        maxima = get_company_maxima(db, year, group_id=group_id)
+        if maxima:
+            return maxima
+    except Exception as e:
+        logger.warning(f"CompanyMaxima lookup failed, falling back to scan: {e}")
+
+    scope_users = None
+    if group_id:
+        scope_users = db.query(models.User).filter(
+            models.User.is_active == True,
+            models.User.group_id == group_id
+        ).all()
+    maxima = _compute_company_maxima(db, from_date, to_date, users=scope_users)
+    _company_maxima_cache[cache_key] = (now, maxima)
+    return maxima
+
 
 class TimeRangeKPIRequest(BaseModel):
     from_date: str  # YYYY-MM-DD
@@ -1167,76 +2662,14 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
             if not is_authorized:
                 # Can only query own data unless supervisor, admin, or manager
                 target_user_ids = [user_id]
-        
+                
+        # Fast-fail check removed so that users with 0 data still appear in the dashboard/subordinates list.
         # === PASS 1: Calculate 5-Pillar Team Maxima per requested period ===
-        req_year_pass1 = from_date.year
-        all_active_users = db.query(models.User).filter(models.User.is_active == True).all()
-        
-        user_p1_metrics = {}
-        from founder_engine import get_founder_credits_for_user
-        from feature_analyzer import calculate_feature_weight
-        
-        for u_p1 in all_active_users:
-            raw_sp_p1 = 0.0
-            complexity_sp_p1 = 0.0
-            issues_cnt_p1 = 0
-            
-            jira_id_p1 = db.query(models.EmployeeIdentity).filter(
-                models.EmployeeIdentity.user_id == u_p1.id,
-                models.EmployeeIdentity.source == 'jira'
-            ).first()
-            
-            if jira_id_p1 and jira_id_p1.external_user_id:
-                raw_j_p1 = db.query(models.RawJiraIssue).filter(
-                    models.RawJiraIssue.assignee_account_id == jira_id_p1.external_user_id
-                ).all()
-                for ji in raw_j_p1:
-                    r_dt_naive = None
-                    if ji.resolved_date:
-                        r_dt = ji.resolved_date
-                        r_dt_naive = r_dt.replace(tzinfo=None) if hasattr(r_dt, 'replace') else r_dt
-                    elif ji.raw_data and 'fields' in ji.raw_data:
-                        fields_p1 = ji.raw_data['fields']
-                        r_date_str = fields_p1.get('resolutiondate') or fields_p1.get('updated') or fields_p1.get('created')
-                        if r_date_str:
-                            try:
-                                clean_date = r_date_str.split('.')[0]
-                                if 'T' in clean_date:
-                                    r_dt_naive = datetime.strptime(clean_date, "%Y-%m-%dT%H:%M:%S")
-                                else:
-                                    r_dt = datetime.fromisoformat(clean_date.replace('Z', '+00:00'))
-                                    r_dt_naive = r_dt.replace(tzinfo=None)
-                            except Exception:
-                                pass
-                    if not r_dt_naive and (ji.updated_date or ji.created_date):
-                        r_dt = ji.updated_date or ji.created_date
-                        r_dt_naive = r_dt.replace(tzinfo=None) if hasattr(r_dt, 'replace') else r_dt
-                        
-                    if r_dt_naive and from_date <= r_dt_naive <= to_date:
-                        try:
-                            status_lower = (ji.status or "").lower()
-                            if status_lower in ["done", "resolved", "ready to release", "ready for uat", "uat (user)", "ready for qa", "in qa"]:
-                                issues_cnt_p1 += 1
-                                sp = float(ji.story_points or 0.0)
-                                cw = calculate_feature_weight(ji.raw_data or {})
-                                raw_sp_p1 += sp
-                                complexity_sp_p1 += cw
-                        except Exception:
-                            pass
-                            
-            founder_p1 = get_founder_credits_for_user(u_p1.id, target_year=req_year_pass1)
-            
-            user_p1_metrics[u_p1.id] = {
-                "raw_sp": raw_sp_p1,
-                "complexity_sp": complexity_sp_p1,
-                "issues_cnt": issues_cnt_p1,
-                "founder_sp": founder_p1
-            }
-            
-        max_raw_sp = max((m["raw_sp"] for m in user_p1_metrics.values()), default=1.0) or 1.0
-        max_complexity_sp = max((m["complexity_sp"] for m in user_p1_metrics.values()), default=1.0) or 1.0
-        max_issues_cnt = max((m["issues_cnt"] for m in user_p1_metrics.values()), default=1.0) or 1.0
-        max_founder_sp = max((m["founder_sp"] for m in user_p1_metrics.values()), default=1.0) or 1.0
+        maxima = _get_company_maxima(db, from_date, to_date)
+        max_raw_sp = maxima["max_raw_sp"]
+        max_complexity_sp = maxima["max_complexity_sp"]
+        max_issues_cnt = maxima["max_issues_cnt"]
+        max_founder_sp = maxima["max_founder_sp"]
         global_max_sp = max_raw_sp
             
         logger.info(f"Calculated 5-pillar maxima: raw_sp={max_raw_sp}, complexity={max_complexity_sp}, issues={max_issues_cnt}, founder={max_founder_sp}")
@@ -1247,6 +2680,14 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
             user = db.query(models.User).filter(models.User.id == target_user_id).first()
             if not user:
                 continue
+
+            # Dynamic indicator matrix: resolve the benchmark from the user's own
+            # group maxima (group-level relative scoring), falling back to company-wide.
+            user_maxima = _get_company_maxima(db, from_date, to_date, group_id=user.group_id) if user.group_id else maxima
+            umax_raw_sp = user_maxima["max_raw_sp"]
+            umax_complexity_sp = user_maxima["max_complexity_sp"]
+            umax_issues_cnt = user_maxima["max_issues_cnt"]
+            umax_founder_sp = user_maxima["max_founder_sp"]
             
             # Get daily KPI for the time range
             daily_kpis = db.query(models.KPIEmployeeDaily).filter(
@@ -1392,13 +2833,13 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
             raw_jira_sp_sum = 0.0
             complexity_sp_sum = 0.0
             completed_tasks_list = []
-            from feature_analyzer import calculate_feature_weight, analyze_multi_factor
-            
+            from feature_analyzer import stored_feature_weight, stored_feature_detail
+
             if jira_ident and jira_ident.external_user_id:
                 all_raw_jiras = db.query(models.RawJiraIssue).filter(
                     models.RawJiraIssue.assignee_account_id == jira_ident.external_user_id
                 ).all()
-                
+
                 for ji in all_raw_jiras:
                     r_dt_naive = None
                     if ji.resolved_date:
@@ -1420,18 +2861,18 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
                     if not r_dt_naive and (ji.updated_date or ji.created_date):
                         r_dt = ji.updated_date or ji.created_date
                         r_dt_naive = r_dt.replace(tzinfo=None) if hasattr(r_dt, 'replace') else r_dt
-                        
+
                     if r_dt_naive and from_date <= r_dt_naive <= to_date:
                         try:
                             status_lower = (ji.status or "").lower()
-                            if status_lower in ["done", "resolved", "ready to release", "ready for uat", "uat (user)", "ready for qa", "in qa"]:
+                            if status_lower in ["done", "resolved", "ready to release", "ready for uat", "uat (user)", "ready for qa", "in qa", "in review"]:
                                 raw_jira_issues_count += 1
                                 sp = float(ji.story_points or 0.0)
-                                cw = calculate_feature_weight(ji.raw_data or {})
+                                cw = stored_feature_weight(ji)
                                 raw_jira_sp_sum += sp
                                 complexity_sp_sum += cw
-                                
-                                mf_res = analyze_multi_factor(ji.raw_data or {})
+
+                                mf_res = stored_feature_detail(ji)
                                 completed_tasks_list.append({
                                     "key": ji.issue_key,
                                     "summary": ji.raw_data.get('fields', {}).get('summary', ji.issue_key),
@@ -1489,10 +2930,10 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
                 "late_count": total_late_count,
                 "late_percentage": late_pct,
                 "founder_sp_credit": founder_sp_credit,
-                "max_raw_sp": max_raw_sp,
-                "max_complexity_sp": max_complexity_sp,
-                "max_issues_cnt": max_issues_cnt,
-                "max_founder_sp": max_founder_sp
+                "max_raw_sp": umax_raw_sp,
+                "max_complexity_sp": umax_complexity_sp,
+                "max_issues_cnt": umax_issues_cnt,
+                "max_founder_sp": umax_founder_sp
             }
             
             engine_result = YearlyKPIEngine.calculate_yearly_kpi(
@@ -1540,6 +2981,12 @@ def get_time_range_kpi(request: TimeRangeKPIRequest, user_id: str, db: Session =
                 "full_name": user.full_name,
                 "nik": user.nik,
                 "email": user.email,
+                "division_id": user.division_id,
+                "division_name": user.division.name if user.division else None,
+                "group_id": user.group_id,
+                "group_name": user.group_name,
+                "supervisor_id": user.supervisor_id,
+                "has_subordinates": user.has_subordinates,
                 "completed_tasks": completed_tasks_list,
                 "period": {
                     "from_date": from_date.strftime("%Y-%m-%d"),
@@ -1703,6 +3150,7 @@ def trigger_comprehensive_sync(request: ComprehensiveSyncRequest, background_tas
                 # Invalidate cache after comprehensive sync
                 try:
                     FastAPICache.clear()
+                    _company_maxima_cache.clear()
                     logger.info("Cache invalidated after comprehensive sync")
                 except Exception as e:
                     logger.warning(f"Failed to invalidate cache: {e}")
@@ -1712,8 +3160,12 @@ def trigger_comprehensive_sync(request: ComprehensiveSyncRequest, background_tas
                 
             except Exception as e:
                 logger.error(f"Error in comprehensive sync: {str(e)}")
-                mark_job_failed(_db, j_id, str(e))
+                _safe_mark_job_failed(_db, j_id, str(e))
         finally:
+            try:
+                _db.rollback()
+            except Exception:
+                pass
             _db.close()
     
     background_tasks.add_task(run_comprehensive_sync, job_id, target_user_ids, from_date, to_date)
@@ -1827,3 +3279,210 @@ def get_user_activities(user_id: str, from_date: str, to_date: str, db: Session 
         "total_activities": len(activity_list),
         "activities": activity_list
     }
+
+# ─── DB Maintenance & Cleanup ───────────────────────────────────────────────────
+
+@app.get("/api/v1/health")
+def health_check():
+    """Simple health check that doesn't need DB - useful when DB is down"""
+    return {"status": "ok", "timestamp": datetime.now().isoformat()}
+
+@app.get("/api/v1/db/stats")
+def db_stats(db: Session = Depends(get_db)):
+    """Get table row counts to diagnose disk usage"""
+    try:
+        stats = {}
+        tables = [
+            "raw_jira_issues", "activities", "raw_jira_issue_history",
+            "raw_jira_worklogs", "attendance_records", "kpi_employee_daily",
+            "sprint_kpi_scores", "raw_metrics_data", "sync_jobs"
+        ]
+        for t in tables:
+            try:
+                result = db.execute(text(f"SELECT COUNT(*) FROM {t}"))
+                stats[t] = result.scalar()
+            except Exception:
+                stats[t] = "table not found"
+        return {"status": "ok", "table_counts": stats}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+@app.post("/api/v1/db/cleanup")
+def db_cleanup(db: Session = Depends(get_db)):
+    """
+    Emergency cleanup: remove duplicate raw_jira_issues, 
+    truncate old sync_jobs, and reclaim disk space.
+    """
+    results = {}
+    
+    # 1. Remove duplicate raw_jira_issues (keep the newest by created_at)
+    try:
+        dup_count = db.execute(text("""
+            DELETE FROM raw_jira_issues 
+            WHERE id NOT IN (
+                SELECT DISTINCT ON (issue_key) id 
+                FROM raw_jira_issues 
+                ORDER BY issue_key, created_at DESC
+            )
+        """))
+        db.commit()
+        results["raw_jira_issues_duplicates_removed"] = dup_count.rowcount
+    except Exception as e:
+        db.rollback()
+        # Try SQLite-compatible version
+        try:
+            dup_count = db.execute(text("""
+                DELETE FROM raw_jira_issues 
+                WHERE rowid NOT IN (
+                    SELECT MIN(rowid) FROM raw_jira_issues GROUP BY issue_key
+                )
+            """))
+            db.commit()
+            results["raw_jira_issues_duplicates_removed"] = dup_count.rowcount
+        except Exception as e2:
+            db.rollback()
+            results["raw_jira_issues_cleanup"] = f"skipped: {str(e2)}"
+    
+    # 2. Remove duplicate activities (keep newest per user+reference_id+source)
+    try:
+        dup_act = db.execute(text("""
+            DELETE FROM activities 
+            WHERE id NOT IN (
+                SELECT DISTINCT ON (user_id, source, reference_id) id 
+                FROM activities 
+                ORDER BY user_id, source, reference_id, created_at DESC
+            )
+        """))
+        db.commit()
+        results["activities_duplicates_removed"] = dup_act.rowcount
+    except Exception as e:
+        db.rollback()
+        try:
+            dup_act = db.execute(text("""
+                DELETE FROM activities 
+                WHERE rowid NOT IN (
+                    SELECT MIN(rowid) FROM activities 
+                    GROUP BY user_id, source, activity_type, reference_id
+                )
+            """))
+            db.commit()
+            results["activities_duplicates_removed"] = dup_act.rowcount
+        except Exception as e2:
+            db.rollback()
+            results["activities_cleanup"] = f"skipped: {str(e2)}"
+    
+    # 3. Cleanup old completed sync_jobs (keep last 50)
+    try:
+        old_jobs = db.execute(text("""
+            DELETE FROM sync_jobs 
+            WHERE id NOT IN (
+                SELECT id FROM sync_jobs ORDER BY created_at DESC LIMIT 50
+            )
+        """))
+        db.commit()
+        results["old_sync_jobs_removed"] = old_jobs.rowcount
+    except Exception as e:
+        db.rollback()
+        results["sync_jobs_cleanup"] = f"skipped: {str(e)}"
+    
+    # 4. Cleanup old raw_jira_issue_history (keep last 30 days)
+    try:
+        old_hist = db.execute(text("""
+            DELETE FROM raw_jira_issue_history 
+            WHERE created_at < NOW() - INTERVAL '30 days'
+        """))
+        db.commit()
+        results["old_history_removed"] = old_hist.rowcount
+    except Exception as e:
+        db.rollback()
+        results["history_cleanup"] = f"skipped: {str(e)}"
+    
+    # 5. Try VACUUM to reclaim disk space (Postgres only, won't work in transaction)
+    try:
+        db.commit()  # ensure no open transaction
+        # Need a separate connection for VACUUM
+        from database import engine
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            conn.execute(text("VACUUM FULL"))
+        results["vacuum"] = "completed"
+    except Exception as e:
+        results["vacuum"] = f"skipped: {str(e)}"
+    
+    # Get updated stats
+    try:
+        final_stats = {}
+        for t in ["raw_jira_issues", "activities", "sync_jobs"]:
+            try:
+                result = db.execute(text(f"SELECT COUNT(*) FROM {t}"))
+                final_stats[t] = result.scalar()
+            except Exception:
+                pass
+        results["final_counts"] = final_stats
+    except Exception:
+        pass
+    
+    return {"status": "cleanup_completed", "results": results}
+
+@app.post("/api/v1/db/truncate-raw-data")
+def truncate_raw_data(db: Session = Depends(get_db)):
+    """
+    NUCLEAR OPTION: Truncate raw_jira_issues, raw_jira_issue_history, 
+    and raw_jira_worklogs to free maximum disk space.
+    The data will be re-synced on next Jira sync.
+    """
+    results = {}
+    
+    for table in ["raw_jira_issue_history", "raw_jira_worklogs", "raw_jira_issues", "activities", "sync_jobs"]:
+        try:
+            # We can't use COUNT if the DB is fully locked/hanging, so just TRUNCATE directly
+            db.execute(text(f"TRUNCATE TABLE {table} CASCADE"))
+            db.commit()
+            results[table] = {"truncated": True}
+        except Exception as e:
+            db.rollback()
+            results[table] = {"error": str(e)}
+    
+    # VACUUM to reclaim space
+    try:
+        from database import engine
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            conn.execute(text("VACUUM FULL"))
+        results["vacuum"] = "completed"
+    except Exception as e:
+        results["vacuum"] = f"skipped: {str(e)}"
+    
+    return {"status": "truncated", "results": results}
+
+@app.post("/api/v1/db/kill-locks")
+def kill_locks(db: Session = Depends(get_db)):
+    """Kill all other Postgres connections to release locks."""
+    try:
+        db.execute(text("""
+            SELECT pg_terminate_backend(pg_stat_activity.pid)
+            FROM pg_stat_activity
+            WHERE pg_stat_activity.datname = current_database()
+              AND pid <> pg_backend_pid();
+        """))
+        db.commit()
+        return {"status": "locks_killed"}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+
+# ==========================================
+# NOTIFICATION ENDPOINTS
+# ==========================================
+
+@app.get('/api/v1/notifications')
+def get_notifications(user_id: str = Query(...), db: Session = Depends(get_db)):
+    notifs = db.query(models.Notification).filter(models.Notification.user_id == user_id).order_by(models.Notification.created_at.desc()).limit(20).all()
+    return {'status': 'success', 'data': [{'id': n.id, 'title': n.title, 'message': n.message, 'type': n.type, 'is_read': n.is_read, 'created_at': n.created_at.isoformat()} for n in notifs]}
+
+@app.put('/api/v1/notifications/{notif_id}/read')
+def read_notification(notif_id: int, db: Session = Depends(get_db)):
+    notif = db.query(models.Notification).filter(models.Notification.id == notif_id).first()
+    if notif:
+        notif.is_read = True
+        db.commit()
+    return {'status': 'success'}
+

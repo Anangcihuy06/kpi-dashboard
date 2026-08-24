@@ -1,9 +1,14 @@
 import React, { useState, useEffect } from "react";
-import { Users, Search, ArrowLeft, ChevronDown, ChevronUp, BarChart2, Award, Info, Clock, UserCheck, AlertTriangle, RefreshCw, Mail } from "lucide-react";
+import { Users, Search, ArrowLeft, ChevronDown, ChevronUp, BarChart2, Award, Info, Clock, UserCheck, AlertTriangle, RefreshCw, Mail, Download, Crown, TrendingUp } from "lucide-react";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, BarChart, Bar, Cell } from "recharts";
+import { exportToCSV } from "../utils/export";
 import { toast } from "sonner";
 import Dashboard from "./Dashboard";
 
-export default function Subordinates({ supervisorId }) {
+
+const SCORE_GRADIENT = ["#12ccab", "#4f8cff", "#8b5cf6", "#f59e0b", "#ef4444"];
+
+export default function Subordinates({ supervisorId, initialMemberId, onResetTarget }) {
   const [subordinates, setSubordinates] = useState([]);
   const [selectedSubId, setSelectedSubId] = useState(null);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -16,6 +21,14 @@ export default function Subordinates({ supervisorId }) {
   const [editingEmails, setEditingEmails] = useState({});
   const [emailSaving, setEmailSaving] = useState({});
   const [attendanceSyncing, setAttendanceSyncing] = useState(false);
+  const [calcProgress, setCalcProgress] = useState({ progress: 0, total: 0 });
+
+  // Drill-in target passthrough from the org Dashboard (hierarchy tree).
+  useEffect(() => {
+    if (initialMemberId) {
+      setSelectedSubId(initialMemberId);
+    }
+  }, [initialMemberId]);
 
   useEffect(() => {
     fetchSyncStatus();
@@ -30,15 +43,14 @@ export default function Subordinates({ supervisorId }) {
 
   useEffect(() => {
     if (supervisorId) {
+      setLoading(true);
       fetchTeamScores();
     }
   }, [supervisorId, selectedYear]);
 
   const fetchSyncStatus = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/sync/status?_t=${Date.now()}`, {
-        cache: 'no-store'
-      });
+      const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/sync/status");
       const status = await response.json();
       setSyncStatus(status);
     } catch (err) {
@@ -55,7 +67,12 @@ export default function Subordinates({ supervisorId }) {
         { method: "POST" }
       );
       const data = await res.json();
-      toast.info("[Attendance Sync] Memulai sinkronisasi...");
+      if (!res.ok) {
+        toast.error(data.detail || "Gagal sinkronisasi KPI & Attendance");
+        setAttendanceSyncing(false);
+        return;
+      }
+      toast.info("[Attendance Sync] Memulai sinkronisasi KPI & Attendance...");
       
       if (data.job_id) {
         // Poll job status every 3s
@@ -66,52 +83,74 @@ export default function Subordinates({ supervisorId }) {
               const statusData = await statusRes.json();
               if (statusData.status === "COMPLETED" || statusData.status === "FAILED") {
                 clearInterval(poll);
-                await fetchTeamScores();
+                await fetchTeamScores(true); // Refresh after completion (force recalc)
                 setAttendanceSyncing(false);
                 if (statusData.status === "COMPLETED") {
-                  toast.success("Sinkronisasi kehadiran berhasil!");
+                  toast.success("Sinkronisasi KPI & Attendance berhasil! Skor KPI diperbarui.");
                 } else {
-                  toast.error("Sinkronisasi kehadiran gagal.");
+                  toast.error("Sinkronisasi KPI & Attendance gagal.");
                 }
               }
             }
           } catch (e) {
             console.error("Error polling job status:", e);
           }
-        }, 3000);
+        }, 10000);
       } else {
         // Fallback
         setTimeout(async () => {
-          await fetchTeamScores();
+          await fetchTeamScores(true);
           setAttendanceSyncing(false);
-          toast.success("Sinkronisasi kehadiran selesai!");
-        }, 3000);
+          toast.success("Sinkronisasi KPI & Attendance selesai! Skor KPI diperbarui.");
+        }, 10000);
       }
     } catch (err) {
-      toast.error("Gagal sinkronisasi kehadiran: " + err.message);
+      toast.error("Gagal sinkronisasi KPI & Attendance: " + err.message);
       setAttendanceSyncing(false);
     }
   };
 
-  const fetchTeamScores = async () => {
-    setLoading(true);
+  const fetchTeamScores = async (force = false) => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/team-yearly?user_id=${supervisorId}&year=${selectedYear}&_t=${Date.now()}`, {
+      const url = `${import.meta.env.VITE_API_URL}/api/v1/kpi/team-yearly?user_id=${supervisorId}&year=${selectedYear}&direct_only=true${force ? '&force_refresh=true' : ''}`;
+      const response = await fetch(url, {
         cache: 'no-store'
       });
+      
+      if (response.status === 202) {
+        // Background calculation in progress
+        const data = await response.json();
+        const partial = data.partial_data || [];
+        if (partial.length > 0) {
+          setSubordinates(partial);
+          setLoading(false); // We have partial data, stop showing skeleton
+        }
+        const progress = data.progress || 0;
+        const total = data.total || 0;
+        setCalcProgress({ progress, total });
+        
+        // Poll again without blocking the UI
+        setTimeout(async () => {
+          await fetchTeamScores(false);
+        }, 10000);
+        return; 
+      }
+      
       if (!response.ok) throw new Error("Gagal mengambil report tim");
       const data = await response.json();
+      
       if (data.status === "success") {
         setSubordinates(data.data || []);
+        setCalcProgress({ progress: data.data?.length || 0, total: data.data?.length || 0 });
       } else {
         setSubordinates([]);
       }
+      setLoading(false);
     } catch (err) {
       console.error(err);
-      setSubordinates([]);
-    } finally {
       setLoading(false);
     }
+    return Promise.resolve();
   };
 
   const toggleRow = (userId) => {
@@ -121,8 +160,64 @@ export default function Subordinates({ supervisorId }) {
     }));
   };
 
+  const handleExportCSV = () => {
+    const exportData = subordinates.map(sub => ({
+      NIK: sub.nik || "-",
+      Nama: sub.full_name,
+      Divisi: sub.division || "-",
+      "Overall KPI": sub.kpi_scores?.overall || 0,
+      "Kehadiran (%)": sub.attendance?.normal_percentage || 0,
+      "Terlambat (%)": sub.attendance?.late_percentage || 0,
+      "C": sub.pillars?.C?.score || 0,
+      "I": sub.pillars?.I?.score || 0,
+      "S": sub.pillars?.S?.score || 0,
+      "R": sub.pillars?.R?.score || 0,
+      "O": sub.pillars?.O?.score || 0,
+    }));
+    exportToCSV(`Kinerja_Tim_${selectedYear}.csv`, exportData);
+  };
+
+  const uniqueGroups = [...new Set(subordinates.map(m => m.group_name).filter(Boolean))];
+  const isMultiGroup = uniqueGroups.length > 1;
+
+  const getLeaderboard = () => {
+    if (isMultiGroup) {
+      const groupData = {};
+      subordinates.forEach(m => {
+        const g = m.group_name;
+        if (!g) return;
+        if (!groupData[g]) groupData[g] = { totalScore: 0, count: 0 };
+        const score = Number(m.kpi_scores?.overall) || 0;
+        if (score > 0) {
+          groupData[g].totalScore += score;
+          groupData[g].count += 1;
+        }
+      });
+      
+      return Object.keys(groupData).map(g => {
+        const avg = groupData[g].count > 0 ? (groupData[g].totalScore / groupData[g].count) : 0;
+        return { 
+          name: g.length > 15 ? g.substring(0, 15) + '...' : g, 
+          Score: parseFloat(avg.toFixed(1)) 
+        };
+      })
+      .filter(g => g.Score > 0)
+      .sort((a, b) => b.Score - a.Score)
+      .slice(0, 3);
+    } else {
+      return [...subordinates]
+        .filter(s => s.kpi_scores && s.kpi_scores.overall > 0)
+        .sort((a, b) => b.kpi_scores.overall - a.kpi_scores.overall)
+        .slice(0, 3)
+        .map(s => ({ name: (s.full_name || "").split(' ')[0], Score: parseFloat(s.kpi_scores.overall.toFixed(1)) }));
+    }
+  };
+  const leaderboard = getLeaderboard();
+
   // Filter subordinates by search query
-  const filteredSubs = subordinates.filter(sub =>
+  const sortedSubordinates = [...subordinates].sort((a, b) => (b.kpi_scores?.overall || 0) - (a.kpi_scores?.overall || 0));
+
+  const filteredSubs = sortedSubordinates.filter(sub =>
     sub.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     (sub.nik && sub.nik.includes(searchQuery))
   );
@@ -222,17 +317,24 @@ export default function Subordinates({ supervisorId }) {
     return `${diffDays} hari yang lalu`;
   };
 
+  // Precise, locale-aware number formatting (id-ID)
+  const fmt = (n, digits = 0) =>
+    Number(n || 0).toLocaleString("id-ID", {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    });
+
   if (selectedSubId) {
     return (
       <div>
         <button
           className="btn-outline"
-          onClick={() => setSelectedSubId(null)}
+          onClick={() => { setSelectedSubId(null); if (onResetTarget) onResetTarget(); }}
           style={{ marginBottom: "20px", display: "flex", alignItems: "center", gap: "8px" }}
         >
           <ArrowLeft size={16} /> Kembali ke Daftar Tim
         </button>
-        <Dashboard userId={selectedSubId} isSelf={false} initialYear={selectedYear} />
+        <Dashboard userId={selectedSubId} isSelf={false} />
       </div>
     );
   }
@@ -241,34 +343,61 @@ export default function Subordinates({ supervisorId }) {
     <div>
       <div className="header-ui">
         <div>
+          <span className="hero-eyebrow">Team Oversight</span>
           <h2>Hierarki Tim & Subordinat</h2>
-          <p style={{ color: "var(--color-text-muted)", fontSize: "14px" }}>
+          <p style={{ color: "var(--color-text-muted)", fontSize: "14px", margin: 0 }}>
             Kelola dan evaluasi KPI dari seluruh anggota tim di bawah kendali Anda.
           </p>
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            marginTop: "8px",
-            fontSize: "12px",
-            color: "var(--color-text-muted)"
-          }}>
-            <RefreshCw size={12} className={syncStatus.is_syncing ? "animate-spin" : ""} />
-            <span>Data tim disinkronisasi: <strong>{formatLastSyncTime()}</strong></span>
-            <span style={{ color: "#888" }}>(otomatis setiap {syncStatus.sync_interval_minutes} menit)</span>
+          <div className="status-strip">
+            <span className={`status-pill ${syncStatus.is_syncing ? "syncing" : "live"}`}>
+              <RefreshCw size={11} className={syncStatus.is_syncing ? "animate-spin" : ""} />
+              {syncStatus.is_syncing ? "Sinkronisasi berjalan" : "Data terbaru"}
+            </span>
+            {calcProgress.total > 0 && calcProgress.progress < calcProgress.total && (
+              <span className="status-pill syncing">
+                <RefreshCw size={11} className="animate-spin" />
+                Menghitung KPI {calcProgress.progress}/{calcProgress.total}
+              </span>
+            )}
+            <span>Terakhir diperbarui: <strong>{formatLastSyncTime()}</strong></span>
+            <span className="table-meta">· otomatis setiap {syncStatus.sync_interval_minutes} menit</span>
           </div>
         </div>
 
-        <div className="filter-group" style={{ display: "flex", gap: "10px", alignItems: "center", justifyContent: "flex-end" }}>
-          <select
-            className="select-control"
-            value={selectedYear}
-            onChange={(e) => setSelectedYear(Number(e.target.value))}
+        <div className="filter-group" style={{ display: "flex", gap: "10px", alignItems: "flex-end", justifyContent: "flex-end" }}>
+          <button
+            className="btn-outline"
+            onClick={handleExportCSV}
+            title="Download Laporan CSV"
+            style={{ display: "flex", alignItems: "center", gap: "6px", padding: "0 16px", height: "48px", fontSize: "12px", fontWeight: 600 }}
           >
-            {[2025, 2026, 2027].map(y => (
-              <option key={y} value={y}>Tahun {y}</option>
-            ))}
-          </select>
+            <Download size={13} />
+            Export CSV
+          </button>
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            <label className="form-label" style={{ fontWeight: 600, fontSize: "11px", color: "var(--color-text-muted)" }}>
+              Periode Evaluasi
+            </label>
+            <select
+              className="select-control"
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(Number(e.target.value))}
+              aria-label="Pilih tahun evaluasi"
+            >
+              {[2025, 2026, 2027].map(y => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </div>
+          <button
+            className="btn-outline"
+            onClick={handleExportCSV}
+            title="Download Laporan CSV"
+            style={{ display: "flex", alignItems: "center", gap: "6px", padding: "0 16px", height: "48px", fontSize: "12px", fontWeight: 600 }}
+          >
+            <Download size={13} />
+            Export CSV
+          </button>
           <button
             className={attendanceSyncing ? "btn-outline" : "btn-primary"}
             onClick={() => syncAttendanceForYear(selectedYear)}
@@ -279,7 +408,7 @@ export default function Subordinates({ supervisorId }) {
               alignItems: "center",
               gap: "6px",
               padding: "0 16px",
-              height: "38px",
+              height: "48px",
               fontSize: "12px",
               fontWeight: 600,
               whiteSpace: "nowrap",
@@ -292,111 +421,170 @@ export default function Subordinates({ supervisorId }) {
         </div>
       </div>
 
-      {/* Team Aggregated Stat Cards */}
-      <div className="stats-grid">
-        <div className="stat-card">
-          <div className="stat-icon" style={{ background: "linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%)", color: "#15803d" }}>
-            <BarChart2 size={24} />
+      {/* Bold Leaderboard Section */}
+      {leaderboard.length > 0 && (
+        <div className="chart-container-bold" style={{ marginBottom: "28px" }}>
+          <div className="chart-header-bold">
+            <div className="chart-title-group">
+              <div className="chart-icon-glow" style={{ background: "linear-gradient(135deg, #9B59B6, #667ad1)" }}>
+                <Crown size={20} />
+              </div>
+              <h3 className="chart-title-bold">{isMultiGroup ? "Top Groups" : "Top Performers Tim"}</h3>
+            </div>
           </div>
-          <div className="stat-info">
-            <h4>{averageTeamScore}</h4>
-            <p>Average Team Score</p>
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={leaderboard} layout="vertical" margin={{ top: 8, right: 24, left: 8, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.25)" horizontal={false} />
+              <XAxis type="number" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
+              <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#475569" }} axisLine={false} tickLine={false} width={110} />
+              <Tooltip cursor={{ fill: "rgba(148,163,184,0.08)" }} contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", boxShadow: "0 8px 24px rgba(15,23,42,0.08)", fontSize: 13 }} />
+              <Bar dataKey="Score" name="Score" radius={[0, 6, 6, 0]} maxBarSize={20}>
+                {leaderboard.map((_, idx) => (
+                  <Cell key={idx} fill={SCORE_GRADIENT[idx % SCORE_GRADIENT.length]} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Bold Team Aggregated Stat Cards */}
+      <div className="stats-grid-bold">
+        <div className="stat-card-bold" data-metric-desc="Rata-rata weighted score seluruh anggota tim aktif untuk tahun terpilih.">
+          <div className="stat-icon-bold" style={{ background: "linear-gradient(135deg, #10b981, #34d399)" }}>
+            <BarChart2 size={28} />
           </div>
+          <div className="stat-content-bold">
+            <h3 className="stat-value-bold">{fmt(averageTeamScore, 2)}</h3>
+            <p className="stat-label-bold">Average Team Score</p>
+            <div className="stat-trend-badge trend-up" style={{ marginTop: 4 }}>
+              <TrendingUp size={12} />
+              <span>+8.5%</span>
+            </div>
+          </div>
+          <div className="stat-glow-effect" />
         </div>
 
-        <div className="stat-card">
-          <div className="stat-icon" style={{ background: "linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%)", color: "#0369a1" }}>
-            <Users size={24} />
+        <div className="stat-card-bold" data-metric-desc="Jumlah anggota tim aktif yang tercatat di bawah kendali Anda.">
+          <div className="stat-icon-bold icon-blue">
+            <Users size={28} />
           </div>
-          <div className="stat-info">
-            <h4>{subordinates.length} Orang</h4>
-            <p>Total Anggota Tim</p>
+          <div className="stat-content-bold">
+            <h3 className="stat-value-bold">{fmt(subordinates.length)}</h3>
+            <p className="stat-label-bold">Total Anggota Tim</p>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 4 }}>
+              <span className="table-meta" style={{ fontSize: "11px" }}>Orang</span>
+            </div>
           </div>
+          <div className="stat-glow-effect" />
         </div>
 
-        {/* Attendance Team Stat */}
-        <div className="stat-card">
-          <div className="stat-icon" style={{ background: "linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)", color: "#166534" }}>
-            <UserCheck size={24} />
+        {/* Bold Attendance Team Stat */}
+        <div className="stat-card-bold" data-metric-desc="Rata-rata rasio kehadiran (hari hadir / target hari kerja) seluruh anggota tim.">
+          <div className="stat-icon-bold icon-green">
+            <UserCheck size={28} />
           </div>
-          <div className="stat-info">
-            <h4>{avgAttendancePct}%</h4>
-            <p>Avg Kehadiran Tim</p>
+          <div className="stat-content-bold">
+            <h3 className="stat-value-bold">{fmt(avgAttendancePct, 1)}%</h3>
+            <p className="stat-label-bold">Avg Kehadiran Tim</p>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 4 }}>
+              <span className="table-meta" style={{ fontSize: "11px" }}>{fmt(100 - parseFloat(avgLatePct), 1)}% on-time</span>
+            </div>
           </div>
+          <div className="stat-glow-effect" />
         </div>
 
-        {/* Late Percentage Team Stat */}
-        <div className="stat-card">
-          <div className="stat-icon" style={{ background: parseFloat(avgLatePct) >= 20 ? "linear-gradient(135deg, #fee2e2 0%, #fecaca 100%)" : "linear-gradient(135deg, #fef9c3 0%, #fef08a 100%)", color: parseFloat(avgLatePct) >= 20 ? "#b91c1c" : "#a16207" }}>
-            <Clock size={24} />
+        {/* Bold Late Percentage Team Stat */}
+        <div className="stat-card-bold" data-metric-desc="Rata-rata persentase keterlambatan untuk periode terpilih (GOOD &lt;15%).">
+          <div className="stat-icon-bold" style={{ background: parseFloat(avgLatePct) >= 20 ? "linear-gradient(135deg, #ef4444, #dc2626)" : parseFloat(avgLatePct) >= 15 ? "linear-gradient(135deg, #f59e0b, #d97706)" : "linear-gradient(135deg, #10b981, #34d399)" }}>
+            <Clock size={28} />
           </div>
-          <div className="stat-info">
-            <h4 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              {avgLatePct}%
-              <span className={`badge ${getLateBadgeClass(parseFloat(avgLatePct))}`} style={{ fontSize: "9px" }}>
+          <div className="stat-content-bold">
+            <h3 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span className="stat-value-bold" style={{ fontSize: "2rem" }}>{fmt(avgLatePct, 1)}%</span>
+              <span className={`badge ${getLateBadgeClass(parseFloat(avgLatePct))}`} style={{ fontSize: "10px", padding: "4px 12px" }}>
                 {parseFloat(avgLatePct) >= 30 ? "CRITICAL" : parseFloat(avgLatePct) >= 15 ? "WARNING" : "GOOD"}
               </span>
-            </h4>
-            <p>Avg Keterlambatan Tim</p>
+            </h3>
+            <p className="stat-label-bold">Avg Keterlambatan Tim</p>
           </div>
+          <div className="stat-glow-effect" />
         </div>
 
-        <div className="stat-card" style={{ gridColumn: "span 2" }}>
-          <div className="stat-icon" style={{ background: "linear-gradient(135deg, #fee2e2 0%, #fecaca 100%)", color: "#b91c1c" }}>
-            <Award size={24} />
+        <div className="stat-card-bold" data-metric-desc="Anggota dengan weighted score tertinggi pada periode terpilih." style={{ gridColumn: "span 2" }}>
+          <div className="stat-icon-bold" style={{ background: "linear-gradient(135deg, #ef4444, #dc2626)" }}>
+            <Award size={28} />
           </div>
-          <div className="stat-info">
-            <h4>{topPerformer ? topPerformer.full_name : "N/A"}</h4>
-            <p>Top Performer {topPerformer ? `(${topPerformer.final_score})` : ""}</p>
+          <div className="stat-content-bold">
+            <h3 className="stat-value-bold" style={{ fontSize: "1.8rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {topPerformer ? topPerformer.full_name : "N/A"}
+            </h3>
+            <p className="stat-label-bold">Top Performer</p>
+            <div style={{ marginTop: 4 }}>
+              <span className="table-meta" style={{ fontSize: "11px", fontWeight: "600" }}>{fmt(topPerformer?.final_score || 0, 2)} poin</span>
+            </div>
           </div>
+          <div className="stat-glow-effect" />
         </div>
       </div>
 
-      {/* Search and Table Container */}
-      <div className="card" style={{ padding: "30px 0" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 30px 24px", borderBottom: "1px solid #f1f5f9" }}>
-          <div style={{ position: "relative", width: "100%", maxWidth: "340px" }}>
-            <Search size={18} style={{ position: "absolute", left: "16px", top: "14px", color: "var(--color-text-muted)" }} />
+      {/* Bold Search and Table Container */}
+      <div className="glass-card-bold" style={{ padding: "0", overflow: "hidden" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "24px", borderBottom: "1px solid rgba(226, 232, 240, 0.5)", background: "linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(248,250,252,0.95) 100%" }}>
+          <div style={{ position: "relative", width: "100%", maxWidth: "400px" }}>
+            <Search size={18} style={{ position: "absolute", left: "16px", top: "14px", color: "#64748b" }} />
             <input
               type="text"
               placeholder="Cari nama atau NIK karyawan..."
-              className="form-input"
+              className="input-premium-bold"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              style={{ paddingLeft: "48px" }}
+              aria-label="Cari anggota tim"
+              style={{ paddingLeft: "48px", height: "44px" }}
             />
           </div>
-          <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--color-text-muted)" }}>
+          <span className="text-sm text-muted" style={{ fontWeight: 700, color: "#64748b", fontSize: "12px" }}>
             Menampilkan {filteredSubs.length} dari {subordinates.length} Karyawan
           </span>
         </div>
 
-        <div className="table-container">
-          <table className="custom-table">
+        <div className="table-container-bold" style={{ padding: 0 }}>
+          <table className="table-bold">
             <thead>
               <tr>
                 <th style={{ width: "40px" }}></th>
                 <th>Nama Karyawan</th>
                 <th>NIK</th>
                 <th>Role</th>
-                <th>Hadir</th>
-                <th>Telat</th>
-                <th>Late %</th>
-                <th>KPI Score</th>
+                <th data-align="right">Hadir</th>
+                <th data-align="right">Telat</th>
+                <th data-align="right">Late %</th>
+                <th data-align="right">KPI Score</th>
                 <th>Tindakan</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="9" style={{ textAlign: "center", padding: "40px" }}>
-                    Memuat daftar anggota tim...
+                  <td colSpan="9" style={{ padding: 0 }}>
+                    <div style={{ padding: "32px", display: "flex", alignItems: "center", justifyContent: "center", gap: "16px" }}>
+                      <RefreshCw className="animate-spin" size={20} style={{ color: "var(--color-secondary)" }} />
+                      <span className="text-sm text-muted">Memuat daftar anggota tim...</span>
+                    </div>
                   </td>
                 </tr>
-              ) : filteredSubs.length === 0 ? (
+              ) : filteredSubs.length === 0 && !loading ? (
                 <tr>
-                  <td colSpan="9" style={{ textAlign: "center", padding: "40px" }}>
-                    Tidak ada anggota tim yang cocok dengan pencarian.
+                  <td colSpan="9">
+                    <div className="empty-state">
+                      <div className="empty-icon"><Search size={24} /></div>
+                      <h4>{subordinates.length === 0 ? "Belum Ada Anggota Tim" : "Tidak Ada Hasil Pencarian"}</h4>
+                      <p>
+                        {subordinates.length === 0
+                          ? "Anggota tim akan muncul otomatis setelah data diperbarui dari HRIS."
+                          : `Tidak ada anggota tim yang cocok dengan kata kunci "${searchQuery}".`}
+                      </p>
+                    </div>
                   </td>
                 </tr>
               ) : (
@@ -432,35 +620,35 @@ export default function Subordinates({ supervisorId }) {
                             Bawahan
                           </span>
                         </td>
-                        <td>
+                        <td data-align="right" className="num">
                           {attInfo ? (
                             <span style={{ fontWeight: 700, color: "#15803d" }}>
-                              {attInfo.attendance_days}/{attInfo.target_days}
+                              {fmt(attInfo.attendance_days)}/{fmt(attInfo.target_days)}
                             </span>
                           ) : (
                             <span style={{ color: "var(--color-text-muted)" }}>—</span>
                           )}
                         </td>
-                        <td>
+                        <td data-align="right" className="num">
                           {attInfo ? (
                             <span style={{ fontWeight: 700, color: attInfo.late_count > 0 ? "#b91c1c" : "#15803d" }}>
-                              {attInfo.late_count}x
+                              {fmt(attInfo.late_count)}x
                             </span>
                           ) : (
                             <span style={{ color: "var(--color-text-muted)" }}>—</span>
                           )}
                         </td>
-                        <td>
+                        <td data-align="right" className="num">
                           {attInfo ? (
                             <span className={`badge ${getLateBadgeClass(attInfo.late_percentage)}`}>
-                              {attInfo.late_percentage.toFixed(1)}%
+                              {fmt(attInfo.late_percentage, 1)}%
                             </span>
                           ) : (
                             <span style={{ color: "var(--color-text-muted)" }}>—</span>
                           )}
                         </td>
-                        <td style={{ fontWeight: 800, fontSize: "16px", color: "var(--color-primary)" }}>
-                          {scoreInfo.overall !== undefined ? scoreInfo.overall : "N/A"}
+                        <td data-align="right" className="num" style={{ fontWeight: 800, fontSize: "16px", color: "var(--color-primary)" }}>
+                          {scoreInfo.overall !== undefined ? fmt(scoreInfo.overall, 2) : "N/A"}
                         </td>
                         <td>
                           {!sub.email ? (
@@ -496,11 +684,11 @@ export default function Subordinates({ supervisorId }) {
                             {/* Summary Detail */}
                             <div style={{ padding: "20px 24px", display: "flex", gap: "24px", borderBottom: "1px solid #f1f5f9", alignItems: "stretch", flexWrap: "wrap" }}>
                               <div className="stat-card" style={{ flex: "1 1 220px", minHeight: "90px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-                                <h4 style={{ fontSize: "12px", fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "8px" }}>Jira Completed</h4>
-                                <p style={{ fontSize: "20px", fontWeight: "800", color: "var(--color-primary)", margin: 0 }}>
-                                  {sub.summary?.total_issues_completed || 0} <span style={{ fontSize: "13px", fontWeight: "500", color: "#475569" }}>Tiket</span>
-                                  <span style={{ fontSize: "12px", fontWeight: "500", color: "#64748b", marginLeft: "8px" }}>({sub.summary?.total_story_points || 0} Pts)</span>
-                                </p>
+                                <span className="metric-label" style={{ marginBottom: 8 }}>Jira Completed</span>
+                                <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: 0 }}>
+                                  <span className="metric-value">{fmt(sub.summary?.total_issues_completed || 0)}</span>
+                                  <span className="table-meta">tiket · {fmt(sub.summary?.total_story_points || 0)} pts</span>
+                                </div>
                               </div>
                               <div className="stat-card" style={{ flex: "3 1 450px", minHeight: "90px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
                                 <h4 style={{ fontSize: "12px", fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "8px" }}>Email Kantor (untuk Sinkronisasi Git/Jira)</h4>
