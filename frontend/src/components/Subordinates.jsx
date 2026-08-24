@@ -50,7 +50,9 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
 
   const fetchSyncStatus = async () => {
     try {
-      const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/sync/status");
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/sync/status?_t=${Date.now()}`, {
+        cache: 'no-store'
+      });
       const status = await response.json();
       setSyncStatus(status);
     } catch (err) {
@@ -112,7 +114,7 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
 
   const fetchTeamScores = async (force = false) => {
     try {
-      const url = `${import.meta.env.VITE_API_URL}/api/v1/kpi/team-yearly?user_id=${supervisorId}&year=${selectedYear}&direct_only=true${force ? '&force_refresh=true' : ''}`;
+      const url = `${import.meta.env.VITE_API_URL}/api/v1/kpi/team-yearly?user_id=${supervisorId}&year=${selectedYear}&direct_only=true${force ? '&force_refresh=true' : ''}&_t=${Date.now()}`;
       const response = await fetch(url, {
         cache: 'no-store'
       });
@@ -334,7 +336,7 @@ export default function Subordinates({ supervisorId, initialMemberId, onResetTar
         >
           <ArrowLeft size={16} /> Kembali ke Daftar Tim
         </button>
-        <Dashboard userId={selectedSubId} isSelf={false} />
+        <Dashboard userId={selectedSubId} isSelf={false} initialYear={selectedYear} />
       </div>
     );
   }

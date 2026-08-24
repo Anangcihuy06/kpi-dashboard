@@ -6,9 +6,9 @@ import {
 import { Award, TrendingUp, GitMerge, CheckSquare, Calendar, RefreshCw, Clock, UserCheck, Info } from "lucide-react";
 import { toast } from "react-toastify";
 
-export default function Dashboard({ userId, isSelf }) {
+export default function Dashboard({ userId, isSelf, initialYear }) {
   const [data, setData] = useState(null);
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [selectedYear, setSelectedYear] = useState(initialYear || new Date().getFullYear());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [syncStatus, setSyncStatus] = useState({ last_sync_time: null, is_syncing: false });
@@ -33,7 +33,9 @@ export default function Dashboard({ userId, isSelf }) {
 
   const fetchSyncStatus = async () => {
     try {
-      const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/sync/status");
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/sync/status?_t=${Date.now()}`, {
+        cache: 'no-store'
+      });
       const status = await response.json();
       setSyncStatus(status);
     } catch (err) {
@@ -45,7 +47,9 @@ export default function Dashboard({ userId, isSelf }) {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/yearly-performance?user_id=${userId}&year=${selectedYear}`);
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/yearly-performance?user_id=${userId}&year=${selectedYear}&_t=${Date.now()}`, {
+        cache: 'no-store'
+      });
       if (!response.ok) throw new Error("Gagal mengambil data KPI");
       const result = await response.json();
       if (result.status === "success") {
