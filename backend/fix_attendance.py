@@ -18,7 +18,7 @@ def fetch_real_attendance_data(start_date, end_date):
     from_d = start_date.strftime("%Y-%m-%d")
     to_d = end_date.strftime("%Y-%m-%d")
     
-    url = f"https://hris-api.atibusinessgroup.com/api/app/attendances/self-new?fromDate={from_d}&toDate={to_d}"
+    url = f"https://talent-backend.andreasbilly.com/api/app/attendances/self-new?fromDate={from_d}&toDate={to_d}"
     try:
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
