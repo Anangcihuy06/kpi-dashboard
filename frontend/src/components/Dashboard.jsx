@@ -318,9 +318,9 @@ export default function Dashboard({ userId, isSelf, initialYear }) {
             <TrendingUp size={24} />
           </div>
           <div className="stat-info">
-            <h4 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <span className="num" style={{ color: salaryEst.iconColor }}>{salaryEst.pct}</span>
-              <span className="badge" style={{ backgroundColor: salaryEst.bg, color: salaryEst.iconColor, fontSize: "10px", border: `1px solid ${salaryEst.iconColor}40` }}>
+            <h4 className="num" style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+              {salaryEst.pct}
+              <span className="badge" style={{ backgroundColor: salaryEst.bg, color: salaryEst.iconColor, fontSize: "11px", padding: "2px 8px", border: `1px solid ${salaryEst.iconColor}40`, fontWeight: 700 }}>
                 {salaryEst.desc}
               </span>
             </h4>
@@ -338,15 +338,7 @@ export default function Dashboard({ userId, isSelf, initialYear }) {
           </div>
         </div>
 
-        <div className="stat-card ui-tooltip" data-metric-desc="Jumlah Merge Request GitLab yang berhasil di-merge pada periode terpilih.">
-          <div className="stat-icon" style={{ background: "linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%)", color: "#0369a1" }}>
-            <GitMerge size={24} />
-          </div>
-          <div className="stat-info">
-            <h4 className="num">{fmt(summary.total_mrs_merged)} MR</h4>
-            <p>GitLab Merged</p>
-          </div>
-        </div>
+
 
         {/* Attendance Card */}
         <div className="stat-card ui-tooltip" data-metric-desc={`Hari hadir dari target ${fmt(targetDays)} hari kerja. Rasio kehadiran ${fmt(normalPct)}% on-time.`}>
