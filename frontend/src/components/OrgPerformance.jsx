@@ -584,7 +584,7 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
           </div>
           <div>
             <h3 style={{ margin: 0, fontSize: "1.25rem", fontWeight: 800, color: "#121854" }}>Hierarki Tim</h3>
-            <span className="table-meta" style={{ fontSize: "11px" }}>klik untuk expand · klik Detail untuk lihat performa</span>
+            <span className="table-meta" style={{ fontSize: "11px" }}>klik untuk expand</span>
           </div>
         </div>
 
@@ -675,13 +675,7 @@ export default function OrgPerformance({ userId, onOpenMemberDetail }) {
                 <div className="table-meta">overall</div>
               </div>
 
-              <button
-                className="btn-outline"
-                onClick={() => (onOpenMemberDetail ? onOpenMemberDetail(node.user_id) : setDetailMember(node.user_id))}
-                style={{ padding: "6px 14px", fontSize: 12, whiteSpace: "nowrap" }}
-              >
-                Detail
-              </button>
+
             </div>
           );
         })}
