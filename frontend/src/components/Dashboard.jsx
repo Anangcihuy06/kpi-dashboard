@@ -216,6 +216,16 @@ export default function Dashboard({ userId, isSelf, initialYear }) {
     return "badge-success";
   };
 
+  // Salary increase estimation
+  const getSalaryIncrease = (score) => {
+    if (score >= 95) return { pct: "10-15%", desc: "Luar Biasa", color: "#10b981", bg: "linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%)", iconColor: "#15803d" };
+    if (score >= 85) return { pct: "7-9%", desc: "Sangat Baik", color: "#6366f1", bg: "linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)", iconColor: "#4338ca" };
+    if (score >= 70) return { pct: "4-6%", desc: "Baik", color: "#f59e0b", bg: "linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)", iconColor: "#b45309" };
+    if (score >= 50) return { pct: "2-3%", desc: "Cukup", color: "#ef4444", bg: "linear-gradient(135deg, #fee2e2 0%, #fecaca 100%)", iconColor: "#b91c1c" };
+    return { pct: "0%", desc: "Kurang", color: "#dc2626", bg: "linear-gradient(135deg, #fecaca 0%, #fca5a5 100%)", iconColor: "#991b1b" };
+  };
+  const salaryEst = getSalaryIncrease(scores.overall || 0);
+
   // Matrix-driven category data from kpi_scores.details (configured KPI rules)
   const matrixDetails = scores.details || [];
   const METRIC_LABELS = {
@@ -300,6 +310,21 @@ export default function Dashboard({ userId, isSelf, initialYear }) {
           <div className="stat-info">
             <h4 className="num">{fmt(scores.overall, 2)}</h4>
             <p>Weighted Score</p>
+          </div>
+        </div>
+
+        <div className="stat-card ui-tooltip" data-metric-desc={`Estimasi persentase kenaikan gaji berdasarkan performa keseluruhan (${fmt(scores.overall, 2)}). Kategori: ${salaryEst.desc}`}>
+          <div className="stat-icon" style={{ background: salaryEst.bg, color: salaryEst.iconColor }}>
+            <TrendingUp size={24} />
+          </div>
+          <div className="stat-info">
+            <h4 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span className="num" style={{ color: salaryEst.iconColor }}>{salaryEst.pct}</span>
+              <span className="badge" style={{ backgroundColor: salaryEst.bg, color: salaryEst.iconColor, fontSize: "10px", border: `1px solid ${salaryEst.iconColor}40` }}>
+                {salaryEst.desc}
+              </span>
+            </h4>
+            <p>Estimasi Kenaikan Gaji</p>
           </div>
         </div>
 
