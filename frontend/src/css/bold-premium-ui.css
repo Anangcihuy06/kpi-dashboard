@@ -634,6 +634,7 @@
 .stat-icon-bold {
   width: 64px;
   height: 64px;
+  flex-shrink: 0;
   border-radius: 20px;
   display: flex;
   align-items: center;
