@@ -772,6 +772,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 24px;
   background: #ffffff;
   position: relative;
   overflow: hidden;
@@ -832,15 +833,15 @@
 /* Bold Login Card */
 .login-card-premium-bold {
   width: 100%;
-  max-width: 520px;
+  max-width: 480px;
   background: linear-gradient(
     135deg,
     rgba(255, 255, 255, 0.95) 0%,
     rgba(255, 255, 255, 0.85) 100%
   );
   backdrop-filter: blur(40px) saturate(180%);
-  border-radius: 32px;
-  padding: 48px;
+  border-radius: 28px;
+  padding: 32px;
   box-shadow: 
     0 50px 100px -20px rgba(18, 24, 84, 0.5),
     0 0 0 1px rgba(255, 255, 255, 0.5),
@@ -875,7 +876,7 @@
 }
 
 .logo-premium {
-  height: 64px;
+  height: 48px;
   border-radius: 12px;
   position: relative;
   z-index: 2;
@@ -884,7 +885,7 @@
 /* Bold Typography */
 .auth-title-bold {
   font-family: var(--font-display);
-  font-size: 2.5rem;
+  font-size: 2rem;
   font-weight: 900;
   background: linear-gradient(135deg, #121854 0%, #4059c6 100%);
   -webkit-background-clip: text;
@@ -897,16 +898,16 @@
 
 .auth-subtitle-bold {
   font-family: var(--font-body);
-  font-size: 1.125rem;
+  font-size: 1rem;
   color: #64748b;
   font-weight: 500;
-  margin: 0 0 40px 0;
+  margin: 0 0 24px 0;
   text-align: center;
 }
 
 /* Bold Form Elements */
 .input-group-bold {
-  margin-bottom: 28px;
+  margin-bottom: 20px;
 }
 
 .input-label-bold {
