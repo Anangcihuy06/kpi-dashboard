@@ -32,7 +32,9 @@ export default function Dashboard({ userId, isSelf }) {
 
   const fetchSyncStatus = async () => {
     try {
-      const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/sync/status");
+      const response = await fetch(import.meta.env.VITE_API_URL + "/api/v1/sync/status", {
+        cache: 'no-store'
+      });
       const status = await response.json();
       setSyncStatus(status);
     } catch (err) {
@@ -44,7 +46,9 @@ export default function Dashboard({ userId, isSelf }) {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/yearly-performance?user_id=${userId}&year=${selectedYear}`);
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/kpi/yearly-performance?user_id=${userId}&year=${selectedYear}`, {
+        cache: 'no-store'
+      });
       if (!response.ok) throw new Error("Gagal mengambil data KPI");
       const result = await response.json();
       if (result.status === "success") {
