@@ -98,7 +98,17 @@ def sync_subordinates_for_supervisor(db, supervisor, token):
         emp_id = member.get("id")
         office_email = member.get("officeEmail", "")
         children = member.get("children", [])
-        has_children = len(children) > 0
+        sub = db.query(models.User).filter(models.User.nik == nik).first()
+
+        api_has_subs = member.get("hasSubordinates")
+        if api_has_subs is not None:
+            has_children = bool(api_has_subs)
+        elif len(children) > 0:
+            has_children = True
+        elif sub:
+            has_children = sub.has_subordinates
+        else:
+            has_children = False
 
         # Group/division inheritance logic:
         # If user has subordinates, take group/division from their own API response
@@ -122,7 +132,6 @@ def sync_subordinates_for_supervisor(db, supervisor, token):
             group_id = inherited_group_id
             group_name = inherited_group_name
 
-        sub = db.query(models.User).filter(models.User.nik == nik).first()
         if sub:
             sub.supervisor_id = parent_id
             sub.employee_id = str(emp_id) if emp_id else sub.employee_id
