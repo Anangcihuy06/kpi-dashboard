@@ -80,7 +80,7 @@ def sync_subordinates_for_supervisor(db, supervisor, token):
             db.commit()
         return div_id
 
-    def _process_member(member, parent_id):
+    def _process_member(member, parent_id, inherited_division_id, inherited_group_id, inherited_group_name):
         """Process a single member and recursively process their children."""
         nonlocal all_niks
 
@@ -99,10 +99,27 @@ def sync_subordinates_for_supervisor(db, supervisor, token):
         children = member.get("children", [])
         has_children = len(children) > 0
 
-        # Force members to inherit division and group from the logged-in supervisor
-        division_id = supervisor.division_id
-        group_id = supervisor.group_id
-        group_name = supervisor.group_name
+        # Group/division inheritance logic:
+        # If user has subordinates, take group/division from their own API response
+        # If user has no subordinates (associate), inherit from their direct supervisor
+        if has_children:
+            div_info = member.get("division")
+            if div_info:
+                division_id = _ensure_division(div_info)
+            else:
+                division_id = inherited_division_id
+                
+            group_info = member.get("group")
+            if group_info:
+                group_id = str(group_info.get("id")) if group_info.get("id") else None
+                group_name = str(group_info.get("group")) if group_info.get("group") else None
+            else:
+                group_id = inherited_group_id
+                group_name = inherited_group_name
+        else:
+            division_id = inherited_division_id
+            group_id = inherited_group_id
+            group_name = inherited_group_name
 
         sub = db.query(models.User).filter(models.User.nik == nik).first()
         if sub:
@@ -148,14 +165,14 @@ def sync_subordinates_for_supervisor(db, supervisor, token):
         # Recursively process children — their supervisor is this member
         child_parent_id = sub.id if sub else parent_id
         for child in children:
-            processed += _process_member(child, child_parent_id)
+            processed += _process_member(child, child_parent_id, division_id, group_id, group_name)
 
         return processed
 
     # Process all top-level members — they are direct subordinates of the logged-in supervisor
     processed = 0
     for member in members:
-        processed += _process_member(member, supervisor.id)
+        processed += _process_member(member, supervisor.id, supervisor.division_id, supervisor.group_id, supervisor.group_name)
 
     # Remove supervisor links for subordinates no longer returned by HRIS
     if "ROLE_ADMIN" not in (supervisor.roles or []) and all_niks:
