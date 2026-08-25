@@ -16,7 +16,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [subTargetId, setSubTargetId] = useState(null);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
 
   // Load session from localStorage on mount — verify locally (no HRIS call needed)
   useEffect(() => {
