@@ -48,7 +48,7 @@ def sync_subordinates_for_supervisor(db, supervisor, token):
         return 0
 
     hdr = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    url = "https://talent-backend.andreasbilly.com/api/app/users/members"
+    url = "https://hris-api.atibusinessgroup.com/api/app/users/members"
     try:
         res = requests.get(url, headers=hdr, timeout=15)
         if res.status_code != 200:
@@ -714,7 +714,7 @@ def _recursive_subordinates(db: Session, supervisor_id: str, visited: set) -> Li
 # Endpoints
 @app.post("/api/v1/auth/login")
 def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    external_url = "https://talent-backend.andreasbilly.com/api/authenticate/mobile"
+    external_url = "https://hris-api.atibusinessgroup.com/api/authenticate/mobile"
     try:
         response = requests.post(external_url, json={
             "username": payload.username,
@@ -737,7 +737,7 @@ def login(payload: LoginRequest, background_tasks: BackgroundTasks, db: Session 
     token = user_data.get("id_token")
     if token:
         try:
-            profile_url = "https://talent-backend.andreasbilly.com/api/app/users/profile"
+            profile_url = "https://hris-api.atibusinessgroup.com/api/app/users/profile"
             profile_resp = requests.get(profile_url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
             print("PROFILE_STATUS:", profile_resp.status_code)
             if profile_resp.status_code == 200:
@@ -913,13 +913,13 @@ def update_user_email(user_id: str, payload: UpdateUserEmailRequest, db: Session
 
 @app.post("/api/v1/auth/debug_login")
 def debug_login(payload: LoginRequest):
-    external_url = "https://talent-backend.andreasbilly.com/api/authenticate/mobile"
+    external_url = "https://hris-api.atibusinessgroup.com/api/authenticate/mobile"
     response = requests.post(external_url, json={"username": payload.username, "password": payload.password}, timeout=10)
     user_data = response.json()
     token = user_data.get("id_token")
     profile_data = None
     if token:
-        profile_url = "https://talent-backend.andreasbilly.com/api/app/users/profile"
+        profile_url = "https://hris-api.atibusinessgroup.com/api/app/users/profile"
         profile_resp = requests.get(profile_url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
         try:
             profile_data = profile_resp.json()

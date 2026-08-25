@@ -22,9 +22,9 @@ import requests
 from database import SessionLocal
 import models
 
-HRIS_LOGIN_URL = "https://talent-backend.andreasbilly.com/api/authenticate/mobile"
-HRIS_OVERTIME_URL = "https://talent-backend.andreasbilly.com/api/app/overtime/request-data"
-HRIS_PROFILE_URL = "https://talent-backend.andreasbilly.com/api/app/users/profile"
+HRIS_LOGIN_URL = "https://hris-api.atibusinessgroup.com/api/authenticate/mobile"
+HRIS_OVERTIME_URL = "https://hris-api.atibusinessgroup.com/api/app/overtime/request-data"
+HRIS_PROFILE_URL = "https://hris-api.atibusinessgroup.com/api/app/users/profile"
 
 
 def login(username, password):

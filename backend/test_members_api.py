@@ -5,8 +5,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Login first to get token
-login_url = "https://talent-backend.andreasbilly.com/api/authenticate/mobile"
-members_url = "https://talent-backend.andreasbilly.com/api/app/users/members"
+login_url = "https://hris-api.atibusinessgroup.com/api/authenticate/mobile"
+members_url = "https://hris-api.atibusinessgroup.com/api/app/users/members"
 
 # Use env credentials or hardcode for testing
 username = os.getenv("TEST_USER", "nanang.wahyudi@atibusinessgroup.com")
