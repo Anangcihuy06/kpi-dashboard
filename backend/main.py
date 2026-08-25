@@ -63,6 +63,7 @@ def sync_subordinates_for_supervisor(db, supervisor, token):
         return 0
 
     all_niks = set()
+    all_parent_ids = set([supervisor.id])
 
     def _ensure_division(div_info):
         """Ensure division exists in DB and return its id."""
@@ -82,7 +83,7 @@ def sync_subordinates_for_supervisor(db, supervisor, token):
 
     def _process_member(member, parent_id, inherited_division_id, inherited_group_id, inherited_group_name):
         """Process a single member and recursively process their children."""
-        nonlocal all_niks
+        nonlocal all_niks, all_parent_ids
 
         nik = member.get("nik")
         if not nik:
@@ -164,6 +165,7 @@ def sync_subordinates_for_supervisor(db, supervisor, token):
 
         # Recursively process children — their supervisor is this member
         child_parent_id = sub.id if sub else parent_id
+        all_parent_ids.add(child_parent_id)
         for child in children:
             processed += _process_member(child, child_parent_id, division_id, group_id, group_name)
 
@@ -175,9 +177,10 @@ def sync_subordinates_for_supervisor(db, supervisor, token):
         processed += _process_member(member, supervisor.id, supervisor.division_id, supervisor.group_id, supervisor.group_name)
 
     # Remove supervisor links for subordinates no longer returned by HRIS
+    # We clean up across ALL managers (all_parent_ids) we just synced
     if "ROLE_ADMIN" not in (supervisor.roles or []) and all_niks:
         db.query(models.User).filter(
-            models.User.supervisor_id == supervisor.id,
+            models.User.supervisor_id.in_(list(all_parent_ids)),
             ~models.User.nik.in_(list(all_niks))
         ).update({"supervisor_id": None}, synchronize_session=False)
         db.commit()
